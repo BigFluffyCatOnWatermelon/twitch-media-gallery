@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.2.1
+// @version      5.2.2
 // @description  Twitch media gallery with Rendi animated WebP video conversion, original 7TV links, persistent previews, pagination and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -197,7 +197,7 @@
       mediaScale: clampFloat(next.mediaScale ?? current.mediaScale, 0.5, 2, defaults.mediaScale),
       tileView: (next.tileView ?? current.tileView) === 'grid' ? 'grid' : 'masonry',
       pageSize: clampInt(next.pageSize ?? 100, 10, 500, 100),
-      previewScale: clampFloat(next.previewScale ?? defaults.previewScale, 1.1, 3, defaults.previewScale),
+      previewScale: clampFloat(next.previewScale ?? current.previewScale, 1.1, 3, defaults.previewScale),
       conversionRules: rules,
       rendiApiKey: String(next.rendiApiKey ?? current.rendiApiKey).trim(),
       gistToken: String(next.gistToken ?? current.gistToken).trim(),
@@ -2394,7 +2394,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.2.1 started', { href: location.href });
+    logDebug('Userscript v5.2.2 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
