@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.3.0
-// @description  Twitch media gallery with local FFmpeg.wasm video conversion, original 7TV links, persistent previews, pagination and Gist settings sync.
+// @version      5.4.0
+// @description  Twitch media gallery with cached FFmpeg.wasm media conversion, original 7TV links, persistent previews, pagination and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @match        https://www.twitch.tv/*
@@ -32,9 +32,11 @@
   const SYNC_FILENAME = 'twitch-gif-gallery.json';
   const KAPPA_UPLOAD_URL = 'https://kappa.lol/api/upload';
   const GITHUB_API = 'https://api.github.com';
-  const FFMPEG_CORE_BASE_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
+  const FFMPEG_CORE_VERSION = '0.12.10';
+  const FFMPEG_CORE_BASE_URL = `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/umd`;
+  const FFMPEG_CACHE_DB = 'twgif-ffmpeg-assets-v1';
   const SETTINGS_FILENAME = 'twitch-gif-gallery-settings.json';
-  const SETTINGS_SCHEMA_VERSION = 5;
+  const SETTINGS_SCHEMA_VERSION = 6;
 
   let panelView = 'gallery';
   let settingsTab = 'general';
@@ -75,7 +77,7 @@
     mediaScale: 1,
     tileView: 'masonry',
     pageSize: 100,
-    previewScale: 1.6,
+    previewMaxSize: 1920,
     conversionRules: { image: 'webp', gif: 'keep', video: 'webp' },
     settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
     gistToken: '',
@@ -144,9 +146,9 @@
       ? { ...raw.conversionRules }
       : {};
     const allowedTargets = {
-      image: ['keep', 'webp', 'png', 'jpg'],
-      gif: ['keep'],
-      video: ['keep', 'webp']
+      image: ['keep', 'webp', 'png', 'jpg', 'gif', 'mp4', 'webm'],
+      gif: ['keep', 'gif', 'webp', 'png', 'jpg', 'mp4', 'webm'],
+      video: ['keep', 'webp', 'gif', 'mp4', 'webm', 'png', 'jpg']
     };
     const cleanTarget = (key, value) => allowedTargets[key].includes(String(value))
       ? String(value)
@@ -156,7 +158,7 @@
       mediaScale: clampFloat(raw.mediaScale ?? defaults.mediaScale, 0.5, 2, defaults.mediaScale),
       tileView: raw.tileView === 'grid' ? 'grid' : 'masonry',
       pageSize: clampInt(raw.pageSize ?? 100, 10, 500, 100),
-      previewScale: clampFloat(raw.previewScale ?? defaults.previewScale, 1.1, 3, defaults.previewScale),
+      previewMaxSize: clampInt(raw.previewMaxSize ?? defaults.previewMaxSize, 480, 4000, defaults.previewMaxSize),
       conversionRules: {
         image: cleanTarget('image', rules.image ?? defaults.conversionRules.image),
         gif: cleanTarget('gif', rules.gif ?? defaults.conversionRules.gif),
@@ -186,9 +188,9 @@
     const defaults = DEFAULT_CONFIG();
     const rules = { ...current.conversionRules, ...(next.conversionRules && typeof next.conversionRules === 'object' ? next.conversionRules : {}) };
     const allowedTargets = {
-      image: ['keep', 'webp', 'png', 'jpg'],
-      gif: ['keep'],
-      video: ['keep', 'webp']
+      image: ['keep', 'webp', 'png', 'jpg', 'gif', 'mp4', 'webm'],
+      gif: ['keep', 'gif', 'webp', 'png', 'jpg', 'mp4', 'webm'],
+      video: ['keep', 'webp', 'gif', 'mp4', 'webm', 'png', 'jpg']
     };
     for (const key of ['image', 'gif', 'video']) {
       if (!allowedTargets[key].includes(String(rules[key]))) rules[key] = defaults.conversionRules[key];
@@ -198,7 +200,7 @@
       mediaScale: clampFloat(next.mediaScale ?? current.mediaScale, 0.5, 2, defaults.mediaScale),
       tileView: (next.tileView ?? current.tileView) === 'grid' ? 'grid' : 'masonry',
       pageSize: clampInt(next.pageSize ?? 100, 10, 500, 100),
-      previewScale: clampFloat(next.previewScale ?? current.previewScale, 1.1, 3, defaults.previewScale),
+      previewMaxSize: clampInt(next.previewMaxSize ?? current.previewMaxSize, 480, 4000, defaults.previewMaxSize),
       conversionRules: rules,
       gistToken: String(next.gistToken ?? current.gistToken).trim(),
       gistId: String(next.gistId ?? current.gistId).trim(),
@@ -525,28 +527,121 @@
     return getExtension(mime, file.name).replace(/^\./, '') || 'bin';
   }
 
+  function openFfmpegAssetDb() {
+    return new Promise((resolve, reject) => {
+      if (!('indexedDB' in window)) {
+        reject(new Error('IndexedDB недоступен'));
+        return;
+      }
+      const request = indexedDB.open(FFMPEG_CACHE_DB, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('assets')) db.createObjectStore('assets', { keyPath: 'id' });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error('Не удалось открыть хранилище FFmpeg.wasm'));
+      request.onblocked = () => reject(new Error('Хранилище FFmpeg.wasm заблокировано другой вкладкой'));
+    });
+  }
+
+  async function readFfmpegAssetCache() {
+    const db = await openFfmpegAssetDb();
+    return new Promise((resolve, reject) => {
+      let value = null;
+      const tx = db.transaction('assets', 'readonly');
+      const request = tx.objectStore('assets').get('core');
+      request.onsuccess = () => { value = request.result || null; };
+      request.onerror = () => reject(request.error || new Error('Не удалось прочитать кэш FFmpeg.wasm'));
+      tx.oncomplete = () => { db.close(); resolve(value); };
+      tx.onerror = () => { db.close(); reject(tx.error || new Error('Ошибка чтения кэша FFmpeg.wasm')); };
+      tx.onabort = () => { db.close(); reject(tx.error || new Error('Чтение кэша FFmpeg.wasm отменено')); };
+    });
+  }
+
+  async function writeFfmpegAssetCache(coreScript, coreWasm) {
+    const db = await openFfmpegAssetDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('assets', 'readwrite');
+      tx.objectStore('assets').put({
+        id: 'core',
+        version: FFMPEG_CORE_VERSION,
+        coreScript,
+        coreWasm,
+        savedAt: Date.now()
+      });
+      tx.oncomplete = () => { db.close(); resolve(true); };
+      tx.onerror = () => { db.close(); reject(tx.error || new Error('Не удалось сохранить кэш FFmpeg.wasm')); };
+      tx.onabort = () => { db.close(); reject(tx.error || new Error('Сохранение кэша FFmpeg.wasm отменено')); };
+    });
+  }
+
   async function loadLocalFfmpegAssets() {
     if (localFfmpegAssets) return localFfmpegAssets;
     if (localFfmpegAssetsPromise) return localFfmpegAssetsPromise;
+
     localFfmpegAssetsPromise = (async () => {
-      setStatus('Загружаю FFmpeg.wasm (~31 МБ) для локальной конвертации. Исходное видео останется в браузере…', 'info', true);
-      const [coreScript, coreWasm] = await Promise.all([
-        requestBlob(FFMPEG_CORE_BASE_URL + '/ffmpeg-core.js', 180000),
-        requestBlob(FFMPEG_CORE_BASE_URL + '/ffmpeg-core.wasm', 300000)
-      ]);
+      let coreScript = null;
+      let coreWasm = null;
+      try {
+        const cached = await readFfmpegAssetCache();
+        if (cached && cached.version === FFMPEG_CORE_VERSION &&
+            cached.coreScript instanceof Blob && cached.coreScript.size > 1000 &&
+            cached.coreWasm instanceof Blob && cached.coreWasm.size > 1000000) {
+          coreScript = cached.coreScript;
+          coreWasm = cached.coreWasm;
+          logDebug('FFmpeg.wasm binaries restored from persistent IndexedDB cache', {
+            version: FFMPEG_CORE_VERSION,
+            coreBytes: coreScript.size,
+            wasmBytes: coreWasm.size
+          });
+          setStatus('Использую сохранённый FFmpeg.wasm — повторная загрузка движка не нужна…', 'info', true);
+        }
+      } catch (error) {
+        logDebug('FFmpeg.wasm cache read failed; downloading core once for this session', error.message || error);
+      }
+
+      if (!coreScript || !coreWasm) {
+        setStatus('Первый запуск: загружаю FFmpeg.wasm (~31 МБ). Исходное видео останется в браузере…', 'info', true);
+        const assets = await Promise.all([
+          requestBlob(FFMPEG_CORE_BASE_URL + '/ffmpeg-core.js', 180000),
+          requestBlob(FFMPEG_CORE_BASE_URL + '/ffmpeg-core.wasm', 300000)
+        ]);
+        coreScript = assets[0];
+        coreWasm = assets[1];
+        try {
+          await writeFfmpegAssetCache(coreScript, coreWasm);
+          let persistent = false;
+          try {
+            if (navigator.storage && typeof navigator.storage.persist === 'function') {
+              persistent = await navigator.storage.persist();
+            }
+          } catch (_) {}
+          logDebug('FFmpeg.wasm binaries saved to IndexedDB', {
+            version: FFMPEG_CORE_VERSION,
+            coreBytes: coreScript.size,
+            wasmBytes: coreWasm.size,
+            persistentStorageGranted: persistent
+          });
+        } catch (error) {
+          logDebug('FFmpeg.wasm cache write failed; using in-memory binaries only', error.message || error);
+          setStatus('FFmpeg.wasm загружен, но браузер не разрешил сохранить кэш. Повторная загрузка может понадобиться после закрытия вкладки.', 'info', true);
+        }
+      }
+
       const coreUrl = URL.createObjectURL(new Blob([coreScript], { type: 'text/javascript' }));
       const wasmUrl = URL.createObjectURL(new Blob([coreWasm], { type: 'application/wasm' }));
       localFfmpegAssets = { coreUrl, wasmUrl };
-      logDebug('FFmpeg.wasm assets loaded', { coreBytes: coreScript.size, wasmBytes: coreWasm.size, version: '0.12.10' });
       return localFfmpegAssets;
     })().catch(error => {
       localFfmpegAssetsPromise = null;
       throw new Error('Не удалось загрузить FFmpeg.wasm. Проверь доступ к cdn.jsdelivr.net и повтори попытку. ' + (error.message || error));
     });
+
     return localFfmpegAssetsPromise;
   }
 
-  // Worker entry point is serialized and runs without references to the page.
+  // Runs inside one long-lived worker; selected media conversion never uses a
+  // server-side conversion API.
   function localFfmpegWorkerEntrypoint(coreUrl, wasmUrl) {
     'use strict';
     let engine = null;
@@ -564,8 +659,9 @@
         const assetInfo = btoa(JSON.stringify({ wasmURL: wasmUrl, workerURL: coreUrl }));
         engine = await self.createFFmpegCore({ mainScriptUrlOrBlob: coreUrl + '#' + assetInfo });
         engine.setLogger(data => {
-          const message = String(data && data.message || '').trim();
-          if (message && ((data && data.type === 'fferr') || /\b(error|failed|invalid|unknown decoder|unknown encoder)\b/i.test(message))) {
+          const message = String(data && data.message || '').toLowerCase();
+          if (message && (message.includes('error') || message.includes('failed') || message.includes('invalid') ||
+              message.includes('unknown decoder') || message.includes('unknown encoder'))) {
             recentErrors.push(message);
             if (recentErrors.length > 8) recentErrors.shift();
           }
@@ -581,30 +677,24 @@
 
     async function convert(message) {
       const id = message.id;
-      const inputName = message.inputName;
-      const outputName = message.outputName;
       activeId = id;
       recentErrors = [];
       let wroteInput = false;
       let wroteOutput = false;
       try {
         const ffmpeg = await loadEngine(id);
-        self.postMessage({ kind: 'status', id, text: 'Конвертирую видео в анимированный WebP локально…' });
-        ffmpeg.FS.writeFile(inputName, new Uint8Array(message.inputBuffer));
+        self.postMessage({ kind: 'status', id, text: 'Обрабатываю медиа через FFmpeg.wasm…' });
+        ffmpeg.FS.writeFile(message.inputName, new Uint8Array(message.inputBuffer));
         wroteInput = true;
         ffmpeg.setTimeout(1200000);
-        ffmpeg.exec(
-          '-i', inputName,
-          '-vf', "fps=12,scale='min(iw," + message.maxWidth + ")':-2:flags=lanczos",
-          '-an', '-c:v', 'libwebp', '-q:v', '70', '-loop', '0', outputName
-        );
+        ffmpeg.exec.apply(ffmpeg, message.args);
         const exitCode = Number(ffmpeg.ret);
         ffmpeg.reset();
         if (exitCode !== 0) {
           const details = recentErrors.slice(-4).join(' | ');
           throw new Error('FFmpeg завершился с кодом ' + exitCode + (details ? ': ' + details : '. Проверь формат исходного файла.'));
         }
-        const bytes = ffmpeg.FS.readFile(outputName);
+        const bytes = ffmpeg.FS.readFile(message.outputName);
         wroteOutput = true;
         const outputBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
         self.postMessage({ kind: 'done', id, outputBuffer }, [outputBuffer]);
@@ -617,11 +707,12 @@
           details: recentErrors.slice(-4).join(' | ')
         });
       } finally {
-        try { if (engine && wroteInput) engine.FS.unlink(inputName); } catch (_) {}
-        try { if (engine && wroteOutput) engine.FS.unlink(outputName); } catch (_) {}
+        try { if (engine && wroteInput) engine.FS.unlink(message.inputName); } catch (_) {}
+        try { if (engine && wroteOutput) engine.FS.unlink(message.outputName); } catch (_) {}
         activeId = null;
       }
     }
+
     self.onmessage = event => {
       const message = event.data || {};
       if (message.kind === 'convert') convert(message);
@@ -665,7 +756,7 @@
         clearTimeout(pending.timeout);
         localFfmpegPending.delete(message.id);
         const details = message.details ? ' Детали: ' + message.details : '';
-        pending.reject(new Error('Ошибка FFmpeg.wasm: ' + (message.message || 'не удалось обработать видео') + '.' + details));
+        pending.reject(new Error('Ошибка FFmpeg.wasm: ' + (message.message || 'не удалось обработать медиа') + '.' + details));
       }
     });
     worker.addEventListener('error', event => {
@@ -684,18 +775,68 @@
     return worker;
   }
 
-  async function ffmpegVideoToWebp(file, maxWidth = loadConfig().maxWidth) {
+  async function ffmpegMediaToFormat(file, outputFormat, maxWidth = loadConfig().maxWidth) {
     if (!file || !file.size) throw new Error('Файл пустой.');
-    const ext = fileExtension(file).replace(/[^a-z0-9]/gi, '') || 'mp4';
-    const baseName = String(file.name || 'video').replace(/\.[^.]+$/, '') || 'video';
-    const outputName = baseName + '.webp';
+    const inputExt = fileExtension(file).replace(/[^a-z0-9]/gi, '') || 'bin';
+    const validFormats = ['webp', 'gif', 'jpg', 'png', 'mp4', 'webm'];
+    if (!validFormats.includes(outputFormat)) throw new Error('Этот формат не поддерживается FFmpeg.wasm: ' + outputFormat);
+
+    const originalName = String(file.name || 'media');
+    const dot = originalName.lastIndexOf('.');
+    const baseName = (dot > 0 ? originalName.slice(0, dot) : originalName) || 'media';
+    const outputName = baseName + '.' + outputFormat;
     const width = clampInt(maxWidth, 100, 4000, DEFAULT_MAX_WIDTH);
-    setStatus('Подготавливаю «' + (file.name || 'видео') + '» для локальной конвертации…', 'info', true);
     const worker = await getLocalFfmpegWorker();
     const inputBuffer = await file.arrayBuffer();
     const id = ++localFfmpegRequestId;
-    const inputName = 'input_' + id + '.' + ext;
-    const outputPath = 'output_' + id + '.webp';
+    const inputName = 'input_' + id + '.' + inputExt;
+    const outputPath = 'output_' + id + '.' + outputFormat;
+    const mime = mimeFromFile(file);
+    const sourceIsGif = mime === 'image/gif' || originalName.toLowerCase().endsWith('.gif');
+    const sourceIsStillImage = mime.startsWith('image/') && !sourceIsGif &&
+      ['png', 'jpg', 'jpeg', 'bmp', 'avif'].includes(inputExt);
+    const outputIsVideo = outputFormat === 'mp4' || outputFormat === 'webm';
+    const scaleFilter = "scale='trunc(min(iw," + width + ")/2)*2':-2:flags=lanczos";
+    const args = [];
+
+    // When a still image is sent to a video container, create a short 2s clip.
+    if (outputIsVideo && sourceIsStillImage) {
+      args.push('-loop', '1', '-framerate', '30', '-i', inputName, '-t', '2');
+    } else {
+      args.push('-i', inputName);
+    }
+
+    if (outputFormat === 'gif') {
+      args.push(
+        '-filter_complex',
+        '[0:v]fps=12,' + scaleFilter + ',split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:diff_mode=rectangle',
+        '-loop', '0',
+        outputPath
+      );
+    } else if (outputFormat === 'webp') {
+      args.push(
+        '-vf', 'fps=12,' + scaleFilter,
+        '-an', '-c:v', 'libwebp', '-q:v', '70', '-loop', '0', outputPath
+      );
+    } else if (outputFormat === 'jpg') {
+      args.push('-vf', scaleFilter, '-frames:v', '1', '-q:v', '2', outputPath);
+    } else if (outputFormat === 'png') {
+      args.push('-vf', scaleFilter, '-frames:v', '1', outputPath);
+    } else if (outputFormat === 'mp4') {
+      args.push(
+        '-vf', scaleFilter, '-c:v', 'libx264', '-preset', 'ultrafast',
+        '-crf', '25', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
+        '-c:a', 'aac', '-b:a', '128k', outputPath
+      );
+    } else if (outputFormat === 'webm') {
+      args.push(
+        '-vf', scaleFilter, '-c:v', 'libvpx', '-deadline', 'realtime',
+        '-cpu-used', '4', '-crf', '32', '-b:v', '0',
+        '-c:a', 'libopus', '-b:a', '96k', outputPath
+      );
+    }
+
+    setStatus('FFmpeg.wasm: ' + inputExt.toUpperCase() + ' → ' + outputFormat.toUpperCase() + '…', 'info', true);
     const outputBuffer = await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         localFfmpegPending.delete(id);
@@ -703,22 +844,26 @@
       }, 1200000);
       localFfmpegPending.set(id, {
         resolve, reject, timeout, lastPercent: -5,
-        onStatus: text => setStatus(text || 'FFmpeg.wasm обрабатывает видео…', 'info', true)
+        onStatus: text => setStatus(text || 'FFmpeg.wasm обрабатывает медиа…', 'info', true)
       });
       try {
-        worker.postMessage({ kind: 'convert', id, inputName, outputName: outputPath, inputBuffer, maxWidth: width }, [inputBuffer]);
+        worker.postMessage({ kind: 'convert', id, inputName, outputName: outputPath, inputBuffer, args }, [inputBuffer]);
       } catch (error) {
         clearTimeout(timeout);
         localFfmpegPending.delete(id);
         reject(error);
       }
     });
-    if (!outputBuffer || !outputBuffer.byteLength) throw new Error('FFmpeg.wasm вернул пустой WebP-файл.');
-    logDebug('FFmpeg.wasm video conversion finished', {
+    if (!outputBuffer || !outputBuffer.byteLength) throw new Error('FFmpeg.wasm вернул пустой файл.');
+    logDebug('FFmpeg.wasm conversion finished', {
       input: file.name || inputName, output: outputName,
-      inputBytes: file.size, outputBytes: outputBuffer.byteLength, width
+      inputBytes: file.size, outputBytes: outputBuffer.byteLength, maxWidth: width
     });
-    return new File([outputBuffer], outputName, { type: 'image/webp', lastModified: Date.now() });
+    const typeMap = {
+      webp: 'image/webp', gif: 'image/gif', jpg: 'image/jpeg',
+      png: 'image/png', mp4: 'video/mp4', webm: 'video/webm'
+    };
+    return new File([outputBuffer], outputName, { type: typeMap[outputFormat], lastModified: Date.now() });
   }
 
   function formatBytes(bytes) {
@@ -735,17 +880,10 @@
     if (!mime || (!mime.startsWith('image/') && !mime.startsWith('video/'))) throw new Error('Поддерживаются изображения, GIF и видео.');
     const config = loadConfig();
     const category = mime.startsWith('video/') ? 'video'
-      : (mime === 'image/gif' || /\.gif$/i.test(file.name || '') ? 'gif' : 'image');
+      : (mime === 'image/gif' || String(file.name || '').toLowerCase().endsWith('.gif') ? 'gif' : 'image');
     const target = config.conversionRules[category] || 'keep';
-    if (target === 'keep') {
-      if (category === 'image') return resizeStaticImage(file, config.maxWidth, 'keep');
-      return file;
-    }
-    if (category === 'image' && ['webp', 'png', 'jpg'].includes(target)) {
-      return resizeStaticImage(file, config.maxWidth, target);
-    }
-    if (category === 'video' && target === 'webp') return ffmpegVideoToWebp(file, config.maxWidth);
-    throw new Error(`Правило конвертации «${category} → ${target}» не поддерживается. Доступны локальная обработка изображений, сохранение GIF и видео → WebP через FFmpeg.wasm.`);
+    if (target === 'keep') return file;
+    return ffmpegMediaToFormat(file, target, config.maxWidth);
   }
 
   function addItem(url, name, type, sourceKey = '', previewUrl = '') {
@@ -1310,7 +1448,7 @@
       mediaScale: config.mediaScale,
       tileView: config.tileView,
       pageSize: config.pageSize,
-      previewScale: config.previewScale,
+      previewMaxSize: config.previewMaxSize,
       conversionRules: { ...config.conversionRules },
       debug: config.debug,
       settingsUpdatedAt: config.settingsUpdatedAt || 0,
@@ -1469,7 +1607,7 @@
       #twgif-trigger{appearance:none!important;border:0!important;background:transparent!important;color:var(--color-text-base,#efeff1)!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important;margin:0 2px!important;padding:0!important;border-radius:var(--border-radius-medium,4px)!important;cursor:pointer!important;line-height:1!important}
       #twgif-trigger:hover,#twgif-trigger[aria-expanded=true]{background:var(--color-background-button-text-hover,#2b2b2f)!important;color:var(--color-text-link,#bf94ff)!important}
       #twgif-trigger svg{display:block;pointer-events:none}
-      #twgif-panel{position:fixed;z-index:2147483000;width:400px;max-width:calc(100vw - 16px);max-height:68vh;display:flex;flex-direction:column;overflow:hidden;color:#efeff1;background:#18181b;border:1px solid #34343b;border-radius:10px;box-shadow:0 10px 34px #0009;font:13px/1.4 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-sizing:border-box;pointer-events:auto}
+      #twgif-panel{position:fixed;top:8px;left:8px;bottom:auto;z-index:2147483000;width:400px;max-width:calc(100vw - 16px);max-height:68vh;display:flex;flex-direction:column;overflow:hidden;color:#efeff1;background:#18181b;border:1px solid #34343b;border-radius:10px;box-shadow:0 10px 34px #0009;font:13px/1.4 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-sizing:border-box;pointer-events:auto}
       #twgif-panel[hidden]{display:none!important}#twgif-panel *{box-sizing:border-box}
       .twgif-head{display:flex;align-items:center;gap:5px;padding:6px 8px;min-height:42px;border-bottom:1px solid #34343b;flex-shrink:0}
       .twgif-heading{font-size:13px;font-weight:700;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1478,7 +1616,7 @@
       .twgif-settings-tabs{display:flex;align-items:center;gap:1px}.twgif-settings-tabs[hidden]{display:none!important}
       .twgif-tab{appearance:none;border:0;background:transparent;color:#a8a8b3;width:28px;height:28px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
       .twgif-tab:hover{background:#303036;color:#fff}.twgif-tab[aria-selected=true]{background:#392653;color:#d6b4ff}
-      .twgif-panel-body{padding:9px 10px 10px;overflow:auto;min-height:90px;overscroll-behavior:contain}
+      .twgif-panel-body{padding:9px 10px 10px;overflow:auto;min-height:0;overscroll-behavior:contain}
       .twgif-toolbar{display:flex;align-items:center;gap:5px;margin-bottom:8px}
       .twgif-input{display:block;width:100%;min-width:0;background:#0e0e10;color:#efeff1;border:1px solid #3f3f46;border-radius:6px;padding:8px 9px;outline:none;font-family:inherit;font-size:12px;line-height:1.35}
       .twgif-input:focus{border-color:#a970ff;box-shadow:0 0 0 1px #9147ff40}.twgif-url-input{flex:1 1 120px;width:100%}
@@ -1488,7 +1626,7 @@
       .twgif-primary{background:#9147ff;border-color:#9147ff;color:#fff}.twgif-primary:hover{background:#772ce8;border-color:#772ce8}
       .twgif-toolbar-icon{width:30px;min-width:30px;height:30px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:19px}
       .twgif-drop{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 7px;margin-bottom:8px;border:1px dashed #41414b;border-radius:7px;color:#a8a8b3;font-size:10px}
-      .twgif-drop strong{display:block;color:#d9d9df;font-size:10px;font-weight:600}.twgif-drop span{font-size:9px}.twgif-drop.twgif-drag{border-color:#a970ff;background:#9147ff1a}
+      .twgif-drop strong{display:block;color:#d9d9df;font-size:10px;font-weight:600}.twgif-drop span{font-size:9px}.twgif-drop.twgif-drag{border-color:#a970ff;background:#9147ff1a}#twgif-panel.twgif-drag{border-color:#a970ff;box-shadow:0 0 0 2px #9147ff55,0 10px 34px #0009}#twgif-panel.twgif-drag::after{content:'Отпусти файлы для добавления';position:absolute;inset:4px;z-index:20;display:flex;align-items:center;justify-content:center;border:2px dashed #b78cff;border-radius:8px;background:#18181be8;color:#f4eaff;font-size:14px;font-weight:700;pointer-events:none}
       .twgif-masonry{columns:4 78px;column-gap:7px}.twgif-masonry.twgif-grid-mode{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--twgif-tile-min,76px),1fr));align-items:start;gap:7px}.twgif-masonry[hidden]{display:none!important}
       .twgif-card{display:inline-block;position:relative;width:100%;margin:0 0 7px;break-inside:avoid;vertical-align:top;border:1px solid #34343b;border-radius:6px;overflow:visible;background:#202024;cursor:pointer;outline:none;transition:border-color .12s,box-shadow .12s}
       .twgif-card[hidden]{display:none!important}.twgif-masonry.twgif-grid-mode .twgif-card{display:block;width:100%;margin:0;overflow:visible}
@@ -1503,8 +1641,8 @@
       .twgif-settings{display:flex;flex-direction:column;gap:7px}.twgif-section{border:1px solid #33333a;border-radius:7px;padding:8px}.twgif-section-title{margin:0 0 7px;font-size:11px;font-weight:700;color:#dddde5}.twgif-help{color:#a8a8b3;font-size:10px;line-height:1.45;margin:5px 0 0}.twgif-help a{color:#bf94ff;text-decoration:none}.twgif-help a:hover{text-decoration:underline}.twgif-field-label{display:block;margin:6px 0 4px;font-size:10px;color:#c8c8d0}.twgif-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.twgif-row>.twgif-input{flex:1 1 145px}.twgif-check-row{display:flex;align-items:center;gap:7px;font-size:11px;color:#dbdbe2;margin:3px 0}.twgif-check-row input{accent-color:#9147ff}
       .twgif-debug-log{display:block;width:100%;min-height:78px;max-height:125px;resize:vertical;background:#0c0c0e;color:#bfc0cb;border:1px solid #36363d;border-radius:5px;padding:6px;font:10px/1.35 ui-monospace,Consolas,monospace}
       .twgif-chat-add{appearance:none!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;vertical-align:middle!important;width:16px!important;height:16px!important;margin:0 0 0 4px!important;padding:0!important;border:1px solid #9147ff70!important;border-radius:4px!important;color:#d7b8ff!important;background:#18181bcc!important;font:700 12px/1 system-ui!important;cursor:pointer!important;opacity:.35;transition:opacity .12s,background .12s!important}.twgif-chat-add:hover{opacity:1!important;background:#9147ff!important;color:#fff!important}
-      #twgif-hold-preview{position:fixed;z-index:2147483100;pointer-events:none;display:flex;align-items:center;justify-content:center;opacity:0;transform:scale(.88);transition:transform .18s ease,opacity .18s ease;filter:drop-shadow(0 12px 30px #000b);max-width:90vw;max-height:75vh}
-      #twgif-hold-preview.twgif-preview-visible{opacity:1;transform:scale(1)}#twgif-hold-preview img,#twgif-hold-preview video{display:block;max-width:90vw;max-height:75vh;object-fit:contain;border:1px solid #ffffff33;border-radius:8px;background:#111}
+      #twgif-hold-preview{position:fixed;z-index:2147483100;pointer-events:none;display:flex;align-items:center;justify-content:center;opacity:0;overflow:hidden;transform:scale(.92);transform-origin:center center;transition:transform .18s ease,opacity .18s ease;filter:drop-shadow(0 12px 30px #000b);max-width:calc(100vw - 16px);max-height:calc(100vh - 16px)}
+      #twgif-hold-preview.twgif-preview-visible{opacity:1;transform:scale(1)}#twgif-hold-preview img,#twgif-hold-preview video{display:block;width:100%;height:100%;max-width:100%;max-height:100%;object-fit:contain;border:1px solid #ffffff33;border-radius:8px;background:#111}
       @media(max-width:500px){#twgif-panel{max-height:68vh}.twgif-masonry{columns:3 66px}.twgif-drop{align-items:flex-start;flex-direction:column}.twgif-head{gap:2px;padding-left:6px}.twgif-heading{font-size:12px}}
     `;
     document.head.appendChild(style);
@@ -1573,12 +1711,19 @@
       if (panel.hidden || !event.dataTransfer) return;
       if (event.target?.closest?.('#twgif-drop')) return;
       const files = event.dataTransfer.files;
-      if (!files?.length) return;
       event.preventDefault();
       event.stopPropagation();
       if (event.stopImmediatePropagation) event.stopImmediatePropagation();
       panel.classList.remove('twgif-drag');
-      await processFiles(files);
+      if (files && files.length) {
+        await processFiles(files);
+        return;
+      }
+      const uri = (event.dataTransfer.getData('text/uri-list') || event.dataTransfer.getData('text/plain') || '').trim();
+      if (uri.startsWith('https://') || uri.startsWith('http://')) {
+        try { await addUrl(uri); }
+        catch (error) { setStatus(error.message || String(error), 'error', true); }
+      }
     });
   }
 
@@ -1659,31 +1804,34 @@
   function panelMetrics() {
     const panel = document.getElementById('twgif-panel');
     if (!panel || panel.hidden) return;
-    const input = getChatInput() || activeComposer;
-    if (!input || !input.isConnected) return;
+    const visibleInput = getChatInput();
+    const input = visibleInput || (activeComposer && activeComposer.isConnected ? activeComposer : null);
+    if (!input) return;
 
     const inputRect = input.getBoundingClientRect();
     const region = getChatRegion(input);
-    const regionRect = region.getBoundingClientRect
+    const regionRect = region && region.getBoundingClientRect
       ? region.getBoundingClientRect()
-      : { left: 0, right: innerWidth, top: 0, bottom: innerHeight, width: innerWidth, height: innerHeight };
+      : { left: 0, right: innerWidth, width: innerWidth };
+    const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
+    const viewportHeight = Math.max(1, document.documentElement.clientHeight || innerHeight);
+    const availableWidth = Math.max(1, Math.min(420, regionRect.width - 16, viewportWidth - 16));
+    panel.style.width = String(availableWidth) + 'px';
 
-    const availableWidth = Math.max(250, Math.min(420, regionRect.width - 16, innerWidth - 16));
-    panel.style.width = `${availableWidth}px`;
-    const roomAbove = Math.max(120, inputRect.top - 12);
-    panel.style.maxHeight = `${Math.max(120, Math.min(520, innerHeight * 0.68, roomAbove))}px`;
+    const roomAbove = Math.max(42, inputRect.top - 16);
+    panel.style.maxHeight = String(Math.max(42, Math.min(520, viewportHeight * 0.68, roomAbove))) + 'px';
+    panel.style.bottom = 'auto';
 
-    const panelHeight = panel.getBoundingClientRect().height || Math.min(380, innerHeight * 0.55);
-    const minLeft = Math.max(8, Math.min(innerWidth - availableWidth - 8, regionRect.left + 8));
-    const maxLeft = Math.max(minLeft, Math.min(innerWidth - availableWidth - 8, regionRect.right - availableWidth - 8));
-    // Align the panel's right edge with the input field's right edge.
-    const left = Math.round(Math.min(maxLeft, Math.max(minLeft, inputRect.right - availableWidth)));
-
-    // Keep the popup docked above the input. If the viewport is exceptionally short,
-    // it stays above the input and becomes scrollable instead of jumping to the bottom.
-    const top = Math.round(Math.max(8, Math.min(inputRect.top - panelHeight - 7, innerHeight - panelHeight - 8)));
-    panel.style.left = `${left}px`;
-    panel.style.top = `${top}px`;
+    const panelRect = panel.getBoundingClientRect();
+    const panelHeight = Math.min(panelRect.height || 380, roomAbove);
+    const minLeft = 8;
+    const maxLeft = Math.max(minLeft, viewportWidth - availableWidth - 8);
+    const desiredLeft = inputRect.right - availableWidth;
+    const regionLeft = Number.isFinite(regionRect.left) ? regionRect.left + 8 : minLeft;
+    const left = Math.round(Math.max(minLeft, Math.min(maxLeft, Math.max(regionLeft, desiredLeft))));
+    const top = Math.round(Math.max(8, inputRect.top - panelHeight - 8));
+    panel.style.left = String(left) + 'px';
+    panel.style.top = String(top) + 'px';
   }
 
   function repositionPanel() {
@@ -1993,20 +2141,60 @@
     return card;
   }
 
+  function positionHoldPreview(holder, card, media, config = loadConfig()) {
+    if (!holder || !card || !media) return;
+    const cardRect = card.getBoundingClientRect();
+    const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
+    const viewportHeight = Math.max(1, document.documentElement.clientHeight || innerHeight);
+    const maxDimension = clampInt(config.previewMaxSize ?? 1920, 480, 4000, 1920);
+    const isVideo = media.tagName === 'VIDEO';
+    const nativeWidth = Number(isVideo ? media.videoWidth : media.naturalWidth) || 0;
+    const nativeHeight = Number(isVideo ? media.videoHeight : media.naturalHeight) || 0;
+    let width;
+    let height;
+
+    if (nativeWidth > 0 && nativeHeight > 0) {
+      const scale = Math.min(1, maxDimension / Math.max(nativeWidth, nativeHeight),
+        (viewportWidth - 16) / nativeWidth, (viewportHeight - 16) / nativeHeight);
+      width = Math.max(1, Math.round(nativeWidth * scale));
+      height = Math.max(1, Math.round(nativeHeight * scale));
+    } else {
+      const fallbackRatio = cardRect.width > 0 && cardRect.height > 0 ? cardRect.height / cardRect.width : 0.75;
+      width = Math.min(maxDimension, viewportWidth - 16, Math.max(180, cardRect.width * 3));
+      height = width * fallbackRatio;
+      const scale = Math.min(1, (viewportWidth - 16) / width, (viewportHeight - 16) / height);
+      width = Math.max(1, Math.round(width * scale));
+      height = Math.max(1, Math.round(height * scale));
+    }
+
+    holder.style.width = String(width) + 'px';
+    holder.style.height = String(height) + 'px';
+    const left = Math.max(8, Math.min(viewportWidth - width - 8, cardRect.left + cardRect.width / 2 - width / 2));
+    const top = Math.max(8, Math.min(viewportHeight - height - 8, cardRect.top + cardRect.height / 2 - height / 2));
+    holder.style.left = String(Math.round(left)) + 'px';
+    holder.style.top = String(Math.round(top)) + 'px';
+    media.style.width = '100%';
+    media.style.height = '100%';
+    media.style.maxWidth = '100%';
+    media.style.maxHeight = '100%';
+  }
+
   function showHoldPreview(item, card) {
     if (!item || !card) return;
     const holder = document.getElementById('twgif-hold-preview');
     if (!holder) return;
     holdPreviewItem = item;
+    holder.__twgifCard = card;
     const url = item.previewUrl || item.url;
-    const isVideo = item.type === 'video' || /\.(webm|mp4|mov|mkv|avi)(?:$|[?#])/i.test(url);
+    let parsedPath = '';
+    try { parsedPath = new URL(url, location.href).pathname.toLowerCase(); } catch (_) {}
+    const isVideo = item.type === 'video' || ['.webm', '.mp4', '.mov', '.mkv', '.avi', '.ogv'].some(ext => parsedPath.endsWith(ext));
     const current = holder.firstElementChild;
-    const currentType = current?.tagName === 'VIDEO' ? 'video' : 'image';
+    const currentType = current && current.tagName === 'VIDEO' ? 'video' : 'image';
     const wantedType = isVideo ? 'video' : 'image';
-
-    // Reuse the same preview element when holding the same tile again. This avoids
-    // unnecessary new requests/decode work after the tab has been in the background.
+    const config = loadConfig();
     let el = current;
+
     if (!el || holder.dataset.currentUrl !== url || currentType !== wantedType) {
       holder.replaceChildren();
       el = document.createElement(isVideo ? 'video' : 'img');
@@ -2016,21 +2204,29 @@
         el.alt = '';
         el.decoding = 'async';
       }
-      el.src = url;
-      holder.appendChild(el);
+      const updateSize = () => {
+        if (holdPreviewItem && holdPreviewItem.id === item.id && holder.firstElementChild === el) {
+          positionHoldPreview(holder, card, el, config);
+        }
+      };
+      el.addEventListener(isVideo ? 'loadedmetadata' : 'load', updateSize);
+      el.addEventListener('error', () => {
+        if (holder.firstElementChild === el) {
+          holder.style.width = 'min(320px, calc(100vw - 16px))';
+          holder.style.height = 'auto';
+        }
+      }, { once: true });
       holder.dataset.currentUrl = url;
+      holder.appendChild(el);
+      el.src = url;
     }
 
-    const config = loadConfig();
-    const rect = card.getBoundingClientRect();
-    const scale = config.previewScale;
-    const width = Math.min(innerWidth * 0.88, Math.max(140, rect.width * scale));
-    holder.style.width = `${width}px`;
-    holder.style.left = `${Math.max(8, Math.min(innerWidth - width - 8, rect.left + rect.width / 2 - width / 2))}px`;
-    holder.style.top = `${Math.max(8, Math.min(innerHeight * 0.75 - 80, rect.top + rect.height / 2 - 100))}px`;
-    el.style.width = '100%';
+    positionHoldPreview(holder, card, el, config);
     if (isVideo && typeof el.play === 'function') el.play().catch(() => {});
-    requestAnimationFrame(() => holder.classList.add('twgif-preview-visible'));
+    requestAnimationFrame(() => {
+      positionHoldPreview(holder, card, el, config);
+      holder.classList.add('twgif-preview-visible');
+    });
   }
 
   function hideHoldPreview() {
@@ -2191,10 +2387,9 @@
             </select>
             <label class="twgif-field-label" for="twgif-page-size">Медиа на странице (10–500)</label>
             <input id="twgif-page-size" class="twgif-input" type="number" min="10" max="500" step="10" value="${config.pageSize}">
-            <label class="twgif-field-label" for="twgif-preview-scale">Увеличение при удержании</label>
-            <select id="twgif-preview-scale" class="twgif-input">
-              ${targetOptions(String(config.previewScale), [['1.1','110%'],['1.3','130%'],['1.6','160%'],['2','200%'],['2.5','250%'],['3','300%']])}
-            </select>
+            <label class="twgif-field-label" for="twgif-preview-max-size">Максимальный размер предпросмотра (px)</label>
+            <input id="twgif-preview-max-size" class="twgif-input" type="number" min="480" max="4000" step="100" value="${config.previewMaxSize}">
+            <div class="twgif-help">Предпросмотр отображается в исходном разрешении. Если оригинал больше заданного максимума или экрана, он уменьшается без увеличения сверх оригинала.</div>
             <div class="twgif-row" style="margin-top:8px">
               <button id="twgif-save-gallery-settings" class="twgif-small-btn twgif-primary" type="button">Применить</button>
               <button id="twgif-reset-defaults" class="twgif-small-btn" type="button">Настройки по умолчанию</button>
@@ -2209,12 +2404,12 @@
             <label class="twgif-field-label" for="twgif-max-width">Максимальная ширина (px)</label>
             <input id="twgif-max-width" class="twgif-input" type="number" min="100" max="4000" step="50" value="${config.maxWidth}">
             <label class="twgif-field-label" for="twgif-rule-image">Обычные изображения →</label>
-            <select id="twgif-rule-image" class="twgif-input">${targetOptions(config.conversionRules.image, [['keep','Не конвертировать'],['webp','WebP'],['jpg','JPG'],['png','PNG']])}</select>
+            <select id="twgif-rule-image" class="twgif-input">${targetOptions(config.conversionRules.image, [['keep','Оставить оригинал'],['webp','WebP'],['jpg','JPG'],['png','PNG'],['gif','GIF'],['mp4','MP4 (2 секунды)'],['webm','WebM (2 секунды)']])}</select>
             <label class="twgif-field-label" for="twgif-rule-gif">GIF →</label>
-            <select id="twgif-rule-gif" class="twgif-input">${targetOptions(config.conversionRules.gif, [['keep','Оставить GIF']])}</select>
+            <select id="twgif-rule-gif" class="twgif-input">${targetOptions(config.conversionRules.gif, [['keep','Оставить оригинал'],['gif','GIF (FFmpeg)'],['webp','Анимированный WebP'],['mp4','MP4'],['webm','WebM'],['jpg','JPG (первый кадр)'],['png','PNG (первый кадр)']])}</select>
             <label class="twgif-field-label" for="twgif-rule-video">Видео →</label>
-            <select id="twgif-rule-video" class="twgif-input">${targetOptions(config.conversionRules.video, [['keep','Оставить оригинал'],['webp','Анимированный WebP (FFmpeg.wasm)']])}</select>
-            <div class="twgif-help">Видео конвертируется в анимированный WebP через FFmpeg.wasm прямо в браузере. При первом использовании скачивается движок примерно 31 МБ. Исходное видео не отправляется на сервер конвертации; скорость зависит от процессора и размера видео.</div>
+            <select id="twgif-rule-video" class="twgif-input">${targetOptions(config.conversionRules.video, [['keep','Оставить оригинал'],['webp','Анимированный WebP'],['gif','GIF'],['mp4','MP4'],['webm','WebM'],['jpg','JPG (первый кадр)'],['png','PNG (первый кадр)']])}</select>
+            <div class="twgif-help">Все выбранные преобразования выполняются FFmpeg.wasm локально в браузере. При первом использовании движок скачивается один раз и сохраняется в IndexedDB; повторно загружать его не нужно. Для одиночного изображения при выборе MP4/WebM создаётся 2-секундный клип. JPG/PNG из видео/GIF берутся из первого кадра.</div>
             <button id="twgif-save-convert" class="twgif-small-btn twgif-primary" type="button" style="margin-top:8px">Сохранить правила</button>
           </div>
         </div>`;
@@ -2262,7 +2457,7 @@
           mediaScale: $('#twgif-media-scale').value,
           tileView: $('#twgif-tile-view').value,
           pageSize: $('#twgif-page-size').value,
-          previewScale: $('#twgif-preview-scale').value
+          previewMaxSize: $('#twgif-preview-max-size').value
         });
         galleryPage = 0;
         setStatus('Настройки галереи сохранены.', 'success');
@@ -2430,7 +2625,15 @@
     }
   });
 
-  window.addEventListener('resize', repositionPanel, { passive: true });
+  window.addEventListener('resize', () => {
+    repositionPanel();
+    if (holdPreviewItem) {
+      const holder = document.getElementById('twgif-hold-preview');
+      if (holder && holder.firstElementChild && holder.__twgifCard) {
+        positionHoldPreview(holder, holder.__twgifCard, holder.firstElementChild);
+      }
+    }
+  }, { passive: true });
   window.addEventListener('scroll', repositionPanel, { passive: true, capture: true });
 
   function installObservers() {
