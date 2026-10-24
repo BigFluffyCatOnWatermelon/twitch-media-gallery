@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.1.6
+// @version      5.1.7
 // @description  Twitch media gallery with FreeConvert conversion rules, original 7TV links, persistent previews, pagination and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -327,10 +327,10 @@
 
   function formatGitHubSyncError(error) {
     const message = String(error?.message || error || 'Неизвестная ошибка');
-    if (/HTTP 401\\b/i.test(message) || /Bad credentials/i.test(message)) {
+    if (/HTTP 401\b/i.test(message) || /Bad credentials/i.test(message)) {
       return 'GitHub отклонил токен (401 Bad credentials). Создай новый токен и замени старый: Fine-grained token — разрешение Gists: Read and write; Classic token — scope gist. Затем нажми «Сохранить доступ» и повтори действие.';
     }
-    if (/HTTP 403\\b/i.test(message)) {
+    if (/HTTP 403\b/i.test(message)) {
       return 'GitHub запретил операцию (403). Проверь срок действия токена и разрешение Gists: Read and write (для Classic token — gist).';
     }
     return message;
