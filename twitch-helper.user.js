@@ -3,8 +3,8 @@
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
 // @version      5.1.1
 // @description  Twitch media gallery with FreeConvert conversion rules, original 7TV links, persistent previews, pagination and Gist settings sync.
-// @updateURL    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
-// @downloadURL  https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
+// @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
+// @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @match        https://www.twitch.tv/*
 // @match        https://twitch.tv/*
 // @run-at       document-idle
