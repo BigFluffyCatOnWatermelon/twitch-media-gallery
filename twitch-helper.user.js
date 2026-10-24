@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.6.3
+// @version      5.7.0
 // @description  Twitch media gallery with cached FFmpeg.wasm media conversion, original 7TV links, persistent previews, pagination and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -38,7 +38,7 @@
   const FFMPEG_CORE_BASE_URL = `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/umd`;
   const FFMPEG_CACHE_DB = 'twgif-ffmpeg-assets-v1';
   const SETTINGS_FILENAME = 'twitch-gif-gallery-settings.json';
-  const SETTINGS_SCHEMA_VERSION = 6;
+  const SETTINGS_SCHEMA_VERSION = 7;
 
   let panelView = 'gallery';
   let settingsTab = 'general';
@@ -90,12 +90,50 @@
     pageSize: 100,
     previewMaxSize: 1920,
     conversionRules: { image: 'webp', gif: 'keep', video: 'webp' },
+    compression: {
+      imageQuality: 82,
+      animationQuality: 68,
+      videoMaxWidth: 1280,
+      videoFps: 24,
+      animationFps: 10,
+      videoBitrateKbps: 0,
+      audioBitrateKbps: 96,
+      videoCrf: 28,
+      speedPreset: 'ultrafast',
+      scaleFilter: 'fast_bilinear',
+      webpCompressionLevel: 0
+    },
     settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
     gistToken: '',
     gistId: '',
     debug: false,
     settingsUpdatedAt: 0
   });
+
+  function normalizeCompressionSettings(value = {}, fallback = DEFAULT_CONFIG().compression) {
+    const raw = value && typeof value === 'object' ? value : {};
+    const allowedPresets = ['ultrafast', 'superfast', 'veryfast', 'fast', 'medium'];
+    const allowedFilters = ['fast_bilinear', 'bilinear', 'bicubic', 'lanczos'];
+    const requestedPreset = String(raw.speedPreset ?? fallback.speedPreset);
+    const requestedFilter = String(raw.scaleFilter ?? fallback.scaleFilter);
+    return {
+      imageQuality: clampInt(raw.imageQuality ?? fallback.imageQuality, 30, 100, fallback.imageQuality),
+      animationQuality: clampInt(raw.animationQuality ?? fallback.animationQuality, 10, 100, fallback.animationQuality),
+      videoMaxWidth: clampInt(raw.videoMaxWidth ?? fallback.videoMaxWidth, 240, 4000, fallback.videoMaxWidth),
+      videoFps: clampInt(raw.videoFps ?? fallback.videoFps, 5, 60, fallback.videoFps),
+      animationFps: clampInt(raw.animationFps ?? fallback.animationFps, 3, 30, fallback.animationFps),
+      videoBitrateKbps: clampInt(raw.videoBitrateKbps ?? fallback.videoBitrateKbps, 0, 20000, fallback.videoBitrateKbps),
+      audioBitrateKbps: clampInt(raw.audioBitrateKbps ?? fallback.audioBitrateKbps, 32, 320, fallback.audioBitrateKbps),
+      videoCrf: clampInt(raw.videoCrf ?? fallback.videoCrf, 18, 40, fallback.videoCrf),
+      speedPreset: allowedPresets.includes(requestedPreset) ? requestedPreset : fallback.speedPreset,
+      scaleFilter: allowedFilters.includes(requestedFilter) ? requestedFilter : fallback.scaleFilter,
+      webpCompressionLevel: clampInt(raw.webpCompressionLevel ?? fallback.webpCompressionLevel, 0, 6, fallback.webpCompressionLevel)
+    };
+  }
+
+  function videoCpuUsedFromPreset(preset) {
+    return ({ ultrafast: 8, superfast: 7, veryfast: 6, fast: 5, medium: 4 })[preset] || 8;
+  }
 
   const SVG_GALLERY = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="13" height="14" rx="2"></rect><path d="M8 6V4.8A1.8 1.8 0 0 1 9.8 3h9.4A1.8 1.8 0 0 1 21 4.8v10.4a1.8 1.8 0 0 1-1.8 1.8H16"></path><circle cx="7.5" cy="10.5" r="1.3"></circle><path d="m4 17 4.2-4 2.5 2 1.8-1.5 1.5 1.4"></path></svg>';
   const SVG_SETTINGS = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="m19.4 15 .1.1a1.7 1.7 0 0 1-2.4 2.4l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a1.7 1.7 0 0 1-3.4 0v-.2a1.7 1.7 0 0 0-2.9-1.2l-.1.1a1.7 1.7 0 1 1-2.4-2.4l.1-.1a1.7 1.7 0 0 0-1.2-2.9H4a1.7 1.7 0 0 1 0-3.4h.2a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a1.7 1.7 0 1 1 2.4-2.4l.1.1a1.7 1.7 0 0 0 2.9-1.2V2a1.7 1.7 0 0 1 3.4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a1.7 1.7 0 1 1 2.4 2.4l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.2a1.7 1.7 0 0 1 0 3.4h-.2a1.7 1.7 0 0 0-1.2 2.9Z"></path></svg>';
@@ -153,17 +191,13 @@
     const legacy = parseJson(GM_getValue(LEGACY_SYNC_KEY, {}), {}) || {};
     const defaults = DEFAULT_CONFIG();
     const previousSchemaVersion = Number(raw.settingsSchemaVersion) || 0;
-    const rules = raw.conversionRules && typeof raw.conversionRules === 'object'
-      ? { ...raw.conversionRules }
-      : {};
+    const rules = raw.conversionRules && typeof raw.conversionRules === 'object' ? { ...raw.conversionRules } : {};
     const allowedTargets = {
       image: ['keep', 'webp', 'png', 'jpg', 'gif', 'mp4', 'webm'],
       gif: ['keep', 'gif', 'webp', 'png', 'jpg', 'mp4', 'webm'],
       video: ['keep', 'webp', 'gif', 'mp4', 'webm', 'png', 'jpg']
     };
-    const cleanTarget = (key, value) => allowedTargets[key].includes(String(value))
-      ? String(value)
-      : defaults.conversionRules[key];
+    const cleanTarget = (key, value) => allowedTargets[key].includes(String(value)) ? String(value) : defaults.conversionRules[key];
     const config = {
       maxWidth: clampInt(raw.maxWidth ?? defaults.maxWidth, 100, 4000, defaults.maxWidth),
       mediaScale: clampFloat(raw.mediaScale ?? defaults.mediaScale, 0.5, 2, defaults.mediaScale),
@@ -175,14 +209,13 @@
         gif: cleanTarget('gif', rules.gif ?? defaults.conversionRules.gif),
         video: cleanTarget('video', rules.video ?? defaults.conversionRules.video)
       },
+      compression: normalizeCompressionSettings(raw.compression, defaults.compression),
       gistToken: String(raw.gistToken || legacy.token || '').trim(),
       gistId: String(raw.gistId || legacy.gistId || '').trim(),
       debug: Boolean(raw.debug),
       settingsUpdatedAt: Number(raw.settingsUpdatedAt) || 0,
       settingsSchemaVersion: SETTINGS_SCHEMA_VERSION
     };
-
-    // Migrate prior settings to the current browser-local FFmpeg.wasm flow.
     if (previousSchemaVersion < SETTINGS_SCHEMA_VERSION) {
       if (!allowedTargets.image.includes(config.conversionRules.image)) config.conversionRules.image = defaults.conversionRules.image;
       if (!allowedTargets.gif.includes(config.conversionRules.gif)) config.conversionRules.gif = defaults.conversionRules.gif;
@@ -193,7 +226,6 @@
     return config;
   }
 
-
   function saveConfig(next) {
     const current = loadConfig();
     const defaults = DEFAULT_CONFIG();
@@ -203,16 +235,19 @@
       gif: ['keep', 'gif', 'webp', 'png', 'jpg', 'mp4', 'webm'],
       video: ['keep', 'webp', 'gif', 'mp4', 'webm', 'png', 'jpg']
     };
-    for (const key of ['image', 'gif', 'video']) {
-      if (!allowedTargets[key].includes(String(rules[key]))) rules[key] = defaults.conversionRules[key];
-    }
+    for (const key of ['image', 'gif', 'video']) if (!allowedTargets[key].includes(String(rules[key]))) rules[key] = defaults.conversionRules[key];
+    const compression = normalizeCompressionSettings({
+      ...current.compression,
+      ...(next.compression && typeof next.compression === 'object' ? next.compression : {})
+    }, defaults.compression);
     const config = {
       maxWidth: clampInt(next.maxWidth ?? current.maxWidth, 100, 4000, defaults.maxWidth),
       mediaScale: clampFloat(next.mediaScale ?? current.mediaScale, 0.5, 2, defaults.mediaScale),
       tileView: (next.tileView ?? current.tileView) === 'grid' ? 'grid' : 'masonry',
-      pageSize: clampInt(next.pageSize ?? 100, 10, 500, 100),
+      pageSize: clampInt(next.pageSize ?? current.pageSize, 10, 500, defaults.pageSize),
       previewMaxSize: clampInt(next.previewMaxSize ?? current.previewMaxSize, 480, 4000, defaults.previewMaxSize),
       conversionRules: rules,
+      compression,
       gistToken: String(next.gistToken ?? current.gistToken).trim(),
       gistId: String(next.gistId ?? current.gistId).trim(),
       debug: Boolean(next.debug ?? current.debug),
@@ -587,7 +622,7 @@
     });
   }
 
-  async function resizeStaticImage(file, maxWidth, outputFormat = 'webp') {
+  async function resizeStaticImage(file, maxWidth, outputFormat = 'webp', quality = 0.84) {
     // Decode only once: use the same bitmap to read dimensions and draw the output.
     const bitmap = await createImageBitmap(file);
     try {
@@ -626,7 +661,7 @@
       }
       context.drawImage(bitmap, 0, 0, width, height);
 
-      const blob = await canvasToBlob(canvas, targetMime, targetMime === 'image/png' ? undefined : 0.84);
+      const blob = await canvasToBlob(canvas, targetMime, targetMime === 'image/png' ? undefined : Math.max(0.3, Math.min(1, Number(quality) || 0.84)));
       if (!blob || blob.size < 20 || blob.type !== targetMime) {
         throw new Error('Браузер не смог создать корректный файл ' + outputFormat.toUpperCase() + '.');
       }
@@ -924,7 +959,7 @@
           const percent = Math.min(99, Math.round(ratio * 100));
           if (percent >= pending.lastPercent + 2 || percent === 99) {
             pending.lastPercent = percent;
-            pending.onStatus?.('FFmpeg.wasm: ' + percent + '%');
+            // Percent is displayed only beside the ring; status text describes the stage.
             pending.onProgress?.(percent);
           }
         }
@@ -955,7 +990,7 @@
     return worker;
   }
 
-  async function ffmpegMediaToFormat(file, outputFormat, maxWidth = loadConfig().maxWidth) {
+  async function ffmpegMediaToFormat(file, outputFormat, maxWidth = loadConfig().maxWidth, compression = loadConfig().compression) {
     if (!file || !file.size) throw new Error('Файл пустой.');
     const inputExt = fileExtension(file).replace(/[^a-z0-9]/gi, '') || 'bin';
     const validFormats = ['webp', 'gif', 'jpg', 'png', 'mp4', 'webm'];
@@ -966,6 +1001,18 @@
     const baseName = (dot > 0 ? originalName.slice(0, dot) : originalName) || 'media';
     const outputName = baseName + '.' + outputFormat;
     const width = clampInt(maxWidth, 100, 4000, DEFAULT_MAX_WIDTH);
+    const options = normalizeCompressionSettings(compression, DEFAULT_CONFIG().compression);
+    const videoFps = options.videoFps;
+    const animationFps = options.animationFps;
+    const videoBitrate = options.videoBitrateKbps;
+    const audioBitrate = options.audioBitrateKbps;
+    const videoCrf = options.videoCrf;
+    const speedPreset = options.speedPreset;
+    const cpuUsed = videoCpuUsedFromPreset(speedPreset);
+    const scaleMethod = options.scaleFilter;
+    const animationQuality = options.animationQuality;
+    const imageQuality = options.imageQuality;
+    const webpCompressionLevel = options.webpCompressionLevel;
     const worker = await getLocalFfmpegWorker();
     const inputBuffer = await file.arrayBuffer();
     const id = ++localFfmpegRequestId;
@@ -975,12 +1022,19 @@
     const sourceIsGif = mime === 'image/gif' || originalName.toLowerCase().endsWith('.gif');
     const sourceIsStillImage = mime.startsWith('image/') && !sourceIsGif;
     const outputIsVideo = outputFormat === 'mp4' || outputFormat === 'webm';
-    const scaleFilter = "scale='trunc(min(iw," + width + ")/2)*2':-2:flags=lanczos";
+    const scaleFilter = 'scale=' + width + ':' + width +
+      ':force_original_aspect_ratio=decrease:force_divisible_by=2:flags=' + scaleMethod;
+    const videoRateArgs = videoBitrate > 0
+      ? ['-b:v', videoBitrate + 'k', '-maxrate', Math.round(videoBitrate * 1.25) + 'k', '-bufsize', (videoBitrate * 2) + 'k']
+      : ['-crf', String(videoCrf)];
+    const webmRateArgs = videoBitrate > 0
+      ? ['-b:v', videoBitrate + 'k', '-maxrate', Math.round(videoBitrate * 1.25) + 'k', '-bufsize', (videoBitrate * 2) + 'k']
+      : ['-crf', String(videoCrf), '-b:v', '0'];
     const args = [];
 
     // When a still image is sent to a video container, create a short 2s clip.
     if (outputIsVideo && sourceIsStillImage) {
-      args.push('-loop', '1', '-framerate', '30', '-i', inputName, '-t', '2');
+      args.push('-loop', '1', '-framerate', String(videoFps), '-i', inputName, '-t', '2');
     } else {
       args.push('-i', inputName);
     }
@@ -988,7 +1042,7 @@
     if (outputFormat === 'gif') {
       args.push(
         '-filter_complex',
-        '[0:v]fps=12,' + scaleFilter + ',split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:diff_mode=rectangle',
+        '[0:v]fps=' + animationFps + ',' + scaleFilter + ',split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:diff_mode=rectangle',
         '-loop', '0',
         outputPath
       );
@@ -996,31 +1050,35 @@
       if (sourceIsStillImage) {
         args.push(
           '-vf', scaleFilter, '-frames:v', '1',
-          '-an', '-c:v', 'libwebp', '-quality', '78', '-compression_level', '3',
+          '-an', '-c:v', 'libwebp', '-quality', String(imageQuality), '-compression_level', String(webpCompressionLevel),
           outputPath
         );
       } else {
         args.push(
-          '-vf', 'fps=10,' + scaleFilter,
-          '-an', '-c:v', 'libwebp', '-quality', '68', '-compression_level', '3',
+          '-vf', 'fps=' + animationFps + ',' + scaleFilter,
+          '-an', '-c:v', 'libwebp', '-quality', String(animationQuality), '-compression_level', String(webpCompressionLevel),
           '-loop', '0', outputPath
         );
       }
     } else if (outputFormat === 'jpg') {
-      args.push('-vf', scaleFilter, '-frames:v', '1', '-q:v', '2', outputPath);
+      args.push('-vf', scaleFilter, '-frames:v', '1', '-q:v', String(Math.max(2, Math.round((100 - imageQuality) / 7))), outputPath);
     } else if (outputFormat === 'png') {
       args.push('-vf', scaleFilter, '-frames:v', '1', outputPath);
     } else if (outputFormat === 'mp4') {
       args.push(
-        '-vf', scaleFilter, '-c:v', 'libx264', '-preset', 'ultrafast',
-        '-crf', '25', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
-        '-c:a', 'aac', '-b:a', '128k', outputPath
+        '-vf', 'fps=' + videoFps + ',' + scaleFilter,
+        '-c:v', 'libx264', '-preset', speedPreset,
+        ...videoRateArgs,
+        '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
+        '-c:a', 'aac', '-b:a', audioBitrate + 'k', outputPath
       );
     } else if (outputFormat === 'webm') {
       args.push(
-        '-vf', scaleFilter, '-c:v', 'libvpx', '-deadline', 'realtime',
-        '-cpu-used', '4', '-crf', '32', '-b:v', '0',
-        '-c:a', 'libopus', '-b:a', '96k', outputPath
+        '-vf', 'fps=' + videoFps + ',' + scaleFilter,
+        '-c:v', 'libvpx', '-deadline', 'realtime',
+        '-cpu-used', String(cpuUsed),
+        ...webmRateArgs,
+        '-c:a', 'libopus', '-b:a', audioBitrate + 'k', outputPath
       );
     }
 
@@ -1117,12 +1175,13 @@
       try {
         setStatus('Конвертирую изображение встроенными средствами браузера…', 'info', true);
         setProgress(null, true);
-        return await resizeStaticImage(file, config.maxWidth, target);
+        return await resizeStaticImage(file, config.maxWidth, target, config.compression.imageQuality / 100);
       } catch (error) {
         logDebug('Canvas conversion failed; falling back to FFmpeg.wasm', { name: file.name, target, error: error.message || error });
       }
     }
-    return ffmpegMediaToFormat(file, target, config.maxWidth);
+    const conversionWidth = category === 'video' ? config.compression.videoMaxWidth : config.maxWidth;
+    return ffmpegMediaToFormat(file, target, conversionWidth, config.compression);
   }
 
 
@@ -1705,6 +1764,7 @@
       pageSize: config.pageSize,
       previewMaxSize: config.previewMaxSize,
       conversionRules: { ...config.conversionRules },
+      compression: { ...config.compression },
       debug: config.debug,
       settingsUpdatedAt: config.settingsUpdatedAt || 0,
       settingsSchemaVersion: SETTINGS_SCHEMA_VERSION
@@ -2698,22 +2758,51 @@
           </div>
         </div>`;
     } else if (settingsTab === 'convert') {
-      content = `
-        <div class="twgif-settings">
-          <div class="twgif-section">
-            <div class="twgif-section-title">Правила конвертации</div>
-            <label class="twgif-field-label" for="twgif-max-width">Максимальная ширина (px)</label>
-            <input id="twgif-max-width" class="twgif-input" type="number" min="100" max="4000" step="50" value="${config.maxWidth}">
-            <label class="twgif-field-label" for="twgif-rule-image">Обычные изображения →</label>
-            <select id="twgif-rule-image" class="twgif-input">${targetOptions(config.conversionRules.image, [['keep','Оставить оригинал'],['webp','WebP'],['jpg','JPG'],['png','PNG'],['gif','GIF'],['mp4','MP4 (2 секунды)'],['webm','WebM (2 секунды)']])}</select>
-            <label class="twgif-field-label" for="twgif-rule-gif">GIF →</label>
-            <select id="twgif-rule-gif" class="twgif-input">${targetOptions(config.conversionRules.gif, [['keep','Оставить оригинал'],['gif','GIF (FFmpeg)'],['webp','Анимированный WebP'],['mp4','MP4'],['webm','WebM'],['jpg','JPG (первый кадр)'],['png','PNG (первый кадр)']])}</select>
-            <label class="twgif-field-label" for="twgif-rule-video">Видео →</label>
-            <select id="twgif-rule-video" class="twgif-input">${targetOptions(config.conversionRules.video, [['keep','Оставить оригинал'],['webp','Анимированный WebP'],['gif','GIF'],['mp4','MP4'],['webm','WebM'],['jpg','JPG (первый кадр)'],['png','PNG (первый кадр)']])}</select>
-            <div class="twgif-help">Все выбранные преобразования выполняются FFmpeg.wasm локально в браузере. При первом использовании движок скачивается один раз и сохраняется в IndexedDB; повторно загружать его не нужно. Для одиночного изображения при выборе MP4/WebM создаётся 2-секундный клип. JPG/PNG из видео/GIF берутся из первого кадра.</div>
-            <button id="twgif-save-convert" class="twgif-small-btn twgif-primary" type="button" style="margin-top:8px">Сохранить правила</button>
-          </div>
-        </div>`;
+      const compression = config.compression;
+      content = '<div class="twgif-settings">' +
+        '<div class="twgif-section">' +
+          '<div class="twgif-section-title">Форматы и разрешение</div>' +
+          '<label class="twgif-field-label" for="twgif-max-width">Максимальная сторона фото/GIF/анимации (px)</label>' +
+          '<input id="twgif-max-width" class="twgif-input" type="number" min="100" max="4000" step="50" value="' + config.maxWidth + '">' +
+          '<label class="twgif-field-label" for="twgif-video-max-width">Максимальная сторона видео (px)</label>' +
+          '<input id="twgif-video-max-width" class="twgif-input" type="number" min="240" max="4000" step="80" value="' + compression.videoMaxWidth + '">' +
+          '<label class="twgif-field-label" for="twgif-rule-image">Обычные изображения →</label>' +
+          '<select id="twgif-rule-image" class="twgif-input">' + targetOptions(config.conversionRules.image, [['keep','Оставить оригинал'],['webp','WebP'],['jpg','JPG'],['png','PNG'],['gif','GIF'],['mp4','MP4 (2 секунды)'],['webm','WebM (2 секунды)']]) + '</select>' +
+          '<label class="twgif-field-label" for="twgif-rule-gif">GIF →</label>' +
+          '<select id="twgif-rule-gif" class="twgif-input">' + targetOptions(config.conversionRules.gif, [['keep','Оставить оригинал'],['gif','GIF'],['webp','Анимированный WebP'],['mp4','MP4'],['webm','WebM'],['jpg','JPG (первый кадр)'],['png','PNG (первый кадр)']]) + '</select>' +
+          '<label class="twgif-field-label" for="twgif-rule-video">Видео →</label>' +
+          '<select id="twgif-rule-video" class="twgif-input">' + targetOptions(config.conversionRules.video, [['keep','Оставить оригинал'],['webp','Анимированный WebP'],['gif','GIF'],['mp4','MP4'],['webm','WebM'],['jpg','JPG (первый кадр)'],['png','PNG (первый кадр)']]) + '</select>' +
+        '</div>' +
+        '<div class="twgif-section">' +
+          '<div class="twgif-section-title">Сжатие фото</div>' +
+          '<label class="twgif-field-label" for="twgif-image-quality">Качество JPG/WebP (30–100%)</label>' +
+          '<input id="twgif-image-quality" class="twgif-input" type="number" min="30" max="100" step="1" value="' + compression.imageQuality + '">' +
+          '<div class="twgif-help">Меньше качество — меньше файл. PNG остаётся без потерь. Обычные фото кодируются Canvas для скорости.</div>' +
+        '</div>' +
+        '<div class="twgif-section">' +
+          '<div class="twgif-section-title">Сжатие видео и анимаций</div>' +
+          '<label class="twgif-field-label" for="twgif-video-fps">FPS для MP4/WebM (5–60)</label>' +
+          '<input id="twgif-video-fps" class="twgif-input" type="number" min="5" max="60" step="1" value="' + compression.videoFps + '">' +
+          '<label class="twgif-field-label" for="twgif-animation-fps">FPS для GIF/анимированного WebP (3–30)</label>' +
+          '<input id="twgif-animation-fps" class="twgif-input" type="number" min="3" max="30" step="1" value="' + compression.animationFps + '">' +
+          '<label class="twgif-field-label" for="twgif-animation-quality">Качество анимированного WebP (10–100%)</label>' +
+          '<input id="twgif-animation-quality" class="twgif-input" type="number" min="10" max="100" step="1" value="' + compression.animationQuality + '">' +
+          '<label class="twgif-field-label" for="twgif-video-bitrate">Битрейт видео (кбит/с; 0 = автоматически)</label>' +
+          '<input id="twgif-video-bitrate" class="twgif-input" type="number" min="0" max="20000" step="100" value="' + compression.videoBitrateKbps + '">' +
+          '<label class="twgif-field-label" for="twgif-video-crf">Качество видео CRF (18–40; ниже = лучше)</label>' +
+          '<input id="twgif-video-crf" class="twgif-input" type="number" min="18" max="40" step="1" value="' + compression.videoCrf + '">' +
+          '<label class="twgif-field-label" for="twgif-audio-bitrate">Битрейт аудио (кбит/с)</label>' +
+          '<input id="twgif-audio-bitrate" class="twgif-input" type="number" min="32" max="320" step="16" value="' + compression.audioBitrateKbps + '">' +
+          '<label class="twgif-field-label" for="twgif-speed-preset">Скорость кодирования</label>' +
+          '<select id="twgif-speed-preset" class="twgif-input">' + targetOptions(compression.speedPreset, [['ultrafast','Максимальная скорость (файл больше)'],['superfast','Очень быстро'],['veryfast','Быстро'],['fast','Средне-быстро'],['medium','Медленнее, эффективнее сжатие']]) + '</select>' +
+          '<label class="twgif-field-label" for="twgif-scale-filter">Фильтр изменения размера</label>' +
+          '<select id="twgif-scale-filter" class="twgif-input">' + targetOptions(compression.scaleFilter, [['fast_bilinear','Самый быстрый'],['bilinear','Сбалансированный'],['bicubic','Более чёткий'],['lanczos','Лучшее качество, медленнее']]) + '</select>' +
+          '<label class="twgif-field-label" for="twgif-webp-effort">Усилие сжатия WebP (0–6; меньше = быстрее)</label>' +
+          '<input id="twgif-webp-effort" class="twgif-input" type="number" min="0" max="6" step="1" value="' + compression.webpCompressionLevel + '">' +
+          '<div class="twgif-help">Битрейт 0 включает режим качества CRF. Уменьшение разрешения/FPS и выбор «Максимальная скорость» обычно ускоряют конвертацию. Эта сборка FFmpeg.wasm однопоточная.</div>' +
+          '<button id="twgif-save-convert" class="twgif-small-btn twgif-primary" type="button" style="margin-top:8px">Сохранить настройки сжатия</button>' +
+        '</div></div>';
+
     } else if (settingsTab === 'sync') {
       content = `
         <div class="twgif-settings">
@@ -2787,8 +2876,21 @@
             gif: $('#twgif-rule-gif').value,
             video: $('#twgif-rule-video').value
           },
+          compression: {
+            imageQuality: $('#twgif-image-quality').value,
+            videoMaxWidth: $('#twgif-video-max-width').value,
+            videoFps: $('#twgif-video-fps').value,
+            animationFps: $('#twgif-animation-fps').value,
+            animationQuality: $('#twgif-animation-quality').value,
+            videoBitrateKbps: $('#twgif-video-bitrate').value,
+            videoCrf: $('#twgif-video-crf').value,
+            audioBitrateKbps: $('#twgif-audio-bitrate').value,
+            speedPreset: $('#twgif-speed-preset').value,
+            scaleFilter: $('#twgif-scale-filter').value,
+            webpCompressionLevel: $('#twgif-webp-effort').value
+          }
         });
-        setStatus('Правила конвертации сохранены локально. FFmpeg.wasm работает в браузере без API-ключа.', 'success');
+        setStatus('Правила форматов и настройки сжатия сохранены локально.', 'success', true);
       });
     }
 
@@ -2970,7 +3072,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.6.3 started', { href: location.href });
+    logDebug('Userscript v5.7.0 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
