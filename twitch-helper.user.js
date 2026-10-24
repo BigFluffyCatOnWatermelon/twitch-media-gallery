@@ -528,6 +528,20 @@
           if (desired) output[option.name] = desired.value;
         }
       }
+
+      // FreeConvert may expose the WebP animation loop setting under a
+      // format-specific option name. Prefer the exact option advertised by its API.
+      if (outputFormat === 'webp') {
+        const loopOption = available.find(option => {
+          const name = String(option?.name || '').toLowerCase();
+          const dataType = String(option?.data_type || '').toLowerCase();
+          const isNumeric = !dataType || ['number', 'integer', 'float'].includes(dataType);
+          const isLoopCount = /(?:^|_)loop_count$/.test(name);
+          const isLoop = name === 'loop' || /(?:^|_)loop$/.test(name);
+          return isNumeric && (isLoopCount || isLoop) && !/(?:^|_)(?:ignore|disable)_?loop/.test(name);
+        });
+        if (loopOption) output[loopOption.name] = 0;
+      }
     }
 
     return output;
@@ -544,17 +558,23 @@
     const options = await getFreeConvertOptions(inputFormat, outputFormat, maxWidth, isVideo);
     const outName = `${String(file.name || 'media').replace(/\.[^.]+$/, '')}.${outputFormat}`;
     const stamp = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const convertOptions = { loop_count: 0 };
+    if (isVideo && outputFormat === 'webp') {
+      // Keep existing options for other formats unchanged; add only the WebP loop option.
+      for (const optionName of Object.keys(options)) {
+        if (/loop/i.test(optionName)) convertOptions[optionName] = 0;
+      }
+    }
     const tasksDefinition = {
       'import-source': {
-    operation: 'import/upload'},
+        operation: 'import/upload'
+      },
       'convert-media': {
         operation: 'convert',
         input: 'import-source',
         input_format: inputFormat,
         output_format: outputFormat,
-        options: {
-            loop_count: 0
-    }
+        options: convertOptions
       },
       'export-media': {
         operation: 'export/url',
