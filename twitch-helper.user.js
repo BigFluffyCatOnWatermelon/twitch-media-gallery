@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.6.2
+// @version      5.6.3
 // @description  Twitch media gallery with cached FFmpeg.wasm media conversion, original 7TV links, persistent previews, pagination and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -915,7 +915,12 @@
         pending.onStatus?.(message.text || '');
       } else if (message.kind === 'progress') {
         const ratio = Number(message.progress);
-        if (Number.isFinite(ratio) && ratio >= 0) {
+        const source = String(message.source || 'core');
+        // The core callback is experimental and can report only 0 or 1 on
+        // some videos. Those values are not useful for displaying progression;
+        // let the FFmpeg log's time/duration fallback drive the indicator instead.
+        if (source === 'core' && (ratio <= 0 || ratio >= 0.99)) return;
+        if (Number.isFinite(ratio) && ratio >= 0 && ratio < 1) {
           const percent = Math.min(99, Math.round(ratio * 100));
           if (percent >= pending.lastPercent + 2 || percent === 99) {
             pending.lastPercent = percent;
@@ -2965,7 +2970,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.6.2 started', { href: location.href });
+    logDebug('Userscript v5.6.3 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
