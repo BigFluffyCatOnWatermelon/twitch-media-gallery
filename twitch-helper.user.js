@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.6.1
+// @version      5.6.2
 // @description  Twitch media gallery with cached FFmpeg.wasm media conversion, original 7TV links, persistent previews, pagination and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -777,7 +777,42 @@
     let engine = null;
     let loadingPromise = null;
     let activeId = null;
+    let activeDurationSeconds = 0;
+    let lastParsedProgress = 0;
     let recentErrors = [];
+
+    function timecodeToSeconds(match) {
+      if (!match) return 0;
+      return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+    }
+
+    function reportProgressFromLog(rawMessage) {
+      if (activeId === null) return;
+      const message = String(rawMessage || '');
+      const durationMatch = message.match(/\bduration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/i);
+      if (durationMatch) {
+        const duration = timecodeToSeconds(durationMatch);
+        if (duration > 0) activeDurationSeconds = duration;
+      }
+
+      // The WebAssembly core's setProgress callback is experimental and may not fire
+      // reliably. FFmpeg's own stats lines include time=HH:MM:SS.xx; compare that
+      // timestamp to the input duration announced during demuxing.
+      const timeMatch = message.match(/\btime\s*=\s*(\d+):(\d+):(\d+(?:\.\d+)?)/i);
+      if (!timeMatch || activeDurationSeconds <= 0) return;
+      const processedSeconds = timecodeToSeconds(timeMatch);
+      const ratio = Math.max(0, Math.min(0.99, processedSeconds / activeDurationSeconds));
+      if (ratio < lastParsedProgress + 0.005 && ratio < 0.99) return;
+      lastParsedProgress = ratio;
+      self.postMessage({
+        kind: 'progress',
+        id: activeId,
+        progress: ratio,
+        currentTime: processedSeconds,
+        duration: activeDurationSeconds,
+        source: 'ffmpeg-log'
+      });
+    }
 
     async function loadEngine(id) {
       if (engine) return engine;
@@ -789,15 +824,22 @@
         const assetInfo = btoa(JSON.stringify({ wasmURL: wasmUrl, workerURL: coreUrl }));
         engine = await self.createFFmpegCore({ mainScriptUrlOrBlob: coreUrl + '#' + assetInfo });
         engine.setLogger(data => {
-          const message = String(data && data.message || '').toLowerCase();
+          const rawMessage = String(data && data.message || '');
+          const message = rawMessage.toLowerCase();
           if (message && (message.includes('error') || message.includes('failed') || message.includes('invalid') ||
               message.includes('unknown decoder') || message.includes('unknown encoder'))) {
             recentErrors.push(message);
             if (recentErrors.length > 8) recentErrors.shift();
           }
+          reportProgressFromLog(rawMessage);
         });
         engine.setProgress(data => {
-          if (activeId !== null) self.postMessage({ kind: 'progress', id: activeId, progress: Number(data && data.ratio) });
+          const ratio = Number(data && data.ratio);
+          // Keep core-reported progress as a fallback, but log timestamps are the
+          // primary source for videos when this callback only reports 0/1 or nothing.
+          if (activeId !== null && Number.isFinite(ratio) && ratio >= 0 && ratio <= 1) {
+            self.postMessage({ kind: 'progress', id: activeId, progress: ratio, source: 'core' });
+          }
         });
         return engine;
       })();
@@ -808,6 +850,8 @@
     async function convert(message) {
       const id = message.id;
       activeId = id;
+      activeDurationSeconds = 0;
+      lastParsedProgress = 0;
       recentErrors = [];
       let wroteInput = false;
       let wroteOutput = false;
@@ -2921,7 +2965,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.6.1 started', { href: location.href });
+    logDebug('Userscript v5.6.2 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
