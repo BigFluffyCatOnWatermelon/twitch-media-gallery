@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.8.0
+// @version      5.9.0
 // @description  Twitch media gallery with cached FFmpeg.wasm media conversion, original 7TV links, persistent previews, pagination and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -74,6 +74,9 @@
   let syncTimer = 0;
   let syncRunning = false;
   let syncAgain = false;
+  let settingsSyncTimer = 0;
+  let settingsSyncRunning = false;
+  let settingsSyncAgain = false;
   let observer = null;
   let ensureQueued = false;
   let lastObservedInput = null;
@@ -170,6 +173,7 @@
           name: String(item.name || 'Медиафайл').slice(0, 120),
           type: String(item.type || 'image'),
           sourceKey: String(item.sourceKey || ''),
+          favorite: Boolean(item.favorite),
           addedAt,
           updatedAt
         };
@@ -262,10 +266,15 @@
       gistToken: String(next.gistToken ?? current.gistToken).trim(),
       gistId: String(next.gistId ?? current.gistId).trim(),
       debug: Boolean(next.debug ?? current.debug),
-      settingsUpdatedAt: Number.isFinite(Number(next.settingsUpdatedAt)) ? Number(next.settingsUpdatedAt) : Date.now(),
+      // Saving credentials alone must not mark stale local settings as newer than the Gist.
+      settingsUpdatedAt: Number.isFinite(Number(next.settingsUpdatedAt)) ? Number(next.settingsUpdatedAt) : current.settingsUpdatedAt,
       settingsSchemaVersion: SETTINGS_SCHEMA_VERSION
     };
+    const settingsChanged = settingsContentSignature(current) !== settingsContentSignature(config);
+    const hasExplicitTimestamp = next.settingsUpdatedAt !== undefined && Number.isFinite(Number(next.settingsUpdatedAt));
+    if (!hasExplicitTimestamp && settingsChanged) config.settingsUpdatedAt = Date.now();
     GM_setValue(CONFIG_KEY, config);
+    if (!hasExplicitTimestamp && settingsChanged) queueSettingsSync();
     return config;
   }
 
@@ -298,6 +307,13 @@
 
   function dataSignature(data) {
     return JSON.stringify(sortData(data));
+  }
+
+  function settingsContentSignature(config) {
+    const snapshot = syncableSettings(config);
+    delete snapshot.settingsUpdatedAt;
+    delete snapshot.settingsSchemaVersion;
+    return JSON.stringify(snapshot);
   }
 
   function mergeData(leftValue, rightValue) {
@@ -1306,6 +1322,7 @@
       name: String(name || 'Медиафайл').slice(0, 120),
       type: type || 'image',
       sourceKey: String(sourceKey || ''),
+      favorite: false,
       addedAt: now,
       updatedAt: now
     });
@@ -1451,7 +1468,7 @@
       catch (_) { name = 'Медиафайл'; }
     }
 
-    addItem(originalUrl, name, type, '', previewUrl);
+    return addItem(originalUrl, name, type, '', previewUrl);
   }
 
   function fileFingerprint(file) {
@@ -1556,6 +1573,16 @@
         setProgressCancelable(false);
       }
     }
+  }
+
+  function toggleFavorite(id) {
+    const data = loadData();
+    const item = data.items.find(entry => entry.id === id);
+    if (!item) return;
+    item.favorite = !item.favorite;
+    item.updatedAt = Math.max(Date.now(), (Number(item.updatedAt) || 0) + 1);
+    persistData(data);
+    setStatus(item.favorite ? 'Добавлено в избранное.' : 'Удалено из избранного.', 'success');
   }
 
   function deleteItem(id) {
@@ -1864,7 +1891,11 @@
 
   function parseDataForMerge(raw) {
     const clean = EMPTY_DATA();
-    clean.items = Array.isArray(raw.items) ? raw.items.filter(x => x && typeof x.id === 'string' && typeof x.url === 'string') : [];
+    clean.items = Array.isArray(raw.items)
+      ? raw.items
+        .filter(x => x && typeof x.id === 'string' && typeof x.url === 'string')
+        .map(item => ({ ...item, favorite: Boolean(item.favorite) }))
+      : [];
     clean.deleted = raw.deleted && typeof raw.deleted === 'object' ? raw.deleted : {};
     return clean;
   }
@@ -1935,13 +1966,19 @@
     return parseResponse(response, 'GitHub Gist');
   }
 
-  async function syncSettingsNow() {
+  async function performSyncSettingsOnce() {
     const config = loadConfig();
     if (!config.gistToken || !config.gistId) {
       throw new Error('Сначала сохрани GitHub token и ID Gist во вкладке синхронизации.');
     }
 
     const remote = await readGistFile(config, SETTINGS_FILENAME);
+    // If settings changed during the request, retry with the newest local snapshot.
+    const latestConfig = loadConfig();
+    if (latestConfig.settingsUpdatedAt !== config.settingsUpdatedAt) {
+      settingsSyncAgain = true;
+      return;
+    }
     const localSnapshot = syncableSettings(config);
 
     if (!remote || !Number(remote.settingsUpdatedAt)) {
@@ -2009,6 +2046,35 @@
     }
   }
 
+
+  async function syncSettingsNow() {
+    if (settingsSyncRunning) {
+      settingsSyncAgain = true;
+      return;
+    }
+    settingsSyncRunning = true;
+    try {
+      do {
+        settingsSyncAgain = false;
+        await performSyncSettingsOnce();
+      } while (settingsSyncAgain);
+    } finally {
+      settingsSyncRunning = false;
+    }
+  }
+
+  function queueSettingsSync() {
+    const config = loadConfig();
+    if (!config.gistToken || !config.gistId) return;
+    if (settingsSyncTimer) clearTimeout(settingsSyncTimer);
+    settingsSyncTimer = setTimeout(() => {
+      settingsSyncTimer = 0;
+      syncSettingsNow().catch(error => {
+        logDebug('Automatic settings sync failed', error);
+        if (isPanelOpen()) setStatus(`Автосинхронизация настроек: ${formatGitHubSyncError(error)}`, 'error', true);
+      });
+    }, 1500);
+  }
 
   async function performSyncOnce() {
     const config = loadConfig();
@@ -2394,7 +2460,9 @@
     renderPanelView();
     repositionPanel();
     if (loadConfig().gistToken && loadConfig().gistId) {
-      syncNow().catch(error => setStatus(`Синхронизация: ${formatGitHubSyncError(error)}`, 'error', true));
+      syncNow()
+        .then(() => syncSettingsNow())
+        .catch(error => setStatus(`Синхронизация: ${formatGitHubSyncError(error)}`, 'error', true));
     }
     logDebug('Panel opened');
   }
@@ -2466,16 +2534,30 @@
     const urlInput = body.querySelector('#twgif-url-input');
     const addButton = body.querySelector('#twgif-add-url');
     const addLink = async () => {
-      const value = urlInput.value.trim();
-      if (!value) { urlInput.focus(); return; }
+      const links = urlInput.value.trim().split(/\s+/).filter(Boolean);
+      if (!links.length) { urlInput.focus(); return; }
       addButton.disabled = true;
-      setStatus('Проверяю ссылку…', 'info', true);
+      let added = 0;
+      let skipped = 0;
+      const failures = [];
       try {
-        await addUrl(value);
+        for (let i = 0; i < links.length; i++) {
+          const link = links[i];
+          setStatus(`Добавляю ссылки: ${i + 1} из ${links.length}…`, 'info', true);
+          try {
+            if (await addUrl(link)) added++;
+            else skipped++;
+          } catch (error) {
+            failures.push(`${link}: ${error.message || error}`);
+            logDebug('Bulk URL add failed', { link, error: error.message || error });
+          }
+        }
         urlInput.value = '';
         urlInput.focus();
-      } catch (error) {
-        setStatus(error.message || String(error), 'error', true);
+        const summary = `Добавлено: ${added}; уже есть: ${skipped}; ошибок: ${failures.length}.`;
+        setStatus(failures.length
+          ? summary + ' ' + failures.slice(0, 2).join(' | ')
+          : summary, failures.length ? 'error' : 'success', true);
       } finally {
         addButton.disabled = false;
       }
@@ -3064,8 +3146,7 @@
         saveConfig({
           ...DEFAULT_CONFIG(),
           gistToken: current.gistToken,
-          gistId: current.gistId,
-          settingsUpdatedAt: Date.now()
+          gistId: current.gistId
         });
         galleryPage = 0;
         settingsTab = 'general';
