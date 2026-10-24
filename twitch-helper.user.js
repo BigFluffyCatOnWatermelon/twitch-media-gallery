@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.7.0
+// @version      5.8.0
 // @description  Twitch media gallery with cached FFmpeg.wasm media conversion, original 7TV links, persistent previews, pagination and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -42,6 +42,7 @@
 
   let panelView = 'gallery';
   let settingsTab = 'general';
+  let galleryTab = 'all';
   let galleryPage = 0;
   let mediaLoadRun = 0;
   let chatMediaObserver = null;
@@ -57,6 +58,7 @@
   let suppressMediaClickUntil = 0;
   const mediaCardCache = new Map();
   const loadedMediaUrls = new Set();
+  let galleryResizeObserver = null;
   let activeTrigger = null;
   let activeComposer = null;
   let savedComposerRange = null;
@@ -66,6 +68,9 @@
   let statusTimer = 0;
   let progressHideTimer = 0;
   let progressGeneration = 0;
+  let processingRunId = 0;
+  let activeProcessingRunId = 0;
+  let activeUploadRequest = null;
   let syncTimer = 0;
   let syncRunning = false;
   let syncAgain = false;
@@ -153,16 +158,22 @@
     const rawItems = Array.isArray(raw.items) ? raw.items : [];
     const cleaned = rawItems
       .filter(item => item && typeof item.id === 'string' && typeof item.url === 'string')
-      .map(item => ({
-        id: String(item.id),
-        url: String(item.url),
-        previewUrl: String(item.previewUrl || item.url),
-        name: String(item.name || 'Медиафайл').slice(0, 120),
-        type: String(item.type || 'image'),
-        sourceKey: String(item.sourceKey || ''),
-        addedAt: Number(item.addedAt) || Date.now(),
-        updatedAt: Number(item.updatedAt) || Number(item.addedAt) || Date.now()
-      }));
+      .map(item => {
+        // Missing legacy timestamps must stay stable between reads. Using Date.now()
+        // here made old entries appear new on every gallery refresh.
+        const addedAt = Number(item.addedAt) || Number(item.updatedAt) || 0;
+        const updatedAt = Number(item.updatedAt) || addedAt;
+        return {
+          id: String(item.id),
+          url: String(item.url),
+          previewUrl: String(item.previewUrl || item.url),
+          name: String(item.name || 'Медиафайл').slice(0, 120),
+          type: String(item.type || 'image'),
+          sourceKey: String(item.sourceKey || ''),
+          addedAt,
+          updatedAt
+        };
+      });
 
     // Clean duplicates already created by older builds. A local file fingerprint is
     // more reliable than the Kappa URL because uploading the same file creates a new URL.
@@ -275,9 +286,14 @@
       items: Array.isArray(data.items) ? data.items.slice() : [],
       deleted: data.deleted && typeof data.deleted === 'object' ? { ...data.deleted } : {}
     };
-    normalized.items.sort((a, b) => b.addedAt - a.addedAt || a.name.localeCompare(b.name));
+    normalized.items.sort(compareGalleryItems);
     normalized.deleted = Object.fromEntries(Object.entries(normalized.deleted).sort(([a], [b]) => a.localeCompare(b)));
     return normalized;
+  }
+
+  function compareGalleryItems(a, b) {
+    return (Number(b.addedAt) || 0) - (Number(a.addedAt) || 0) ||
+      (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0);
   }
 
   function dataSignature(data) {
@@ -353,6 +369,7 @@
     progressHideTimer = 0;
     if (!active) {
       progressGeneration++;
+      indicator.dataset.cancelable = 'false';
       indicator.hidden = true;
       return;
     }
@@ -383,22 +400,95 @@
     }, delayMs);
   }
 
+  function setProgressCancelable(active) {
+    const indicator = document.getElementById('twgif-progress');
+    if (indicator) indicator.dataset.cancelable = String(Boolean(active));
+  }
+
+  function isProcessingRunCurrent(runId) {
+    return runId == null || Number(runId) === processingRunId;
+  }
+
+  function ensureProcessingRun(runId) {
+    if (isProcessingRunCurrent(runId)) return;
+    const error = new Error('Обработка отменена пользователем.');
+    error.name = 'AbortError';
+    throw error;
+  }
+
+  function terminateLocalFfmpegWorker(reason = 'Обработка отменена пользователем.') {
+    const worker = localFfmpegWorker;
+    const workerUrl = localFfmpegWorkerUrl;
+    localFfmpegWorker = null;
+    localFfmpegWorkerUrl = '';
+    if (worker) {
+      try { worker.terminate(); } catch (_) {}
+    }
+    if (workerUrl) {
+      try { URL.revokeObjectURL(workerUrl); } catch (_) {}
+    }
+    for (const [id, pending] of Array.from(localFfmpegPending.entries())) {
+      clearTimeout(pending.timeout);
+      localFfmpegPending.delete(id);
+      const error = new Error(reason);
+      error.name = 'AbortError';
+      pending.reject(error);
+    }
+  }
+
+  function cancelActiveProcessing() {
+    if (!activeProcessingRunId) return;
+    const cancelledRun = activeProcessingRunId;
+    processingRunId++;
+    activeProcessingRunId = 0;
+
+    const uploadRequest = activeUploadRequest;
+    activeUploadRequest = null;
+    if (uploadRequest && typeof uploadRequest.abort === 'function') {
+      try { uploadRequest.abort(); } catch (_) {}
+    }
+    terminateLocalFfmpegWorker();
+
+    setProgressCancelable(false);
+    setProgress(null, false);
+    setStatus('Обработка отменена.', 'info', true);
+    logDebug('File processing cancelled by user', { runId: cancelledRun });
+  }
+
   function request(options) {
     return new Promise((resolve, reject) => {
-      const { acceptHttpErrors = false, ...xhrOptions } = options;
-      GM_xmlhttpRequest({
+      const { acceptHttpErrors = false, trackForCancel = false, ...xhrOptions } = options;
+      let xhr = null;
+      const clearTrackedRequest = () => {
+        if (trackForCancel && activeUploadRequest === xhr) activeUploadRequest = null;
+      };
+      xhr = GM_xmlhttpRequest({
         ...xhrOptions,
         timeout: options.timeout || 35000,
         onload: response => {
+          clearTrackedRequest();
           if ((response.status >= 200 && response.status < 300) || acceptHttpErrors) resolve(response);
           else {
             const detail = String(response.responseText || '').slice(0, 500);
             reject(new Error('HTTP ' + response.status + (detail ? ' — ' + detail : '')));
           }
         },
-        onerror: () => reject(new Error('Сетевая ошибка. Проверь соединение и доступ к сервису.')),
-        ontimeout: () => reject(new Error('Истекло время ожидания ответа сервера.'))
+        onerror: () => {
+          clearTrackedRequest();
+          reject(new Error('Сетевая ошибка. Проверь соединение и доступ к сервису.'));
+        },
+        ontimeout: () => {
+          clearTrackedRequest();
+          reject(new Error('Истекло время ожидания ответа сервера.'));
+        },
+        onabort: () => {
+          clearTrackedRequest();
+          const error = new Error('Запрос отменён пользователем.');
+          error.name = 'AbortError';
+          reject(error);
+        }
       });
+      if (trackForCancel) activeUploadRequest = xhr;
     });
   }
 
@@ -512,17 +602,19 @@
     return null;
   }
 
-  async function uploadToKappa(file, onUploadProgress = null) {
+  async function uploadToKappa(file, onUploadProgress = null, runId = null) {
     const endpoints = [KAPPA_UPLOAD_URL, KAPPA_UPLOAD_MIRROR_URL];
     let lastError = null;
     logDebug('Kappa upload start', { name: file.name, size: file.size, type: file.type });
 
     for (let index = 0; index < endpoints.length; index++) {
+      ensureProcessingRun(runId);
       const endpoint = endpoints[index];
       const form = new FormData();
       form.append('file', file, file.name || 'media');
       const response = await request({
         method: 'POST', url: endpoint, data: form, timeout: 120000, acceptHttpErrors: true,
+        trackForCancel: true,
         upload: {
           onprogress: event => {
             const loaded = Number(event && event.loaded);
@@ -990,7 +1082,7 @@
     return worker;
   }
 
-  async function ffmpegMediaToFormat(file, outputFormat, maxWidth = loadConfig().maxWidth, compression = loadConfig().compression) {
+  async function ffmpegMediaToFormat(file, outputFormat, maxWidth = loadConfig().maxWidth, compression = loadConfig().compression, runId = null) {
     if (!file || !file.size) throw new Error('Файл пустой.');
     const inputExt = fileExtension(file).replace(/[^a-z0-9]/gi, '') || 'bin';
     const validFormats = ['webp', 'gif', 'jpg', 'png', 'mp4', 'webm'];
@@ -1014,7 +1106,9 @@
     const imageQuality = options.imageQuality;
     const webpCompressionLevel = options.webpCompressionLevel;
     const worker = await getLocalFfmpegWorker();
+    ensureProcessingRun(runId);
     const inputBuffer = await file.arrayBuffer();
+    ensureProcessingRun(runId);
     const id = ++localFfmpegRequestId;
     const inputName = 'input_' + id + '.' + inputExt;
     const outputPath = 'output_' + id + '.' + outputFormat;
@@ -1158,7 +1252,8 @@
     return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
   }
 
-  async function prepareUpload(file) {
+  async function prepareUpload(file, runId = null) {
+    ensureProcessingRun(runId);
     if (!file || !file.size) throw new Error('Файл пустой.');
     if (file.size > MAX_FILE_BYTES) throw new Error('Файл больше ' + formatBytes(MAX_FILE_BYTES) + '. Уменьши его перед загрузкой.');
     const mime = mimeFromFile(file);
@@ -1175,13 +1270,16 @@
       try {
         setStatus('Конвертирую изображение встроенными средствами браузера…', 'info', true);
         setProgress(null, true);
-        return await resizeStaticImage(file, config.maxWidth, target, config.compression.imageQuality / 100);
+        const converted = await resizeStaticImage(file, config.maxWidth, target, config.compression.imageQuality / 100);
+        ensureProcessingRun(runId);
+        return converted;
       } catch (error) {
+        if (!isProcessingRunCurrent(runId)) throw error;
         logDebug('Canvas conversion failed; falling back to FFmpeg.wasm', { name: file.name, target, error: error.message || error });
       }
     }
     const conversionWidth = category === 'video' ? config.compression.videoMaxWidth : config.maxWidth;
-    return ffmpegMediaToFormat(file, target, conversionWidth, config.compression);
+    return ffmpegMediaToFormat(file, target, conversionWidth, config.compression, runId);
   }
 
 
@@ -1265,6 +1363,11 @@
     if (!url || !/(^|\.)7tv\.app$/i.test(url.hostname)) return '';
     const match = url.pathname.match(/^\/emotes?\/([a-z0-9]{20,32})\/?$/i);
     return match ? match[1] : '';
+  }
+
+  function is7TVGalleryItem(item) {
+    try { return Boolean(item && parse7TVEmoteId(new URL(item.url, location.href))); }
+    catch (_) { return false; }
   }
 
   async function resolve7TVEmote(url) {
@@ -1355,12 +1458,14 @@
     return [String(file.name || ''), String(file.size || 0), String(file.lastModified || 0), String(file.type || '')].join('|');
   }
 
-  async function processSingleFile(file, sourceKey) {
+  async function processSingleFile(file, sourceKey, runId) {
     setProgress(0, true);
     try {
+      ensureProcessingRun(runId);
       setStatus('Подготавливаю «' + (file.name || 'медиа') + '»…', 'info', true);
       setProgress(4, true);
-      const prepared = await prepareUpload(file);
+      const prepared = await prepareUpload(file, runId);
+      ensureProcessingRun(runId);
       setProgress(65, true);
       setStatus('Загружаю «' + (prepared.name || file.name) + '» на kappa.lol…', 'info', true);
       // Upload byte progress is not consistently exposed by userscript managers,
@@ -1369,7 +1474,8 @@
       const uploaded = await uploadToKappa(prepared, percent => {
         // Conversion occupies the first 65%; upload occupies the last 35%.
         setProgress(65 + Math.round(percent * 0.35), true);
-      });
+      }, runId);
+      ensureProcessingRun(runId);
       const ext = fileExtension(prepared);
       const type = ext === 'gif' ? 'gif'
         : ['webm', 'mp4', 'mov', 'mkv', 'avi'].includes(ext) ? 'video' : 'image';
@@ -1379,6 +1485,10 @@
       finishProgress(1200);
       return true;
     } catch (error) {
+      if (error?.name === 'AbortError' || !isProcessingRunCurrent(runId)) {
+        logDebug('File processing cancelled', file.name);
+        return false;
+      }
       logDebug('File processing failed', file.name, error);
       setStatus((file.name || 'Файл') + ': ' + (error.message || error), 'error', true);
       finishProgress(2400);
@@ -1397,38 +1507,53 @@
       setStatus('Буфер или перетаскивание не содержат изображение или видео.', 'error');
       return;
     }
+    if (activeProcessingRunId) {
+      setStatus('Уже выполняется обработка. Её можно отменить значком стоп у кольца прогресса.', 'info', true);
+      return;
+    }
 
-    for (const file of files) {
-      const key = fileFingerprint(file);
-      const now = Date.now();
-      for (const [fingerprint, expiresAt] of recentFileFingerprints) {
-        if (expiresAt <= now) recentFileFingerprints.delete(fingerprint);
-      }
-      if (loadData().items.some(item => item.sourceKey && item.sourceKey === key)) {
-        logDebug('File fingerprint already exists in collection; upload skipped', { name: file.name, size: file.size });
-        setStatus(`«${file.name || 'Файл'}» уже есть в галерее — повторная загрузка пропущена.`, 'info');
-        recentFileFingerprints.set(key, Date.now() + 20000);
-        continue;
-      }
-      if (processingFiles.has(key)) {
-        logDebug('Duplicate file event ignored while processing', { name: file.name, size: file.size });
-        continue;
-      }
-      if ((recentFileFingerprints.get(key) || 0) > now) {
-        logDebug('Repeated file event ignored after success', { name: file.name, size: file.size });
-        continue;
-      }
+    const runId = ++processingRunId;
+    activeProcessingRunId = runId;
+    setProgressCancelable(true);
+    try {
+      for (const file of files) {
+        if (!isProcessingRunCurrent(runId)) break;
+        const key = fileFingerprint(file);
+        const now = Date.now();
+        for (const [fingerprint, expiresAt] of recentFileFingerprints) {
+          if (expiresAt <= now) recentFileFingerprints.delete(fingerprint);
+        }
+        if (loadData().items.some(item => item.sourceKey && item.sourceKey === key)) {
+          logDebug('File fingerprint already exists in collection; upload skipped', { name: file.name, size: file.size });
+          setStatus(`«${file.name || 'Файл'}» уже есть в галерее — повторная загрузка пропущена.`, 'info');
+          recentFileFingerprints.set(key, Date.now() + 20000);
+          continue;
+        }
+        if (processingFiles.has(key)) {
+          logDebug('Duplicate file event ignored while processing', { name: file.name, size: file.size });
+          continue;
+        }
+        if ((recentFileFingerprints.get(key) || 0) > now) {
+          logDebug('Repeated file event ignored after success', { name: file.name, size: file.size });
+          continue;
+        }
 
-      // Register before the first await so a bubbling/duplicate event cannot
-      // create a second converter job and a second Kappa upload.
-      const task = processSingleFile(file, key);
-      processingFiles.set(key, task);
-      let succeeded = false;
-      try {
-        succeeded = await task;
-      } finally {
-        processingFiles.delete(key);
-        if (succeeded) recentFileFingerprints.set(key, Date.now() + 20000);
+        // Register before the first await so a bubbling/duplicate event cannot
+        // create a second converter job and a second Kappa upload.
+        const task = processSingleFile(file, key, runId);
+        processingFiles.set(key, task);
+        let succeeded = false;
+        try {
+          succeeded = await task;
+        } finally {
+          processingFiles.delete(key);
+          if (succeeded) recentFileFingerprints.set(key, Date.now() + 20000);
+        }
+      }
+    } finally {
+      if (activeProcessingRunId === runId) {
+        activeProcessingRunId = 0;
+        setProgressCancelable(false);
       }
     }
   }
@@ -1440,7 +1565,10 @@
     data.items = data.items.filter(entry => entry.id !== id);
     data.deleted[id] = Date.now();
     const cachedCard = mediaCardCache.get(id);
-    if (cachedCard) cachedCard.remove();
+    if (cachedCard) {
+      if (galleryResizeObserver) galleryResizeObserver.unobserve(cachedCard);
+      cachedCard.remove();
+    }
     mediaCardCache.delete(id);
     persistData(data);
     setStatus('Удалено из галереи.', 'success');
@@ -1931,6 +2059,10 @@
       .twgif-settings-tabs{display:flex;align-items:center;gap:1px}.twgif-settings-tabs[hidden]{display:none!important}
       .twgif-tab{appearance:none;border:0;background:transparent;color:#a8a8b3;width:28px;height:28px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
       .twgif-tab:hover{background:#303036;color:#fff}.twgif-tab[aria-selected=true]{background:#392653;color:#d6b4ff}
+      .twgif-gallery-tabs{display:flex;gap:5px;margin:0 0 8px}
+      .twgif-gallery-tab{appearance:none;display:inline-flex;align-items:center;gap:5px;border:1px solid #3c3c44;border-radius:6px;background:#202024;color:#bcbcc6;padding:6px 9px;font:500 11px/1.2 inherit;cursor:pointer}
+      .twgif-gallery-tab:hover{background:#303036;color:#fff}.twgif-gallery-tab[aria-selected=true]{border-color:#8b5bd4;background:#392653;color:#e8d7ff}
+      .twgif-gallery-tab-count{font-size:9px;opacity:.75}
       .twgif-panel-body{padding:9px 10px 10px;overflow:auto;min-height:0;overscroll-behavior:contain}
       .twgif-toolbar{display:flex;align-items:center;gap:5px;margin-bottom:8px}
       .twgif-input{display:block;width:100%;min-width:0;background:#0e0e10;color:#efeff1;border:1px solid #3f3f46;border-radius:6px;padding:8px 9px;outline:none;font-family:inherit;font-size:12px;line-height:1.35}
@@ -1942,9 +2074,9 @@
       .twgif-toolbar-icon{width:30px;min-width:30px;height:30px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:19px}
       .twgif-drop{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 7px;margin-bottom:8px;border:1px dashed #41414b;border-radius:7px;color:#a8a8b3;font-size:10px}
       .twgif-drop strong{display:block;color:#d9d9df;font-size:10px;font-weight:600}.twgif-drop span{font-size:9px}.twgif-drop.twgif-drag{border-color:#a970ff;background:#9147ff1a}#twgif-panel.twgif-drag{border-color:#a970ff;box-shadow:0 0 0 2px #9147ff55,0 10px 34px #0009}#twgif-panel.twgif-drag::after{content:'Отпусти файлы для добавления';position:absolute;inset:4px;z-index:20;display:flex;align-items:center;justify-content:center;border:2px dashed #b78cff;border-radius:8px;background:#18181be8;color:#f4eaff;font-size:14px;font-weight:700;pointer-events:none}
-      .twgif-masonry{columns:4 78px;column-gap:7px}.twgif-masonry.twgif-grid-mode{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--twgif-tile-min,76px),1fr));align-items:start;gap:7px}.twgif-masonry[hidden]{display:none!important}
-      .twgif-card{display:inline-block;position:relative;width:100%;margin:0 0 7px;break-inside:avoid;vertical-align:top;border:1px solid #34343b;border-radius:6px;overflow:visible;background:#202024;cursor:pointer;outline:none;transition:border-color .12s,box-shadow .12s}
-      .twgif-card[hidden]{display:none!important}.twgif-masonry.twgif-grid-mode .twgif-card{display:block;width:100%;margin:0;overflow:visible}.twgif-card,.twgif-card img,.twgif-card video{user-select:none;-webkit-user-select:none;-webkit-user-drag:none}
+      .twgif-masonry{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--twgif-tile-min,76px),1fr));grid-auto-rows:1px;align-items:start;column-gap:7px;row-gap:7px}.twgif-masonry.twgif-grid-mode{grid-auto-rows:auto;gap:7px}.twgif-masonry[hidden]{display:none!important}
+      .twgif-card{display:block;align-self:start;position:relative;width:100%;margin:0;vertical-align:top;border:1px solid #34343b;border-radius:6px;overflow:visible;background:#202024;cursor:pointer;outline:none;transition:border-color .12s,box-shadow .12s}
+      .twgif-card[hidden]{display:none!important}.twgif-masonry.twgif-grid-mode .twgif-card{display:block;width:100%;margin:0;overflow:visible;grid-row-end:auto!important}.twgif-card,.twgif-card img,.twgif-card video{user-select:none;-webkit-user-select:none;-webkit-user-drag:none}
       .twgif-media-frame{position:relative;overflow:hidden;border-radius:5px;background:#101012;isolation:isolate}
       .twgif-media{display:block;width:100%;height:auto;max-width:100%;background:#101012;object-fit:contain}.twgif-masonry.twgif-grid-mode .twgif-media{width:100%;height:var(--twgif-thumb-height,90px);object-fit:contain}
       .twgif-media-error{min-height:44px;padding:10px;text-align:center;color:#9c9ca6;font-size:10px}
@@ -1953,7 +2085,16 @@
       .twgif-pagination{display:flex;align-items:center;justify-content:center;gap:10px;padding:9px 0 0}.twgif-pagination[hidden]{display:none!important}.twgif-page-label{font-size:10px;color:#b7b7c1;min-width:54px;text-align:center}
       .twgif-empty{padding:22px 8px;text-align:center;color:#a8a8b3;font-size:12px}.twgif-empty[hidden]{display:none}
       #twgif-status{display:flex;align-items:center;gap:10px;padding:6px 10px 7px;border-top:1px solid #34343b;font-size:10px;color:#aaaab5;overflow-wrap:anywhere;flex-shrink:0;min-height:29px}#twgif-status[data-empty=true]{display:none}#twgif-status-message{flex:1;min-width:0;overflow-wrap:anywhere}#twgif-status[data-type=success]{color:#55d995}#twgif-status[data-type=error]{color:#ff8585}
-       #twgif-progress{--twgif-progress:0;display:inline-flex;align-items:center;gap:4px;flex:0 0 auto;color:#e1c9ff;font-size:10px;font-variant-numeric:tabular-nums;line-height:1}#twgif-progress[hidden]{display:none!important}#twgif-progress svg{display:block;width:18px;height:18px;overflow:visible}#twgif-progress circle{fill:none;stroke-width:3.5}#twgif-progress .twgif-progress-track{stroke:#45414e}#twgif-progress .twgif-progress-value{stroke:#b78cff;stroke-linecap:round;stroke-dasharray:100;stroke-dashoffset:calc(100 - var(--twgif-progress));transform:rotate(-90deg);transform-origin:50% 50%;transition:stroke-dashoffset .12s linear}#twgif-progress[data-indeterminate=true] svg{animation:twgif-progress-spin .8s linear infinite}#twgif-progress[data-indeterminate=true] .twgif-progress-value{stroke-dasharray:28 72;stroke-dashoffset:0}@keyframes twgif-progress-spin{to{transform:rotate(360deg)}}
+       #twgif-progress{--twgif-progress:0;display:inline-flex;align-items:center;gap:4px;flex:0 0 auto;color:#e1c9ff;font-size:10px;font-variant-numeric:tabular-nums;line-height:1}#twgif-progress[hidden]{display:none!important}
+       #twgif-progress-ring{position:relative;display:block;flex:0 0 18px;width:18px;height:18px}
+       #twgif-progress-ring>svg{display:block;width:18px;height:18px;overflow:visible}
+       #twgif-progress circle{fill:none;stroke-width:3.5}#twgif-progress .twgif-progress-track{stroke:#45414e}#twgif-progress .twgif-progress-value{stroke:#b78cff;stroke-linecap:round;stroke-dasharray:100;stroke-dashoffset:calc(100 - var(--twgif-progress));transform:rotate(-90deg);transform-origin:50% 50%;transition:stroke-dashoffset .12s linear}
+       #twgif-progress[data-indeterminate=true] #twgif-progress-ring>svg{animation:twgif-progress-spin .8s linear infinite}#twgif-progress[data-indeterminate=true] .twgif-progress-value{stroke-dasharray:28 72;stroke-dashoffset:0}
+       #twgif-progress-cancel{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;width:18px;height:18px;padding:0;border:1px solid #e87382;border-radius:50%;background:#992c3c;color:#fff;opacity:0;visibility:hidden;cursor:pointer;z-index:2;transition:opacity .1s,visibility .1s}
+       #twgif-progress-cancel svg{display:block;width:9px;height:9px}
+       #twgif-progress[data-cancelable=true] #twgif-progress-ring:hover #twgif-progress-cancel,#twgif-progress[data-cancelable=true] #twgif-progress-ring:focus-within #twgif-progress-cancel{opacity:1;visibility:visible}
+       #twgif-progress-cancel:hover{background:#c9364d;border-color:#ff9aa7}
+       @keyframes twgif-progress-spin{to{transform:rotate(360deg)}}
       .twgif-settings{display:flex;flex-direction:column;gap:7px}.twgif-section{border:1px solid #33333a;border-radius:7px;padding:8px}.twgif-section-title{margin:0 0 7px;font-size:11px;font-weight:700;color:#dddde5}.twgif-help{color:#a8a8b3;font-size:10px;line-height:1.45;margin:5px 0 0}.twgif-help a{color:#bf94ff;text-decoration:none}.twgif-help a:hover{text-decoration:underline}.twgif-field-label{display:block;margin:6px 0 4px;font-size:10px;color:#c8c8d0}.twgif-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.twgif-row>.twgif-input{flex:1 1 145px}.twgif-check-row{display:flex;align-items:center;gap:7px;font-size:11px;color:#dbdbe2;margin:3px 0}.twgif-check-row input{accent-color:#9147ff}
       .twgif-debug-log{display:block;width:100%;min-height:78px;max-height:125px;resize:vertical;background:#0c0c0e;color:#bfc0cb;border:1px solid #36363d;border-radius:5px;padding:6px;font:10px/1.35 ui-monospace,Consolas,monospace}
       .twgif-chat-add{appearance:none!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;vertical-align:middle!important;width:16px!important;height:16px!important;margin:0 0 0 4px!important;padding:0!important;border:1px solid #9147ff70!important;border-radius:4px!important;color:#d7b8ff!important;background:#18181bcc!important;font:700 12px/1 system-ui!important;cursor:pointer!important;opacity:.35;transition:opacity .12s,background .12s!important}.twgif-chat-add:hover{opacity:1!important;background:#9147ff!important;color:#fff!important}
@@ -1993,8 +2134,11 @@
       <div id="twgif-panel-body" class="twgif-panel-body"></div>
       <div id="twgif-status" data-empty="true" role="status" aria-live="polite">
       <span id="twgif-status-message"></span>
-      <span id="twgif-progress" hidden data-indeterminate="true" aria-label="Идёт обработка">
-        <svg viewBox="0 0 36 36" aria-hidden="true"><circle class="twgif-progress-track" cx="18" cy="18" r="15.5"></circle><circle class="twgif-progress-value" cx="18" cy="18" r="15.5"></circle></svg>
+      <span id="twgif-progress" hidden data-indeterminate="true" data-cancelable="false" aria-label="Идёт обработка">
+        <span id="twgif-progress-ring">
+          <svg viewBox="0 0 36 36" aria-hidden="true"><circle class="twgif-progress-track" cx="18" cy="18" r="15.5"></circle><circle class="twgif-progress-value" cx="18" cy="18" r="15.5"></circle></svg>
+          <button id="twgif-progress-cancel" type="button" title="Отменить обработку" aria-label="Отменить обработку"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"></rect></svg></button>
+        </span>
         <span id="twgif-progress-label">…</span>
       </span>
     </div>
@@ -2002,6 +2146,11 @@
     document.documentElement.appendChild(panel);
 
     panel.querySelector('#twgif-close').addEventListener('click', closePanel);
+    panel.querySelector('#twgif-progress-cancel').addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      cancelActiveProcessing();
+    });
     panel.querySelector('#twgif-settings-open').addEventListener('click', () => {
       settingsTab = 'general';
       panelView = 'settings';
@@ -2304,6 +2453,10 @@
         <button id="twgif-add-url" class="twgif-small-btn twgif-primary twgif-toolbar-icon" type="button" title="Добавить ссылку" aria-label="Добавить ссылку">+</button>
         <span id="twgif-count" class="twgif-count"></span>
       </div>
+      <div class="twgif-gallery-tabs" role="tablist" aria-label="Тип медиа">
+        <button class="twgif-gallery-tab" type="button" data-gallery-tab="all" role="tab" aria-selected="true">Все <span id="twgif-all-count" class="twgif-gallery-tab-count">0</span></button>
+        <button class="twgif-gallery-tab" type="button" data-gallery-tab="7tv" role="tab" aria-selected="false">7TV <span id="twgif-7tv-count" class="twgif-gallery-tab-count">0</span></button>
+      </div>
       <div id="twgif-drop" class="twgif-drop"><div><strong>Перетащи файлы или нажми Ctrl+V</strong><span>Медиа обрабатывается по правилам во вкладке конвертации</span></div><button id="twgif-file-pick" class="twgif-small-btn" type="button">Выбрать</button><input id="twgif-file-input" type="file" accept="image/*,video/*,.gif,.webm,.mp4,.mov,.mkv,.avi" multiple hidden></div>
       <div id="twgif-masonry" class="twgif-masonry"></div>
       <div id="twgif-empty" class="twgif-empty" hidden></div>
@@ -2328,6 +2481,16 @@
       }
     };
     addButton.addEventListener('click', addLink);
+    body.querySelectorAll('.twgif-gallery-tab').forEach(button => {
+      button.addEventListener('click', () => {
+        galleryTab = button.dataset.galleryTab === '7tv' ? '7tv' : 'all';
+        galleryPage = 0;
+        body.querySelectorAll('.twgif-gallery-tab').forEach(tab => {
+          tab.setAttribute('aria-selected', String(tab.dataset.galleryTab === galleryTab));
+        });
+        renderGalleryItems();
+      });
+    });
     urlInput.addEventListener('keydown', event => {
       if (event.key === 'Enter') { event.preventDefault(); addLink(); }
     });
@@ -2634,6 +2797,25 @@
     }
   }
 
+  function ensureGalleryResizeObserver() {
+    if (galleryResizeObserver || typeof ResizeObserver !== 'function') return;
+    galleryResizeObserver = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        const card = entry.target;
+        const masonry = card.parentElement;
+        if (!masonry || !masonry.classList.contains('twgif-masonry') ||
+            masonry.classList.contains('twgif-grid-mode') || card.hidden) continue;
+        const height = card.getBoundingClientRect().height;
+        const rowGap = Number.parseFloat(getComputedStyle(masonry).rowGap) || 0;
+        const span = Math.max(1, Math.ceil((height + rowGap) / (1 + rowGap)));
+        if (card.__twgifGridSpan !== span) {
+          card.__twgifGridSpan = span;
+          card.style.gridRowEnd = 'span ' + span;
+        }
+      }
+    });
+  }
+
   function renderGalleryItems() {
     const body = document.getElementById('twgif-panel-body');
     if (!body || panelView !== 'gallery') return;
@@ -2652,13 +2834,24 @@
     masonry.style.setProperty('--twgif-scale', String(scale));
     masonry.style.setProperty('--twgif-tile-min', `${Math.round(76 * scale)}px`);
     masonry.style.setProperty('--twgif-thumb-height', `${Math.round(90 * scale)}px`);
-    masonry.style.columnWidth = `${Math.round(78 * scale)}px`;
-    masonry.style.columnCount = 'auto';
-    masonry.style.columnGap = `${Math.max(3, Math.round(7 * scale))}px`;
-    masonry.style.gap = `${Math.max(3, Math.round(7 * scale))}px`;
+    const gap = Math.max(3, Math.round(7 * scale));
+    masonry.style.columnGap = `${gap}px`;
+    masonry.style.rowGap = `${gap}px`;
+    masonry.style.gap = `${gap}px`;
+    masonry.style.gridAutoRows = config.tileView === 'grid' ? 'auto' : '1px';
 
     const data = loadData();
-    const items = data.items.slice().sort((a, b) => b.addedAt - a.addedAt || b.updatedAt - a.updatedAt);
+    const allItems = data.items.slice().sort(compareGalleryItems);
+    const sevenTvItems = allItems.filter(is7TVGalleryItem);
+    const allTab = body.querySelector('[data-gallery-tab="all"]');
+    const sevenTvTab = body.querySelector('[data-gallery-tab="7tv"]');
+    if (allTab) allTab.setAttribute('aria-selected', String(galleryTab === 'all'));
+    if (sevenTvTab) sevenTvTab.setAttribute('aria-selected', String(galleryTab === '7tv'));
+    const allCount = body.querySelector('#twgif-all-count');
+    const sevenTvCount = body.querySelector('#twgif-7tv-count');
+    if (allCount) allCount.textContent = String(allItems.length);
+    if (sevenTvCount) sevenTvCount.textContent = String(sevenTvItems.length);
+    const items = galleryTab === '7tv' ? sevenTvItems : allItems;
     const pageSize = config.pageSize;
     const pages = Math.max(1, Math.ceil(items.length / pageSize));
     galleryPage = Math.max(0, Math.min(galleryPage, pages - 1));
@@ -2669,8 +2862,9 @@
     // Preserve card/image DOM nodes across sync refreshes and page switches.
     // Reorder only when the visible page actually changes; repeatedly appending
     // already-mounted <img> nodes can force browsers to drop decoded image data.
-    const itemIds = new Set(items.map(item => item.id));
+    const itemIds = new Set(allItems.map(item => item.id));
     const orderedVisibleCards = [];
+    if (config.tileView !== 'grid') ensureGalleryResizeObserver();
     for (const item of visible) {
       let card = mediaCardCache.get(item.id);
       if (!card) {
@@ -2690,6 +2884,16 @@
         if (oldItem.url !== item.url) card.setAttribute('aria-label', 'Вставить ссылку на медиа в чат');
       }
       card.hidden = false;
+      if (config.tileView === 'grid') {
+        card.style.gridRowEnd = 'auto';
+        delete card.__twgifGridSpan;
+      } else {
+        if (!card.style.gridRowEnd || card.style.gridRowEnd === 'auto') {
+          card.style.gridRowEnd = 'span 1';
+          card.__twgifGridSpan = 1;
+        }
+        if (galleryResizeObserver) galleryResizeObserver.observe(card);
+      }
       orderedVisibleCards.push(card);
     }
 
@@ -2711,7 +2915,9 @@
     masonry.hidden = visible.length === 0;
     count.textContent = String(items.length);
     empty.hidden = visible.length > 0;
-    empty.textContent = 'Коллекция пуста. Добавь ссылку или перетащи файл.';
+    empty.textContent = galleryTab === '7tv'
+      ? 'В коллекции пока нет ссылок 7TV.'
+      : 'Коллекция пуста. Добавь ссылку или перетащи файл.';
 
     pagination.hidden = items.length <= pageSize;
     pageLabel.textContent = `Стр. ${galleryPage + 1} / ${pages}`;
