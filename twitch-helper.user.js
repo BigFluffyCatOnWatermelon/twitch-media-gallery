@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
-// @namespace    local.twitch.gif.gallery
+// @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
 // @version      5.1.0
 // @description  Twitch media gallery with FreeConvert conversion rules, original 7TV links, persistent previews, pagination and Gist settings sync.
+// @updateURL    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery/blob/main/twitch-helper.user.js
+// @downloadURL  https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery/blob/main/twitch-helper.user.js
 // @match        https://www.twitch.tv/*
 // @match        https://twitch.tv/*
 // @run-at       document-idle
