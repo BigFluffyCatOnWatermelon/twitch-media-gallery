@@ -530,29 +530,33 @@
     return [];
   }
 
-  async function getFreeConvertJobState(jobId, apiToken) {
+  async function getFreeConvertJobState(jobId, tag, apiToken) {
     const headers = {
       'Authorization': `Bearer ${apiToken}`,
       'Accept': 'application/json'
     };
     let jobError = null;
 
-    // Prefer the dedicated job endpoint. If a deployment does not include task
-    // details there, fall back to the documented task-list endpoint.
+    // The documented Jobs endpoint supports filtering by the unique job tag
+    // and embedding its tasks in one response.
     try {
       const response = await request({
         method: 'GET',
-        url: `${FREECONVERT_API}/process/jobs/${encodeURIComponent(jobId)}?include=tasks`,
+        url: `${FREECONVERT_API}/process/jobs?tag=${encodeURIComponent(tag)}&include=tasks&per_page=10`,
         timeout: 25000,
         headers
       });
-      const payload = parseResponse(response, 'FreeConvert job');
-      const tasks = findTaskList(payload);
-      if (tasks.length) return { payload, tasks };
-      logDebug('FreeConvert job response did not include tasks; trying task list', { jobId });
+      const payload = parseResponse(response, 'FreeConvert jobs');
+      const root = payload.data || payload;
+      const jobs = Array.isArray(root.docs) ? root.docs
+        : (Array.isArray(root.jobs) ? root.jobs : (Array.isArray(root) ? root : []));
+      const job = jobs.find(entry => String(entry?.id || '') === String(jobId) || String(entry?.tag || '') === String(tag));
+      const tasks = Array.isArray(job?.tasks) ? job.tasks : [];
+      if (tasks.length) return { payload: job, tasks };
+      logDebug('FreeConvert Jobs endpoint returned no embedded tasks; trying task list', { jobId, tag });
     } catch (error) {
       jobError = error;
-      logDebug('FreeConvert job endpoint failed; trying task list', error.message || error);
+      logDebug('FreeConvert Jobs endpoint failed; trying task list', error.message || error);
     }
 
     try {
@@ -705,7 +709,7 @@
       for (let i = 0; i < 8 && !uploadForm; i++) {
         await delay(900);
         try {
-          const jobState = await getFreeConvertJobState(jobId, config.freeConvertToken);
+          const jobState = await getFreeConvertJobState(jobId, `twitch-gallery-${stamp}`, config.freeConvertToken);
           const list = jobState.tasks;
           const task = list.find(entry => entry.name === 'import-source' || entry.operation === 'import/upload');
           uploadForm = task?.result?.form || task?.form || null;
@@ -740,7 +744,7 @@
 
     for (let attempt = 0; attempt < 180; attempt++) {
       await delay(2000);
-      const jobState = await getFreeConvertJobState(jobId, config.freeConvertToken);
+      const jobState = await getFreeConvertJobState(jobId, `twitch-gallery-${stamp}`, config.freeConvertToken);
       const statusPayload = jobState.payload;
       const tasks = jobState.tasks;
       const convertTask = tasks.find(task => task.name === 'convert-media' || task.operation === 'convert');
