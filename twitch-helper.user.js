@@ -18,7 +18,7 @@
 // @connect      7tv.io
 // @connect      7tv.app
 // @connect      cdn.7tv.app
-// ==/UserScript==
+// ==/UserScript== aboba
 
 (() => {
   'use strict';
