@@ -272,7 +272,7 @@
     };
     const settingsChanged = settingsContentSignature(current) !== settingsContentSignature(config);
     const hasExplicitTimestamp = next.settingsUpdatedAt !== undefined && Number.isFinite(Number(next.settingsUpdatedAt));
-    if (!hasExplicitTimestamp && settingsChanged) config.settingsUpdatedAt = Date.now();
+    if (!hasExplicitTimestamp && settingsChanged) config.settingsUpdatedAt = Math.max(Date.now(), (Number(current.settingsUpdatedAt) || 0) + 1);
     GM_setValue(CONFIG_KEY, config);
     if (!hasExplicitTimestamp && settingsChanged) queueSettingsSync();
     return config;
@@ -2113,7 +2113,7 @@
     const style = document.createElement('style');
     style.id = 'twgif-style';
     style.textContent = `
-      #twgif-trigger{appearance:none!important;border:0!important;background:transparent!important;color:var(--color-text-base,#efeff1)!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important;margin:0 2px!important;padding:0!important;align-self:center!important;vertical-align:middle!important;box-sizing:border-box!important;position:relative!important;top:0!important;transform:none!important;border-radius:var(--border-radius-medium,4px)!important;cursor:pointer!important;line-height:1!important}
+      #twgif-trigger{appearance:none!important;border:0!important;background:transparent!important;color:var(--color-text-base,#efeff1)!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important;margin:0 8px 0 2px!important;padding:0!important;align-self:center!important;vertical-align:middle!important;box-sizing:border-box!important;position:relative!important;top:0!important;transform:none!important;border-radius:var(--border-radius-medium,4px)!important;cursor:pointer!important;line-height:1!important}
       #twgif-trigger:hover,#twgif-trigger[aria-expanded=true]{background:var(--color-background-button-text-hover,#2b2b2f)!important;color:var(--color-text-link,#bf94ff)!important}
       #twgif-trigger svg{display:block;width:20px;height:20px;flex:0 0 20px;align-self:center;pointer-events:none}
       #twgif-panel{position:fixed!important;top:8px;left:8px;bottom:auto;z-index:2147483000!important;width:400px;max-width:calc(100vw - 16px);max-height:68vh;display:flex;flex-direction:column;overflow:hidden;color:#efeff1;background:#18181b;border:1px solid #34343b;border-radius:10px;box-shadow:0 10px 34px #0009;font:13px/1.4 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-sizing:border-box;pointer-events:auto}
@@ -2140,7 +2140,7 @@
       .twgif-toolbar-icon{width:30px;min-width:30px;height:30px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:19px}
       .twgif-drop{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 7px;margin-bottom:8px;border:1px dashed #41414b;border-radius:7px;color:#a8a8b3;font-size:10px}
       .twgif-drop strong{display:block;color:#d9d9df;font-size:10px;font-weight:600}.twgif-drop span{font-size:9px}.twgif-drop.twgif-drag{border-color:#a970ff;background:#9147ff1a}#twgif-panel.twgif-drag{border-color:#a970ff;box-shadow:0 0 0 2px #9147ff55,0 10px 34px #0009}#twgif-panel.twgif-drag::after{content:'Отпусти файлы для добавления';position:absolute;inset:4px;z-index:20;display:flex;align-items:center;justify-content:center;border:2px dashed #b78cff;border-radius:8px;background:#18181be8;color:#f4eaff;font-size:14px;font-weight:700;pointer-events:none}
-      .twgif-masonry{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--twgif-tile-min,76px),1fr));grid-auto-rows:1px;align-items:start;column-gap:7px;row-gap:7px}.twgif-masonry.twgif-grid-mode{grid-auto-rows:auto;gap:7px}.twgif-masonry[hidden]{display:none!important}
+      .twgif-masonry{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--twgif-tile-min,76px),1fr));grid-auto-rows:1px;align-items:start;gap:6px}.twgif-masonry.twgif-grid-mode{grid-auto-rows:auto;gap:6px}.twgif-masonry[hidden]{display:none!important}
       .twgif-card{display:block;align-self:start;position:relative;width:100%;margin:0;vertical-align:top;border:1px solid #34343b;border-radius:6px;overflow:visible;background:#202024;cursor:pointer;outline:none;transition:border-color .12s,box-shadow .12s}
       .twgif-card[hidden]{display:none!important}.twgif-masonry.twgif-grid-mode .twgif-card{display:block;width:100%;margin:0;overflow:visible;grid-row-end:auto!important}.twgif-card,.twgif-card img,.twgif-card video{user-select:none;-webkit-user-select:none;-webkit-user-drag:none}
       .twgif-media-frame{position:relative;overflow:hidden;border-radius:5px;background:#101012;isolation:isolate}
@@ -2148,6 +2148,11 @@
       .twgif-media-error{min-height:44px;padding:10px;text-align:center;color:#9c9ca6;font-size:10px}
       .twgif-delete{position:absolute;z-index:3;top:-1px;right:-1px;display:flex;align-items:center;justify-content:center;width:17px;height:17px;padding:0;border:1px solid #ffffff26;border-radius:0 5px 0 6px;background:#18181beF;color:#f2f2f2;opacity:0;pointer-events:none;transition:opacity .13s,background .13s,transform .13s;cursor:pointer}
       .twgif-delete svg{width:10px;height:10px;display:block;pointer-events:none}.twgif-card:hover .twgif-delete,.twgif-card:focus-within .twgif-delete{opacity:1;pointer-events:auto}.twgif-delete:hover{background:#b42335;border-color:#ef4444;transform:scale(1.08)}
+      .twgif-favorite{position:absolute;z-index:4;left:4px;bottom:4px;width:23px;height:23px;padding:0;display:flex;align-items:center;justify-content:center;border:1px solid #ffffff28;border-radius:6px;background:#18181be8;color:#eeeef2;opacity:.78;cursor:pointer;transition:opacity .12s,background .12s,color .12s,transform .12s}
+      .twgif-favorite svg{width:14px;height:14px;display:block;pointer-events:none}
+      .twgif-favorite:hover{opacity:1;background:#3c202c;color:#ff8ca6;transform:scale(1.06)}
+      .twgif-favorite[aria-pressed=true]{opacity:1;color:#ff668b;background:#3c202c;border-color:#e85a80}
+      .twgif-favorite[aria-pressed=true] svg{fill:currentColor}
       .twgif-pagination{display:flex;align-items:center;justify-content:center;gap:10px;padding:9px 0 0}.twgif-pagination[hidden]{display:none!important}.twgif-page-label{font-size:10px;color:#b7b7c1;min-width:54px;text-align:center}
       .twgif-empty{padding:22px 8px;text-align:center;color:#a8a8b3;font-size:12px}.twgif-empty[hidden]{display:none}
       #twgif-status{display:flex;align-items:center;gap:10px;padding:6px 10px 7px;border-top:1px solid #34343b;font-size:10px;color:#aaaab5;overflow-wrap:anywhere;flex-shrink:0;min-height:29px}#twgif-status[data-empty=true]{display:none}#twgif-status-message{flex:1;min-width:0;overflow-wrap:anywhere}#twgif-status[data-type=success]{color:#55d995}#twgif-status[data-type=error]{color:#ff8585}
@@ -2281,7 +2286,8 @@
     const button = document.createElement('button');
     button.id = 'twgif-trigger';
     button.type = 'button';
-    button.title = 'GIF и изображения';
+    // Avoid a native title tooltip overlapping Twitch's chat-settings tooltip.
+    button.removeAttribute('title');
     button.setAttribute('aria-label', 'Открыть коллекцию GIF и изображений');
     button.setAttribute('aria-haspopup', 'dialog');
     button.setAttribute('aria-expanded', 'false');
@@ -2297,6 +2303,25 @@
     return button;
   }
 
+  function hideDropsToolbarButtons(toolbar) {
+    if (!toolbar) return;
+    const candidates = toolbar.querySelectorAll('button, [role="button"]');
+    for (const candidate of candidates) {
+      if (candidate.id === 'twgif-trigger' || candidate.closest('#twgif-panel')) continue;
+      const label = [
+        candidate.getAttribute('aria-label'),
+        candidate.getAttribute('title'),
+        candidate.getAttribute('data-a-target'),
+        candidate.getAttribute('data-testid'),
+        candidate.textContent
+      ].filter(Boolean).join(' ');
+      if (/\bdrops?\b|\brewards?\b/i.test(label)) {
+        candidate.style.setProperty('display', 'none', 'important');
+        candidate.setAttribute('data-twgif-hidden-drops', 'true');
+      }
+    }
+  }
+
   function ensureTrigger() {
     const input = getChatInput();
     if (!input) return false;
@@ -2308,10 +2333,11 @@
     if (!button) button = createTrigger();
     activeTrigger = button;
 
+    hideDropsToolbarButtons(toolbar);
     const settingsButton = toolbar.querySelector('[data-a-target="chat-settings-button"], [aria-label*="Chat settings" i], [aria-label*="Настройки чата" i]');
     const rightGroup = settingsButton?.parentElement || toolbar.querySelector('[class*="buttons-right"]') || toolbar;
 
-    // Put our icon immediately before chat settings (and next to channel points/emote buttons).
+    // Keep a little space from chat settings so its hover tooltip does not overlap our icon.
     if (settingsButton && settingsButton.parentElement === rightGroup) {
       if (button.parentElement !== rightGroup || button.nextElementSibling !== settingsButton) {
         rightGroup.insertBefore(button, settingsButton);
@@ -2333,6 +2359,7 @@
       else if (activeTrigger && activeTrigger.parentElement) {
         const input = getChatInput();
         const toolbar = input && getToolbar(input);
+        if (toolbar) hideDropsToolbarButtons(toolbar);
         if (toolbar && !toolbar.contains(activeTrigger)) ensureTrigger();
       }
     });
@@ -2460,9 +2487,8 @@
     renderPanelView();
     repositionPanel();
     if (loadConfig().gistToken && loadConfig().gistId) {
-      syncNow()
-        .then(() => syncSettingsNow())
-        .catch(error => setStatus(`Синхронизация: ${formatGitHubSyncError(error)}`, 'error', true));
+      syncNow().catch(error => setStatus(`Синхронизация коллекции: ${formatGitHubSyncError(error)}`, 'error', true));
+      syncSettingsNow().catch(error => setStatus(`Синхронизация настроек: ${formatGitHubSyncError(error)}`, 'error', true));
     }
     logDebug('Panel opened');
   }
@@ -2524,6 +2550,7 @@
       <div class="twgif-gallery-tabs" role="tablist" aria-label="Тип медиа">
         <button class="twgif-gallery-tab" type="button" data-gallery-tab="all" role="tab" aria-selected="true">Все <span id="twgif-all-count" class="twgif-gallery-tab-count">0</span></button>
         <button class="twgif-gallery-tab" type="button" data-gallery-tab="7tv" role="tab" aria-selected="false">7TV <span id="twgif-7tv-count" class="twgif-gallery-tab-count">0</span></button>
+        <button class="twgif-gallery-tab" type="button" data-gallery-tab="favorites" role="tab" aria-selected="false">Избранное <span id="twgif-favorites-count" class="twgif-gallery-tab-count">0</span></button>
       </div>
       <div id="twgif-drop" class="twgif-drop"><div><strong>Перетащи файлы или нажми Ctrl+V</strong><span>Медиа обрабатывается по правилам во вкладке конвертации</span></div><button id="twgif-file-pick" class="twgif-small-btn" type="button">Выбрать</button><input id="twgif-file-input" type="file" accept="image/*,video/*,.gif,.webm,.mp4,.mov,.mkv,.avi" multiple hidden></div>
       <div id="twgif-masonry" class="twgif-masonry"></div>
@@ -2565,7 +2592,7 @@
     addButton.addEventListener('click', addLink);
     body.querySelectorAll('.twgif-gallery-tab').forEach(button => {
       button.addEventListener('click', () => {
-        galleryTab = button.dataset.galleryTab === '7tv' ? '7tv' : 'all';
+        galleryTab = ['7tv', 'favorites'].includes(button.dataset.galleryTab) ? button.dataset.galleryTab : 'all';
         galleryPage = 0;
         body.querySelectorAll('.twgif-gallery-tab').forEach(tab => {
           tab.setAttribute('aria-selected', String(tab.dataset.galleryTab === galleryTab));
@@ -2660,6 +2687,20 @@
     frame.appendChild(media);
     card.appendChild(frame);
 
+    const favorite = document.createElement('button');
+    favorite.type = 'button';
+    favorite.className = 'twgif-favorite';
+    favorite.title = item.favorite ? 'Убрать из избранного' : 'Добавить в избранное';
+    favorite.setAttribute('aria-label', favorite.title);
+    favorite.setAttribute('aria-pressed', String(Boolean(item.favorite)));
+    favorite.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21l7.8-7.5 1.1-1.1a5.5 5.5 0 0 0-.1-7.8Z"/></svg>';
+    favorite.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleFavorite(card.__twgifItem.id);
+    });
+    card.appendChild(favorite);
+
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'twgif-delete';
@@ -2671,7 +2712,7 @@
 
     const beginHold = event => {
       if (event.button !== undefined && event.button !== 0) return;
-      if (event.target === del || event.target.closest('.twgif-delete')) return;
+      if (event.target.closest('.twgif-delete, .twgif-favorite')) return;
       if (holdPointerActive) return;
 
       holdPointerActive = true;
@@ -2701,12 +2742,13 @@
         suppressMediaClickUntil = 0;
         return;
       }
-      if (event.target === del || event.target.closest('.twgif-delete')) return;
+      if (event.target.closest('.twgif-delete, .twgif-favorite')) return;
       insertLinkIntoChat(card.__twgifItem.url);
     };
 
     card.addEventListener('click', insert);
     card.addEventListener('keydown', event => {
+      if (event.target.closest('.twgif-delete, .twgif-favorite')) return;
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
         insertLinkIntoChat(card.__twgifItem.url);
@@ -2923,17 +2965,25 @@
     masonry.style.gridAutoRows = config.tileView === 'grid' ? 'auto' : '1px';
 
     const data = loadData();
-    const allItems = data.items.slice().sort(compareGalleryItems);
-    const sevenTvItems = allItems.filter(is7TVGalleryItem);
+    const storedItems = data.items.slice().sort(compareGalleryItems);
+    const allItems = storedItems.filter(item => !is7TVGalleryItem(item));
+    const sevenTvItems = storedItems.filter(is7TVGalleryItem);
+    const favoriteItems = storedItems.filter(item => item.favorite);
     const allTab = body.querySelector('[data-gallery-tab="all"]');
     const sevenTvTab = body.querySelector('[data-gallery-tab="7tv"]');
+    const favoritesTab = body.querySelector('[data-gallery-tab="favorites"]');
     if (allTab) allTab.setAttribute('aria-selected', String(galleryTab === 'all'));
     if (sevenTvTab) sevenTvTab.setAttribute('aria-selected', String(galleryTab === '7tv'));
+    if (favoritesTab) favoritesTab.setAttribute('aria-selected', String(galleryTab === 'favorites'));
     const allCount = body.querySelector('#twgif-all-count');
     const sevenTvCount = body.querySelector('#twgif-7tv-count');
+    const favoritesCount = body.querySelector('#twgif-favorites-count');
     if (allCount) allCount.textContent = String(allItems.length);
     if (sevenTvCount) sevenTvCount.textContent = String(sevenTvItems.length);
-    const items = galleryTab === '7tv' ? sevenTvItems : allItems;
+    if (favoritesCount) favoritesCount.textContent = String(favoriteItems.length);
+    const items = galleryTab === '7tv' ? sevenTvItems
+      : galleryTab === 'favorites' ? favoriteItems
+      : allItems;
     const pageSize = config.pageSize;
     const pages = Math.max(1, Math.ceil(items.length / pageSize));
     galleryPage = Math.max(0, Math.min(galleryPage, pages - 1));
@@ -2944,7 +2994,7 @@
     // Preserve card/image DOM nodes across sync refreshes and page switches.
     // Reorder only when the visible page actually changes; repeatedly appending
     // already-mounted <img> nodes can force browsers to drop decoded image data.
-    const itemIds = new Set(allItems.map(item => item.id));
+    const itemIds = new Set(storedItems.map(item => item.id));
     const orderedVisibleCards = [];
     if (config.tileView !== 'grid') ensureGalleryResizeObserver();
     for (const item of visible) {
@@ -2964,6 +3014,12 @@
           else { media.removeAttribute('src'); }
         }
         if (oldItem.url !== item.url) card.setAttribute('aria-label', 'Вставить ссылку на медиа в чат');
+      }
+      const favoriteButton = card.querySelector('.twgif-favorite');
+      if (favoriteButton) {
+        favoriteButton.setAttribute('aria-pressed', String(Boolean(item.favorite)));
+        favoriteButton.title = item.favorite ? 'Убрать из избранного' : 'Добавить в избранное';
+        favoriteButton.setAttribute('aria-label', favoriteButton.title);
       }
       card.hidden = false;
       if (config.tileView === 'grid') {
@@ -3000,7 +3056,9 @@
     empty.hidden = visible.length > 0;
     empty.textContent = galleryTab === '7tv'
       ? 'В коллекции пока нет ссылок 7TV.'
-      : 'Коллекция пуста. Добавь ссылку или перетащи файл.';
+      : galleryTab === 'favorites'
+        ? 'Пока нет избранных медиа. Нажми сердечко на карточке.'
+        : 'Коллекция пуста. Добавь ссылку или перетащи файл.';
 
     pagination.hidden = items.length <= pageSize;
     pageLabel.textContent = `Стр. ${galleryPage + 1} / ${pages}`;
@@ -3360,7 +3418,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.7.0 started', { href: location.href });
+    logDebug('Userscript v5.9.0 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
