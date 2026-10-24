@@ -2,7 +2,7 @@
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
 // @version      5.2.1
-// @description  Twitch media gallery with Rendi animated WebP video conversion, FreeConvert rules, original 7TV links, persistent previews, pagination and Gist settings sync.
+// @description  Twitch media gallery with Rendi animated WebP video conversion, original 7TV links, persistent previews, pagination and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @match        https://www.twitch.tv/*
@@ -14,9 +14,6 @@
 // @connect      kappa.lol
 // @connect      api.github.com
 // @connect      gist.githubusercontent.com
-// @connect      api.freeconvert.com
-// @connect      freeconvert.com
-// @connect      *.freeconvert.com
 // @connect      api.rendi.dev
 // @connect      *.rendi.dev
 // @connect      7tv.io
@@ -36,10 +33,9 @@
   const SYNC_FILENAME = 'twitch-gif-gallery.json';
   const KAPPA_UPLOAD_URL = 'https://kappa.lol/api/upload';
   const GITHUB_API = 'https://api.github.com';
-  const FREECONVERT_API = 'https://api.freeconvert.com/v1';
   const RENDI_API = 'https://api.rendi.dev/v1';
   const SETTINGS_FILENAME = 'twitch-gif-gallery-settings.json';
-  const SETTINGS_SCHEMA_VERSION = 3;
+  const SETTINGS_SCHEMA_VERSION = 4;
 
   let panelView = 'gallery';
   let settingsTab = 'general';
@@ -75,9 +71,8 @@
     tileView: 'masonry',
     pageSize: 100,
     previewScale: 1.6,
-    conversionRules: { image: 'webp', gif: 'webp', video: 'gif' },
+    conversionRules: { image: 'webp', gif: 'keep', video: 'webp' },
     settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
-    freeConvertToken: '',
     // This key deliberately never enters a Gist snapshot.
     rendiApiKey: '',
     gistToken: '',
@@ -145,8 +140,14 @@
     const rules = raw.conversionRules && typeof raw.conversionRules === 'object'
       ? { ...raw.conversionRules }
       : {};
-    const allowedTargets = ['keep', 'webp', 'gif', 'webm', 'mp4', 'png', 'jpg'];
-    const cleanTarget = (value, fallback) => allowedTargets.includes(String(value)) ? String(value) : fallback;
+    const allowedTargets = {
+      image: ['keep', 'webp', 'png', 'jpg'],
+      gif: ['keep'],
+      video: ['keep', 'webp']
+    };
+    const cleanTarget = (key, value) => allowedTargets[key].includes(String(value))
+      ? String(value)
+      : defaults.conversionRules[key];
     const config = {
       maxWidth: clampInt(raw.maxWidth ?? defaults.maxWidth, 100, 4000, defaults.maxWidth),
       mediaScale: clampFloat(raw.mediaScale ?? defaults.mediaScale, 0.5, 2, defaults.mediaScale),
@@ -154,11 +155,10 @@
       pageSize: clampInt(raw.pageSize ?? 100, 10, 500, 100),
       previewScale: clampFloat(raw.previewScale ?? defaults.previewScale, 1.1, 3, defaults.previewScale),
       conversionRules: {
-        image: cleanTarget(rules.image, 'webp'),
-        gif: cleanTarget(rules.gif, 'webp'),
-        video: cleanTarget(rules.video, 'gif')
+        image: cleanTarget('image', rules.image ?? defaults.conversionRules.image),
+        gif: cleanTarget('gif', rules.gif ?? defaults.conversionRules.gif),
+        video: cleanTarget('video', rules.video ?? defaults.conversionRules.video)
       },
-      freeConvertToken: String(raw.freeConvertToken || raw.cloudConvertToken || '').trim(),
       rendiApiKey: String(raw.rendiApiKey || '').trim(),
       gistToken: String(raw.gistToken || legacy.token || '').trim(),
       gistId: String(raw.gistId || legacy.gistId || '').trim(),
@@ -167,13 +167,13 @@
       settingsSchemaVersion: SETTINGS_SCHEMA_VERSION
     };
 
-    // One-time migration: old versions defaulted video conversion to WebP.
-    // Move that old default to GIF so existing installs actually use the new behavior.
+    // Migrate existing installs away from modes requiring a removed external
+    // converter. GIFs are kept unchanged; video conversion uses Rendi WebP.
     if (previousSchemaVersion < SETTINGS_SCHEMA_VERSION) {
-      if (config.conversionRules.video === 'webp') {
-        config.conversionRules.video = 'gif';
-        config.settingsUpdatedAt = Date.now();
-      }
+      if (!allowedTargets.image.includes(config.conversionRules.image)) config.conversionRules.image = defaults.conversionRules.image;
+      if (!allowedTargets.gif.includes(config.conversionRules.gif)) config.conversionRules.gif = defaults.conversionRules.gif;
+      if (!allowedTargets.video.includes(config.conversionRules.video)) config.conversionRules.video = defaults.conversionRules.video;
+      config.settingsUpdatedAt = Date.now();
       GM_setValue(CONFIG_KEY, config);
     }
     return config;
@@ -184,16 +184,21 @@
     const current = loadConfig();
     const defaults = DEFAULT_CONFIG();
     const rules = { ...current.conversionRules, ...(next.conversionRules && typeof next.conversionRules === 'object' ? next.conversionRules : {}) };
-    const allowedTargets = ['keep', 'webp', 'gif', 'webm', 'mp4', 'png', 'jpg'];
-    for (const key of ['image', 'gif', 'video']) if (!allowedTargets.includes(String(rules[key]))) rules[key] = defaults.conversionRules[key];
+    const allowedTargets = {
+      image: ['keep', 'webp', 'png', 'jpg'],
+      gif: ['keep'],
+      video: ['keep', 'webp']
+    };
+    for (const key of ['image', 'gif', 'video']) {
+      if (!allowedTargets[key].includes(String(rules[key]))) rules[key] = defaults.conversionRules[key];
+    }
     const config = {
       maxWidth: clampInt(next.maxWidth ?? current.maxWidth, 100, 4000, defaults.maxWidth),
       mediaScale: clampFloat(next.mediaScale ?? current.mediaScale, 0.5, 2, defaults.mediaScale),
       tileView: (next.tileView ?? current.tileView) === 'grid' ? 'grid' : 'masonry',
-      pageSize: clampInt(next.pageSize ?? current.pageSize, 10, 500, defaults.pageSize),
-      previewScale: clampFloat(next.previewScale ?? current.previewScale, 1.1, 3, defaults.previewScale),
+      pageSize: clampInt(next.pageSize ?? 100, 10, 500, 100),
+      previewScale: clampFloat(next.previewScale ?? defaults.previewScale, 1.1, 3, defaults.previewScale),
       conversionRules: rules,
-      freeConvertToken: String(next.freeConvertToken ?? current.freeConvertToken).trim(),
       rendiApiKey: String(next.rendiApiKey ?? current.rendiApiKey).trim(),
       gistToken: String(next.gistToken ?? current.gistToken).trim(),
       gistId: String(next.gistId ?? current.gistId).trim(),
@@ -474,7 +479,7 @@
       : ({ webp: 'image/webp', png: 'image/png', jpg: 'image/jpeg' }[outputFormat] || '');
 
     if (!targetMime || !['image/webp', 'image/png', 'image/jpeg'].includes(targetMime)) {
-      throw new Error(`Для формата ${outputFormat} нужна внешняя конвертация FreeConvert.`);
+      throw new Error(`Локальная обработка формата ${outputFormat} недоступна.`);
     }
 
     const needsConvert = sourceMime !== targetMime;
@@ -518,278 +523,6 @@
     if (match) return match[1];
     const mime = mimeFromFile(file);
     return getExtension(mime, file.name).replace(/^\./, '') || 'bin';
-  }
-
-  function findTaskList(payload) {
-    const root = payload && (payload.data || payload);
-    const lists = [root?.tasks, payload?.tasks, root?.data?.tasks, root?.docs, payload?.docs, root?.data?.docs, root?.results, payload?.results];
-    for (const list of lists) {
-      if (Array.isArray(list)) return list.map(entry => entry && entry.data ? { ...entry.data, name: entry.name || entry.data.name } : entry);
-      if (list && typeof list === 'object') return Object.entries(list).map(([name, task]) => ({ name, ...task }));
-    }
-    return [];
-  }
-
-  async function getFreeConvertJobState(jobId, tag, apiToken) {
-    const headers = {
-      'Authorization': `Bearer ${apiToken}`,
-      'Accept': 'application/json'
-    };
-    let jobError = null;
-
-    // The documented Jobs endpoint supports filtering by the unique job tag
-    // and embedding its tasks in one response.
-    try {
-      const response = await request({
-        method: 'GET',
-        url: `${FREECONVERT_API}/process/jobs?tag=${encodeURIComponent(tag)}&include=tasks&per_page=10`,
-        timeout: 25000,
-        headers
-      });
-      const payload = parseResponse(response, 'FreeConvert jobs');
-      const root = payload.data || payload;
-      const jobs = Array.isArray(root.docs) ? root.docs
-        : (Array.isArray(root.jobs) ? root.jobs : (Array.isArray(root) ? root : []));
-      const job = jobs.find(entry => String(entry?.id || '') === String(jobId) || String(entry?.tag || '') === String(tag));
-      const tasks = Array.isArray(job?.tasks) ? job.tasks : [];
-      if (tasks.length) return { payload: job, tasks };
-      logDebug('FreeConvert Jobs endpoint returned no embedded tasks; trying task list', { jobId, tag });
-    } catch (error) {
-      jobError = error;
-      logDebug('FreeConvert Jobs endpoint failed; trying task list', error.message || error);
-    }
-
-    try {
-      const response = await request({
-        method: 'GET',
-        url: `${FREECONVERT_API}/process/tasks?job=${encodeURIComponent(jobId)}&per_page=200`,
-        timeout: 25000,
-        headers
-      });
-      const payload = parseResponse(response, 'FreeConvert tasks');
-      const tasks = findTaskList(payload);
-      if (tasks.length) return { payload, tasks };
-      if (jobError && /HTTP 401\b/i.test(String(jobError.message || jobError))) {
-        throw new Error('FreeConvert не разрешил прочитать состояние задачи (HTTP 401). Проверь API-токен в личном кабинете FreeConvert и заново сохрани его в настройках скрипта.');
-      }
-      return { payload, tasks };
-    } catch (error) {
-      const details = `${jobError?.message || ''} ${error?.message || error}`;
-      if (/HTTP 401\b/i.test(details)) {
-        throw new Error('FreeConvert вернул HTTP 401 при чтении состояния задачи. Проверь API-токен в личном кабинете FreeConvert, затем заново сохрани его в настройках скрипта и повтори загрузку.');
-      }
-      throw error;
-    }
-  }
-
-  async function getFreeConvertOptions(inputFormat, outputFormat, maxWidth, isVideo) {
-    let available = [];
-    try {
-      const response = await request({
-        method: 'GET',
-        url: `${FREECONVERT_API}/query/options/convert?input_format=${encodeURIComponent(inputFormat)}&output_format=${encodeURIComponent(outputFormat)}`,
-        timeout: 20000,
-        headers: { 'Accept': 'application/json' }
-      });
-      const json = parseResponse(response, 'FreeConvert options');
-      available = (json.data || json).options || [];
-    } catch (error) {
-      logDebug('FreeConvert advanced options lookup skipped', error.message || error);
-    }
-
-    const output = {};
-    const findOption = name => available.find(option => option && option.name === name);
-
-    if (!isVideo) {
-      const resizeType = findOption('resize_type_image');
-      if (resizeType && Array.isArray(resizeType.enum_values)) {
-        const widthOption = resizeType.enum_values.find(option => option.value === 'by_width_keep_ar');
-        if (widthOption) output.resize_type_image = widthOption.value;
-      }
-      if (findOption('image_custom_width')) output.image_custom_width = maxWidth;
-    } else {
-      for (const option of available) {
-        const name = String(option.name || '').toLowerCase();
-        if (name.includes('video') && name.includes('width') && option.data_type === 'number') {
-          output[option.name] = maxWidth;
-        } else if (name.includes('video') && (name.includes('resize') || name.includes('resolution')) && Array.isArray(option.enum_values)) {
-          const desired = option.enum_values.find(v => /width|custom|resolution/i.test(`${v.value} ${v.label || ''}`));
-          if (desired) output[option.name] = desired.value;
-        }
-      }
-
-      // FreeConvert may expose the WebP animation loop setting under a
-      // format-specific option name. Prefer the exact option advertised by its API.
-      if (['webp', 'gif'].includes(outputFormat)) {
-        const loopOption = available.find(option => {
-          const name = String(option?.name || '').toLowerCase();
-          const dataType = String(option?.data_type || '').toLowerCase();
-          const isNumeric = !dataType || ['number', 'integer', 'float'].includes(dataType);
-          const isLoopCount = /(?:^|_)loop_count$/.test(name);
-          const isLoop = name === 'loop' || /(?:^|_)loop$/.test(name);
-          return isNumeric && (isLoopCount || isLoop) && !/(?:^|_)(?:ignore|disable)_?loop/.test(name);
-        });
-        if (loopOption) output[loopOption.name] = 0;
-      }
-    }
-
-    return output;
-  }
-
-  async function freeConvertFile(file, outputFormat, maxWidth = loadConfig().maxWidth) {
-    const config = loadConfig();
-    if (!config.freeConvertToken) {
-      throw new Error('Для выбранной конвертации нужен FreeConvert API-токен. Открой настройки → Конвертация.');
-    }
-
-    const inputFormat = fileExtension(file);
-    const isVideo = mimeFromFile(file).startsWith('video/');
-    const options = await getFreeConvertOptions(inputFormat, outputFormat, maxWidth, isVideo);
-    const outName = `${String(file.name || 'media').replace(/\.[^.]+$/, '')}.${outputFormat}`;
-    const stamp = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    const convertOptions = { loop_count: 0 };
-    if (isVideo && outputFormat === 'gif') {
-      // FreeConvert names the GIF option gif_loop_count; 0 means loop forever.
-      delete convertOptions.loop_count;
-      const loopOptionNames = Object.keys(options).filter(optionName => /loop_count$/i.test(optionName));
-      if (loopOptionNames.length) {
-        for (const optionName of loopOptionNames) convertOptions[optionName] = 0;
-      } else {
-        convertOptions.gif_loop_count = 0;
-      }
-    } else if (isVideo && outputFormat === 'webp') {
-      // Keep existing WebP behavior unchanged; use the option name advertised by FreeConvert.
-      for (const optionName of Object.keys(options)) {
-        if (/loop/i.test(optionName)) convertOptions[optionName] = 0;
-      }
-    }
-    const tasksDefinition = {
-      'import-source': {
-        operation: 'import/upload'
-      },
-      'convert-media': {
-        operation: 'convert',
-        input: 'import-source',
-        input_format: inputFormat,
-        output_format: outputFormat,
-        options: convertOptions
-      },
-      'export-media': {
-        operation: 'export/url',
-        input: 'convert-media',
-        filename: outName
-      }
-    };
-
-    logDebug('FreeConvert job create', { inputFormat, outputFormat, width: maxWidth, isVideo, availableOptions: options, convertOptions, size: file.size });
-    setStatus(`Передаю «${file.name || 'медиа'}» в FreeConvert…`, 'info', true);
-
-    const createResponse = await request({
-      method: 'POST',
-      url: `${FREECONVERT_API}/process/jobs`,
-      timeout: 35000,
-      headers: {
-        'Authorization': `Bearer ${config.freeConvertToken}`,
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
-      },
-      data: JSON.stringify({ tag: `twitch-gallery-${stamp}`, tasks: tasksDefinition })
-    });
-    const created = parseResponse(createResponse, 'FreeConvert');
-    const jobRoot = created.data || created;
-    const taskList = findTaskList(created);
-    const importTask = taskList.find(task => task.name === 'import-source' || task.operation === 'import/upload');
-    let uploadForm = importTask?.result?.form || importTask?.form || null;
-
-    const jobId = jobRoot.id || jobRoot.job || created.job || created.id || importTask?.job;
-    if (!jobId) throw new Error('FreeConvert не вернул ID задачи. Проверь API-токен и формат ответа.');
-
-    // If the import form is not included in the initial job response, wait briefly for the task detail.
-    if (!uploadForm) {
-      for (let i = 0; i < 8 && !uploadForm; i++) {
-        await delay(900);
-        try {
-          const jobState = await getFreeConvertJobState(jobId, `twitch-gallery-${stamp}`, config.freeConvertToken);
-          const list = jobState.tasks;
-          const task = list.find(entry => entry.name === 'import-source' || entry.operation === 'import/upload');
-          uploadForm = task?.result?.form || task?.form || null;
-        } catch (error) {
-          logDebug('FreeConvert waiting for upload form', error.message || error);
-          if (/HTTP 401\b/i.test(String(error?.message || error))) throw error;
-        }
-      }
-    }
-
-    if (!uploadForm?.url || !uploadForm?.parameters) {
-      throw new Error('FreeConvert не выдал форму загрузки. Проверь токен и доступ к API.');
-    }
-
-    const uploadData = new FormData();
-    for (const [key, value] of Object.entries(uploadForm.parameters)) uploadData.append(key, String(value));
-    uploadData.append('file', file, file.name || `source.${inputFormat}`);
-
-    setStatus(`Загружаю файл в FreeConvert (${formatBytes(file.size)})…`, 'info', true);
-    await request({
-      method: 'POST',
-      url: uploadForm.url,
-      data: uploadData,
-      timeout: 180000,
-      headers: { 'Accept': '*/*' }
-    });
-    logDebug('FreeConvert upload complete', jobId);
-
-    let exportUrl = '';
-    let taskError = '';
-    let done = false;
-
-    for (let attempt = 0; attempt < 180; attempt++) {
-      await delay(2000);
-      const jobState = await getFreeConvertJobState(jobId, `twitch-gallery-${stamp}`, config.freeConvertToken);
-      const statusPayload = jobState.payload;
-      const tasks = jobState.tasks;
-      const convertTask = tasks.find(task => task.name === 'convert-media' || task.operation === 'convert');
-      const exportTask = tasks.find(task => task.name === 'export-media' || task.operation === 'export/url');
-      const allFailed = tasks.find(task => ['failed', 'error', 'canceled'].includes(String(task.status || '').toLowerCase()));
-
-      if (allFailed) {
-        taskError = allFailed.message || allFailed.msg || allFailed.result?.msg || allFailed.result?.errorCode || allFailed.error || allFailed.code || `${allFailed.name || allFailed.operation} завершился со статусом ${allFailed.status}`;
-        break;
-      }
-
-      if (exportTask && ['completed', 'finished', 'success'].includes(String(exportTask.status || '').toLowerCase())) {
-        exportUrl = exportTask.result?.url || exportTask.result?.files?.[0]?.url || exportTask.result?.file?.url || exportTask.url || '';
-        if (exportUrl) { done = true; break; }
-      }
-
-      // Some API builds expose export result at the job root or in the completed convert task.
-      const root = statusPayload.data || statusPayload;
-      exportUrl = exportUrl || root.result?.url || convertTask?.result?.url || '';
-      if (exportUrl && ['completed', 'finished', 'success'].includes(String(root.status || convertTask?.status || '').toLowerCase())) {
-        done = true;
-        break;
-      }
-
-      if (attempt % 5 === 0) {
-        setStatus(`Обработка FreeConvert… ${Math.min(99, Math.round((attempt / 180) * 100))}%`, 'info', true);
-      }
-    }
-
-    if (taskError) throw new Error(`FreeConvert: ${taskError}`);
-    if (!done || !exportUrl) {
-      throw new Error('FreeConvert не завершил задачу за 6 минут. Проверь API-лимит или выбери другой формат в настройках.');
-    }
-
-    setStatus('Скачиваю обработанный файл…', 'info', true);
-    const blob = await requestBlob(exportUrl, 180000);
-    if (!blob.size) throw new Error('FreeConvert вернул пустой файл.');
-
-    const typeMap = {
-      webp: 'image/webp', gif: 'image/gif', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
-      webm: 'video/webm', mp4: 'video/mp4'
-    };
-    const type = typeMap[outputFormat] || 'application/octet-stream';
-    logDebug('FreeConvert job finished', { jobId, outputFormat, bytes: blob.size, type });
-    return new File([blob], outName, { type, lastModified: Date.now() });
   }
 
   function rendiHeaders(apiKey, json = false) {
@@ -920,64 +653,27 @@
     const config = loadConfig();
     const category = mime.startsWith('video/') ? 'video'
       : (mime === 'image/gif' || /\.gif$/i.test(file.name || '') ? 'gif' : 'image');
-    const target = config.conversionRules[category] || 'webp';
-    const sourceExt = fileExtension(file);
-    const sourceCategoryFormat = sourceExt === 'jpeg' ? 'jpg' : sourceExt;
+    const target = config.conversionRules[category] || 'keep';
 
     if (target === 'keep') {
-      if (category === 'image') {
-        return resizeStaticImage(file, config.maxWidth, 'keep');
-      }
-      if (category === 'gif') {
-        const dimensions = await getGifDimensions(file);
-        if (dimensions.width > config.maxWidth) {
-          if (!config.freeConvertToken) throw new Error(`GIF шире ${config.maxWidth}px. Для изменения размера укажи FreeConvert API-токен или выбери конвертацию в настройках.`);
-          return freeConvertFile(file, 'gif', config.maxWidth);
-        }
-      }
+      if (category === 'image') return resizeStaticImage(file, config.maxWidth, 'keep');
+      // Animated GIFs are preserved as-is. Animation resizing/re-encoding is
+      // intentionally not delegated to any external conversion service.
       return file;
     }
 
-    // Small static images can be processed locally; no API credits and no main-thread animation decoding.
     if (category === 'image' && ['webp', 'png', 'jpg'].includes(target)) {
       return resizeStaticImage(file, config.maxWidth, target);
     }
 
-    if (category === 'gif' && target === 'gif') {
-      const dimensions = await getGifDimensions(file);
-      if (dimensions.width <= config.maxWidth) return file;
-    }
-
-    const extForTarget = target === 'jpg' ? 'jpg' : target;
-    if (sourceCategoryFormat === extForTarget && category !== 'video') {
-      if (category === 'gif') {
-        const dimensions = await getGifDimensions(file);
-        if (dimensions.width <= config.maxWidth) return file;
-      } else {
-        return resizeStaticImage(file, config.maxWidth, target);
+    if (category === 'video' && target === 'webp') {
+      if (!config.rendiApiKey) {
+        throw new Error('Для конвертации видео в WebP укажи Rendi API key в настройках → Конвертация или выбери «Оставить оригинал».');
       }
+      return rendiVideoToWebp(file, config.maxWidth);
     }
 
-    // Rendi is purpose-built here for video → animated WebP. Other conversion
-    // rules retain the existing FreeConvert behavior.
-    if (category === 'video' && target === 'webp' && config.rendiApiKey) {
-      try {
-        return await rendiVideoToWebp(file, config.maxWidth);
-      } catch (error) {
-        const message = String(error?.message || error || '');
-        const planDenied = /HTTP 403\b/i.test(message) && /account's plan cannot upload files/i.test(message);
-        if (!planDenied) throw error;
-
-        if (!config.freeConvertToken) {
-          throw new Error('Тариф Rendi запрещает загрузку файлов (HTTP 403). Добавь FreeConvert API-токен в настройки → Конвертация для резервной обработки или измени тариф Rendi.');
-        }
-
-        logDebug('Rendi upload blocked by account plan; falling back to FreeConvert', { name: file.name || 'video' });
-        setStatus('Тариф Rendi запрещает загрузку. Переключаюсь на FreeConvert…', 'info', true);
-        return await freeConvertFile(file, target, config.maxWidth);
-      }
-    }
-    return freeConvertFile(file, target, config.maxWidth);
+    throw new Error(`Правило конвертации «${category} → ${target}» не поддерживается. Доступны локальная обработка изображений, сохранение GIF и видео → WebP через Rendi.`);
   }
 
   function addItem(url, name, type, sourceKey = '', previewUrl = '') {
@@ -1544,7 +1240,6 @@
       pageSize: config.pageSize,
       previewScale: config.previewScale,
       conversionRules: { ...config.conversionRules },
-      freeConvertToken: config.freeConvertToken,
       // Rendi credentials are intentionally local-only and must never be copied to a Gist.
       debug: config.debug,
       settingsUpdatedAt: config.settingsUpdatedAt || 0,
@@ -1599,7 +1294,7 @@
 
     if (!remote || !Number(remote.settingsUpdatedAt)) {
       await writeGistFile(config, SETTINGS_FILENAME, localSnapshot);
-      setStatus('Настройки и FreeConvert API-токен отправлены в Gist.', 'success', true);
+      setStatus('Настройки отправлены в Gist.', 'success', true);
       return;
     }
 
@@ -1612,14 +1307,18 @@
       // it and publish the new schema so another device won't restore the old WebP default.
       if (localUpdatedAt > 0 && localUpdatedAt >= remoteUpdatedAt) {
         await writeGistFile(config, SETTINGS_FILENAME, localSnapshot);
-        setStatus('Настройки синхронизированы. Старый формат Gist обновлён; видео теперь по умолчанию конвертируется в GIF.', 'success', true);
+        setStatus('Настройки синхронизированы. Старые правила конвертации обновлены.', 'success', true);
         return;
       }
 
       const migratedRules = {
-        ...(remote.conversionRules && typeof remote.conversionRules === 'object' ? remote.conversionRules : {})
+        image: remote.conversionRules?.image || 'webp',
+        gif: remote.conversionRules?.gif || 'keep',
+        video: remote.conversionRules?.video || 'webp'
       };
-      if (migratedRules.video === 'webp') migratedRules.video = 'gif';
+      if (!['keep', 'webp', 'png', 'jpg'].includes(migratedRules.image)) migratedRules.image = 'webp';
+      if (migratedRules.gif !== 'keep') migratedRules.gif = 'keep';
+      if (!['keep', 'webp'].includes(migratedRules.video)) migratedRules.video = 'webp';
 
       const migratedSettingsUpdatedAt = Date.now();
       saveConfig({
@@ -1632,7 +1331,7 @@
       });
       const migratedSnapshot = syncableSettings(loadConfig());
       await writeGistFile(config, SETTINGS_FILENAME, migratedSnapshot);
-      setStatus('Настройки загружены из старого Gist и обновлены. Видео конвертируется в GIF.', 'success', true);
+      setStatus('Настройки загружены из старого Gist и обновлены.', 'success', true);
       logDebug('Settings schema migrated in Gist', { from: remoteSchemaVersion, to: SETTINGS_SCHEMA_VERSION });
       if (panelView === 'settings') renderSettings();
       return;
@@ -1648,12 +1347,12 @@
       });
       const snapshot = loadConfig();
       GM_setValue(CONFIG_KEY, { ...snapshot, settingsUpdatedAt: Number(remote.settingsUpdatedAt) });
-      setStatus('Настройки загружены из Gist, включая FreeConvert API-токен.', 'success', true);
+      setStatus('Настройки загружены из Gist.', 'success', true);
       logDebug('Settings synced from Gist', { settingsUpdatedAt: remote.settingsUpdatedAt });
       if (panelView === 'settings') renderSettings();
     } else {
       await writeGistFile(config, SETTINGS_FILENAME, localSnapshot);
-      setStatus('Текущие настройки, включая FreeConvert API-токен, синхронизированы.', 'success', true);
+      setStatus('Текущие настройки синхронизированы.', 'success', true);
       logDebug('Settings synced to Gist', { settingsUpdatedAt: config.settingsUpdatedAt });
     }
   }
@@ -2441,16 +2140,13 @@
             <label class="twgif-field-label" for="twgif-rule-image">Обычные изображения →</label>
             <select id="twgif-rule-image" class="twgif-input">${targetOptions(config.conversionRules.image, [['keep','Не конвертировать'],['webp','WebP'],['jpg','JPG'],['png','PNG']])}</select>
             <label class="twgif-field-label" for="twgif-rule-gif">GIF →</label>
-            <select id="twgif-rule-gif" class="twgif-input">${targetOptions(config.conversionRules.gif, [['keep','Оставить GIF'],['webp','WebP'],['gif','GIF'],['mp4','MP4']])}</select>
+            <select id="twgif-rule-gif" class="twgif-input">${targetOptions(config.conversionRules.gif, [['keep','Оставить GIF']])}</select>
             <label class="twgif-field-label" for="twgif-rule-video">Видео →</label>
-            <select id="twgif-rule-video" class="twgif-input">${targetOptions(config.conversionRules.video, [['keep','Оставить оригинал'],['gif','GIF'],['webp','WebP'],['webm','WebM'],['mp4','MP4']])}</select>
-            <div class="twgif-help">Видео по умолчанию конвертируется в GIF с бесконечным повторением. Для GIF используется параметр loop_count = 0 (или gif_loop_count = 0, если его требует FreeConvert). При выборе «Видео → WebP» и заполненном ключе Rendi видео превращается в зацикленный анимированный WebP через Rendi; остальные форматы продолжают обрабатываться FreeConvert.</div>
+            <select id="twgif-rule-video" class="twgif-input">${targetOptions(config.conversionRules.video, [['keep','Оставить оригинал'],['webp','WebP через Rendi']])}</select>
+            <div class="twgif-help">Обычные изображения конвертируются локально в WebP/JPG/PNG. GIF сохраняется в исходном виде. Для конвертации видео в зацикленный анимированный WebP нужен Rendi API key. Другие внешние конвертеры не используются.</div>
             <label class="twgif-field-label" for="twgif-rendi-api-key">Rendi API key (только на этом устройстве)</label>
             <input id="twgif-rendi-api-key" name="twgif-rendi-api-key" class="twgif-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-bwignore="true" data-form-type="other" style="-webkit-text-security:disc" placeholder="Rendi API key" value="${escapeAttr(config.rendiApiKey)}">
             <div class="twgif-help"><a href="https://www.rendi.dev/docs/direct-upload" target="_blank" rel="noopener noreferrer">Rendi Direct Upload</a> + FFmpeg API. Ключ хранится только локально и никогда не добавляется в Gist. Исходное видео загружается в Rendi для конвертации.</div>
-            <label class="twgif-field-label" for="twgif-freeconvert-token">FreeConvert API-токен</label>
-            <input id="twgif-freeconvert-token" name="twgif-freeconvert-api-token" class="twgif-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-bwignore="true" data-form-type="other" style="-webkit-text-security:disc" placeholder="FreeConvert API token" value="${escapeAttr(config.freeConvertToken)}">
-            <div class="twgif-help"><a href="https://www.freeconvert.com/api" target="_blank" rel="noopener noreferrer">Документация FreeConvert API</a>. Конвертация использует лимиты/кредиты сервиса. Файл отправляется на внешний сервер обработки. Токен может синхронизироваться в Gist по отдельной кнопке настроек.</div>
             <button id="twgif-save-convert" class="twgif-small-btn twgif-primary" type="button" style="margin-top:8px">Сохранить правила</button>
           </div>
         </div>`;
@@ -2465,14 +2161,14 @@
             <input id="twgif-gist-id" class="twgif-input" type="text" autocomplete="off" spellcheck="false" placeholder="ID Gist" value="${escapeAttr(config.gistId)}">
             <div class="twgif-help"><b>Первое устройство:</b> создай GitHub token с разрешением <code>gist</code>, вставь его сюда, оставь ID Gist пустым и нажми «Создать Gist». Затем нажми «Синхронизировать галерею» и «Синхронизировать настройки».</div>
             <div class="twgif-help"><b>Другое устройство:</b> введи <b>тот же GitHub token</b> и <b>тот же ID Gist</b>, которые использовались на первом устройстве. Нажми «Сохранить доступ», затем «Синхронизировать галерею» и «Синхронизировать настройки». ID Gist — длинная строка из URL Gist; сам GitHub token автоматически на другие устройства не переносится.</div>
-            <div class="twgif-help">Gist хранит коллекцию и синхронизируемые настройки. Secret Gist не является приватным для людей, знающих его URL. FreeConvert API-токен попадает в файл настроек Gist в открытом виде; GitHub token в Gist не записывается.</div>
+            <div class="twgif-help">Gist хранит коллекцию и синхронизируемые настройки. Secret Gist не является приватным для людей, знающих его URL. GitHub token в Gist не записывается.</div>
             <div class="twgif-row" style="margin-top:8px">
               <button id="twgif-save-gist" class="twgif-small-btn" type="button">Сохранить доступ</button>
               <button id="twgif-create-gist" class="twgif-small-btn" type="button">Создать Gist</button>
               <button id="twgif-sync-now" class="twgif-small-btn" type="button">Синхронизировать галерею</button>
             </div>
             <button id="twgif-sync-settings" class="twgif-small-btn twgif-primary" type="button" style="margin-top:8px">Синхронизировать настройки</button>
-            <div class="twgif-help">Отдельная кнопка синхронизирует настройки отображения, правила конвертации и FreeConvert API-токен. Токен хранится в отдельном файле Gist в открытом виде: любой, у кого есть URL Secret Gist, может прочитать его. GitHub-токен в Gist не записывается.</div>
+            <div class="twgif-help">Отдельная кнопка синхронизирует настройки отображения и правила конвертации. GitHub-токен в Gist не записывается.</div>
             <div class="twgif-help"><a href="https://github.com/settings/tokens/new?scopes=gist&description=Twitch%20GIF%20Gallery" target="_blank" rel="noopener noreferrer">Создать GitHub-токен с разрешением gist</a>.</div>
           </div>
         </div>`;
@@ -2509,7 +2205,6 @@
           ...DEFAULT_CONFIG(),
           gistToken: current.gistToken,
           gistId: current.gistId,
-          freeConvertToken: current.freeConvertToken,
           rendiApiKey: current.rendiApiKey,
           settingsUpdatedAt: Date.now()
         });
@@ -2529,7 +2224,6 @@
             gif: $('#twgif-rule-gif').value,
             video: $('#twgif-rule-video').value
           },
-          freeConvertToken: $('#twgif-freeconvert-token').value,
           rendiApiKey: $('#twgif-rendi-api-key').value
         });
         setStatus('Правила конвертации и API-ключи сохранены локально. Ключ Rendi не синхронизируется в Gist.', 'success');
