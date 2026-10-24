@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.1
+// @version      5.9.2
 // @description  Twitch media gallery with cached FFmpeg.wasm media conversion, original 7TV links, persistent previews, pagination and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -1383,8 +1383,16 @@
   }
 
   function is7TVGalleryItem(item) {
-    try { return Boolean(item && parse7TVEmoteId(new URL(item.url, location.href))); }
-    catch (_) { return false; }
+    try {
+      if (!item) return false;
+      const url = new URL(item.url, location.href);
+      if (parse7TVEmoteId(url)) return true;
+      // Older gallery entries may point straight to a 7TV CDN file rather than the emote page.
+      return /(^|\.)7tv\.app$/i.test(url.hostname) &&
+        /^\/emote\/[a-z0-9]{20,32}\/\d+x\.(?:webp|gif|png|avif|jpe?g)$/i.test(url.pathname);
+    } catch (_) {
+      return false;
+    }
   }
 
   async function resolve7TVEmote(url) {
@@ -2543,7 +2551,7 @@
     if (!body) return;
     body.innerHTML = `
       <div class="twgif-toolbar">
-        <input id="twgif-url-input" class="twgif-input twgif-url-input" type="url" placeholder="Ссылка на медиа или эмоут 7TV…" autocomplete="url" aria-label="Ссылка для добавления">
+        <input id="twgif-url-input" class="twgif-input twgif-url-input" type="url" placeholder="Ссылка или несколько ссылок через пробел…" autocomplete="url" aria-label="Ссылка для добавления">
         <button id="twgif-add-url" class="twgif-small-btn twgif-primary twgif-toolbar-icon" type="button" title="Добавить ссылку" aria-label="Добавить ссылку">+</button>
         <span id="twgif-count" class="twgif-count"></span>
       </div>
@@ -3418,7 +3426,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.9.1 started', { href: location.href });
+    logDebug('Userscript v5.9.2 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
