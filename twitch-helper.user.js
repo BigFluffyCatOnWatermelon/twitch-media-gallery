@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.2.0
+// @version      5.2.1
 // @description  Twitch media gallery with Rendi animated WebP video conversion, FreeConvert rules, original 7TV links, persistent previews, pagination and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -530,6 +530,54 @@
     return [];
   }
 
+  async function getFreeConvertJobState(jobId, apiToken) {
+    const headers = {
+      'Authorization': `Bearer ${apiToken}`,
+      'Accept': 'application/json'
+    };
+    let jobError = null;
+
+    // Prefer the dedicated job endpoint. If a deployment does not include task
+    // details there, fall back to the documented task-list endpoint.
+    try {
+      const response = await request({
+        method: 'GET',
+        url: `${FREECONVERT_API}/process/jobs/${encodeURIComponent(jobId)}?include=tasks`,
+        timeout: 25000,
+        headers
+      });
+      const payload = parseResponse(response, 'FreeConvert job');
+      const tasks = findTaskList(payload);
+      if (tasks.length) return { payload, tasks };
+      logDebug('FreeConvert job response did not include tasks; trying task list', { jobId });
+    } catch (error) {
+      jobError = error;
+      logDebug('FreeConvert job endpoint failed; trying task list', error.message || error);
+    }
+
+    try {
+      const response = await request({
+        method: 'GET',
+        url: `${FREECONVERT_API}/process/tasks?job=${encodeURIComponent(jobId)}&per_page=200`,
+        timeout: 25000,
+        headers
+      });
+      const payload = parseResponse(response, 'FreeConvert tasks');
+      const tasks = findTaskList(payload);
+      if (tasks.length) return { payload, tasks };
+      if (jobError && /HTTP 401\\b/i.test(String(jobError.message || jobError))) {
+        throw new Error('FreeConvert не разрешил прочитать состояние задачи (HTTP 401). Проверь API-токен в личном кабинете FreeConvert и заново сохрани его в настройках скрипта.');
+      }
+      return { payload, tasks };
+    } catch (error) {
+      const details = `${jobError?.message || ''} ${error?.message || error}`;
+      if (/HTTP 401\\b/i.test(details)) {
+        throw new Error('FreeConvert вернул HTTP 401 при чтении состояния задачи. Проверь API-токен в личном кабинете FreeConvert, затем заново сохрани его в настройках скрипта и повтори загрузку.');
+      }
+      throw error;
+    }
+  }
+
   async function getFreeConvertOptions(inputFormat, outputFormat, maxWidth, isVideo) {
     let available = [];
     try {
@@ -657,18 +705,13 @@
       for (let i = 0; i < 8 && !uploadForm; i++) {
         await delay(900);
         try {
-          const taskResponse = await request({
-            method: 'GET',
-            url: `${FREECONVERT_API}/process/tasks?job=${encodeURIComponent(jobId)}&per_page=200`,
-            timeout: 20000,
-            headers: { 'Authorization': `Bearer ${config.freeConvertToken}`, 'Accept': 'application/json' }
-          });
-          const taskData = parseResponse(taskResponse, 'FreeConvert');
-          const list = findTaskList(taskData);
+          const jobState = await getFreeConvertJobState(jobId, config.freeConvertToken);
+          const list = jobState.tasks;
           const task = list.find(entry => entry.name === 'import-source' || entry.operation === 'import/upload');
           uploadForm = task?.result?.form || task?.form || null;
         } catch (error) {
           logDebug('FreeConvert waiting for upload form', error.message || error);
+          if (/HTTP 401\\b/i.test(String(error?.message || error))) throw error;
         }
       }
     }
@@ -697,14 +740,9 @@
 
     for (let attempt = 0; attempt < 180; attempt++) {
       await delay(2000);
-      const statusResponse = await request({
-        method: 'GET',
-        url: `${FREECONVERT_API}/process/tasks?job=${encodeURIComponent(jobId)}&per_page=200`,
-        timeout: 25000,
-        headers: { 'Authorization': `Bearer ${config.freeConvertToken}`, 'Accept': 'application/json' }
-      });
-      const statusPayload = parseResponse(statusResponse, 'FreeConvert');
-      const tasks = findTaskList(statusPayload);
+      const jobState = await getFreeConvertJobState(jobId, config.freeConvertToken);
+      const statusPayload = jobState.payload;
+      const tasks = jobState.tasks;
       const convertTask = tasks.find(task => task.name === 'convert-media' || task.operation === 'convert');
       const exportTask = tasks.find(task => task.name === 'export-media' || task.operation === 'export/url');
       const allFailed = tasks.find(task => ['failed', 'error', 'canceled'].includes(String(task.status || '').toLowerCase()));
@@ -919,7 +957,21 @@
     // Rendi is purpose-built here for video → animated WebP. Other conversion
     // rules retain the existing FreeConvert behavior.
     if (category === 'video' && target === 'webp' && config.rendiApiKey) {
-      return rendiVideoToWebp(file, config.maxWidth);
+      try {
+        return await rendiVideoToWebp(file, config.maxWidth);
+      } catch (error) {
+        const message = String(error?.message || error || '');
+        const planDenied = /HTTP 403\\b/i.test(message) && /account's plan cannot upload files/i.test(message);
+        if (!planDenied) throw error;
+
+        if (!config.freeConvertToken) {
+          throw new Error('Тариф Rendi запрещает загрузку файлов (HTTP 403). Добавь FreeConvert API-токен в настройки → Конвертация для резервной обработки или измени тариф Rendi.');
+        }
+
+        logDebug('Rendi upload blocked by account plan; falling back to FreeConvert', { name: file.name || 'video' });
+        setStatus('Тариф Rendi запрещает загрузку. Переключаюсь на FreeConvert…', 'info', true);
+        return await freeConvertFile(file, target, config.maxWidth);
+      }
     }
     return freeConvertFile(file, target, config.maxWidth);
   }
@@ -2644,7 +2696,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.1 started', { href: location.href });
+    logDebug('Userscript v5.2.1 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
