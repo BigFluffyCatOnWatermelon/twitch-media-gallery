@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.2.2
-// @description  Twitch media gallery with Rendi animated WebP video conversion, original 7TV links, persistent previews, pagination and Gist settings sync.
+// @version      5.3.0
+// @description  Twitch media gallery with local FFmpeg.wasm video conversion, original 7TV links, persistent previews, pagination and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @match        https://www.twitch.tv/*
@@ -14,11 +14,10 @@
 // @connect      kappa.lol
 // @connect      api.github.com
 // @connect      gist.githubusercontent.com
-// @connect      api.rendi.dev
-// @connect      *.rendi.dev
 // @connect      7tv.io
 // @connect      7tv.app
 // @connect      cdn.7tv.app
+// @connect      cdn.jsdelivr.net
 // ==/UserScript==
 
 (() => {
@@ -33,9 +32,9 @@
   const SYNC_FILENAME = 'twitch-gif-gallery.json';
   const KAPPA_UPLOAD_URL = 'https://kappa.lol/api/upload';
   const GITHUB_API = 'https://api.github.com';
-  const RENDI_API = 'https://api.rendi.dev/v1';
+  const FFMPEG_CORE_BASE_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
   const SETTINGS_FILENAME = 'twitch-gif-gallery-settings.json';
-  const SETTINGS_SCHEMA_VERSION = 4;
+  const SETTINGS_SCHEMA_VERSION = 5;
 
   let panelView = 'gallery';
   let settingsTab = 'general';
@@ -63,6 +62,12 @@
   const debugLogs = [];
   const processingFiles = new Map();
   const recentFileFingerprints = new Map();
+  let localFfmpegAssetsPromise = null;
+  let localFfmpegAssets = null;
+  let localFfmpegWorker = null;
+  let localFfmpegWorkerUrl = '';
+  let localFfmpegRequestId = 0;
+  const localFfmpegPending = new Map();
 
   const EMPTY_DATA = () => ({ version: VERSION, items: [], deleted: {} });
   const DEFAULT_CONFIG = () => ({
@@ -73,8 +78,6 @@
     previewScale: 1.6,
     conversionRules: { image: 'webp', gif: 'keep', video: 'webp' },
     settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
-    // This key deliberately never enters a Gist snapshot.
-    rendiApiKey: '',
     gistToken: '',
     gistId: '',
     debug: false,
@@ -159,7 +162,6 @@
         gif: cleanTarget('gif', rules.gif ?? defaults.conversionRules.gif),
         video: cleanTarget('video', rules.video ?? defaults.conversionRules.video)
       },
-      rendiApiKey: String(raw.rendiApiKey || '').trim(),
       gistToken: String(raw.gistToken || legacy.token || '').trim(),
       gistId: String(raw.gistId || legacy.gistId || '').trim(),
       debug: Boolean(raw.debug),
@@ -167,8 +169,7 @@
       settingsSchemaVersion: SETTINGS_SCHEMA_VERSION
     };
 
-    // Migrate existing installs away from modes requiring a removed external
-    // converter. GIFs are kept unchanged; video conversion uses Rendi WebP.
+    // Migrate prior settings to the current browser-local FFmpeg.wasm flow.
     if (previousSchemaVersion < SETTINGS_SCHEMA_VERSION) {
       if (!allowedTargets.image.includes(config.conversionRules.image)) config.conversionRules.image = defaults.conversionRules.image;
       if (!allowedTargets.gif.includes(config.conversionRules.gif)) config.conversionRules.gif = defaults.conversionRules.gif;
@@ -199,7 +200,6 @@
       pageSize: clampInt(next.pageSize ?? 100, 10, 500, 100),
       previewScale: clampFloat(next.previewScale ?? current.previewScale, 1.1, 3, defaults.previewScale),
       conversionRules: rules,
-      rendiApiKey: String(next.rendiApiKey ?? current.rendiApiKey).trim(),
       gistToken: String(next.gistToken ?? current.gistToken).trim(),
       gistId: String(next.gistId ?? current.gistId).trim(),
       debug: Boolean(next.debug ?? current.debug),
@@ -525,113 +525,200 @@
     return getExtension(mime, file.name).replace(/^\./, '') || 'bin';
   }
 
-  function rendiHeaders(apiKey, json = false) {
-    return json
-      ? { 'X-API-KEY': apiKey, 'Accept': 'application/json', 'Content-Type': 'application/json' }
-      : { 'X-API-KEY': apiKey, 'Accept': 'application/json' };
+  async function loadLocalFfmpegAssets() {
+    if (localFfmpegAssets) return localFfmpegAssets;
+    if (localFfmpegAssetsPromise) return localFfmpegAssetsPromise;
+    localFfmpegAssetsPromise = (async () => {
+      setStatus('Загружаю FFmpeg.wasm (~31 МБ) для локальной конвертации. Исходное видео останется в браузере…', 'info', true);
+      const [coreScript, coreWasm] = await Promise.all([
+        requestBlob(FFMPEG_CORE_BASE_URL + '/ffmpeg-core.js', 180000),
+        requestBlob(FFMPEG_CORE_BASE_URL + '/ffmpeg-core.wasm', 300000)
+      ]);
+      const coreUrl = URL.createObjectURL(new Blob([coreScript], { type: 'text/javascript' }));
+      const wasmUrl = URL.createObjectURL(new Blob([coreWasm], { type: 'application/wasm' }));
+      localFfmpegAssets = { coreUrl, wasmUrl };
+      logDebug('FFmpeg.wasm assets loaded', { coreBytes: coreScript.size, wasmBytes: coreWasm.size, version: '0.12.10' });
+      return localFfmpegAssets;
+    })().catch(error => {
+      localFfmpegAssetsPromise = null;
+      throw new Error('Не удалось загрузить FFmpeg.wasm. Проверь доступ к cdn.jsdelivr.net и повтори попытку. ' + (error.message || error));
+    });
+    return localFfmpegAssetsPromise;
   }
 
-  async function waitForRendiStoredFile(fileId, apiKey) {
-    for (let attempt = 0; attempt < 90; attempt++) {
-      const response = await request({
-        method: 'GET', url: `${RENDI_API}/files/${encodeURIComponent(fileId)}`,
-        timeout: 25000, headers: rendiHeaders(apiKey)
-      });
-      const file = parseResponse(response, 'Rendi file');
-      if (String(file.status || '').toUpperCase() === 'STORED' && file.storage_url) return file;
-      if (['FAILED', 'ERROR', 'CANCELED', 'CANCELLED'].includes(String(file.status || '').toUpperCase())) {
-        throw new Error(`Rendi не сохранил исходный файл: ${file.error || file.detail || file.status}.`);
-      }
-      await delay(1000);
+  // Worker entry point is serialized and runs without references to the page.
+  function localFfmpegWorkerEntrypoint(coreUrl, wasmUrl) {
+    'use strict';
+    let engine = null;
+    let loadingPromise = null;
+    let activeId = null;
+    let recentErrors = [];
+
+    async function loadEngine(id) {
+      if (engine) return engine;
+      if (loadingPromise) return loadingPromise;
+      loadingPromise = (async () => {
+        self.postMessage({ kind: 'status', id, text: 'Инициализирую FFmpeg.wasm…' });
+        importScripts(coreUrl);
+        if (typeof self.createFFmpegCore !== 'function') throw new Error('FFmpeg.wasm core не экспортировал createFFmpegCore.');
+        const assetInfo = btoa(JSON.stringify({ wasmURL: wasmUrl, workerURL: coreUrl }));
+        engine = await self.createFFmpegCore({ mainScriptUrlOrBlob: coreUrl + '#' + assetInfo });
+        engine.setLogger(data => {
+          const message = String(data && data.message || '').trim();
+          if (message && ((data && data.type === 'fferr') || /\b(error|failed|invalid|unknown decoder|unknown encoder)\b/i.test(message))) {
+            recentErrors.push(message);
+            if (recentErrors.length > 8) recentErrors.shift();
+          }
+        });
+        engine.setProgress(data => {
+          if (activeId !== null) self.postMessage({ kind: 'progress', id: activeId, progress: Number(data && data.ratio) });
+        });
+        return engine;
+      })();
+      try { return await loadingPromise; }
+      catch (error) { loadingPromise = null; engine = null; throw error; }
     }
-    throw new Error('Rendi не подготовил загруженный файл за отведённое время.');
+
+    async function convert(message) {
+      const id = message.id;
+      const inputName = message.inputName;
+      const outputName = message.outputName;
+      activeId = id;
+      recentErrors = [];
+      let wroteInput = false;
+      let wroteOutput = false;
+      try {
+        const ffmpeg = await loadEngine(id);
+        self.postMessage({ kind: 'status', id, text: 'Конвертирую видео в анимированный WebP локально…' });
+        ffmpeg.FS.writeFile(inputName, new Uint8Array(message.inputBuffer));
+        wroteInput = true;
+        ffmpeg.setTimeout(1200000);
+        ffmpeg.exec(
+          '-i', inputName,
+          '-vf', "fps=12,scale='min(iw," + message.maxWidth + ")':-2:flags=lanczos",
+          '-an', '-c:v', 'libwebp', '-q:v', '70', '-loop', '0', outputName
+        );
+        const exitCode = Number(ffmpeg.ret);
+        ffmpeg.reset();
+        if (exitCode !== 0) {
+          const details = recentErrors.slice(-4).join(' | ');
+          throw new Error('FFmpeg завершился с кодом ' + exitCode + (details ? ': ' + details : '. Проверь формат исходного файла.'));
+        }
+        const bytes = ffmpeg.FS.readFile(outputName);
+        wroteOutput = true;
+        const outputBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        self.postMessage({ kind: 'done', id, outputBuffer }, [outputBuffer]);
+      } catch (error) {
+        try { if (engine) engine.reset(); } catch (_) {}
+        self.postMessage({
+          kind: 'error',
+          id,
+          message: String(error && error.message || error || 'Неизвестная ошибка FFmpeg.wasm'),
+          details: recentErrors.slice(-4).join(' | ')
+        });
+      } finally {
+        try { if (engine && wroteInput) engine.FS.unlink(inputName); } catch (_) {}
+        try { if (engine && wroteOutput) engine.FS.unlink(outputName); } catch (_) {}
+        activeId = null;
+      }
+    }
+    self.onmessage = event => {
+      const message = event.data || {};
+      if (message.kind === 'convert') convert(message);
+    };
   }
 
-  async function rendiVideoToWebp(file, maxWidth = loadConfig().maxWidth) {
-    const config = loadConfig();
-    if (!config.rendiApiKey) {
-      throw new Error('Для конвертации видео в WebP через Rendi укажи Rendi API key в настройках → Конвертация.');
+  async function getLocalFfmpegWorker() {
+    if (localFfmpegWorker) return localFfmpegWorker;
+    const assets = await loadLocalFfmpegAssets();
+    if (localFfmpegWorker) return localFfmpegWorker;
+    const source = '(' + localFfmpegWorkerEntrypoint.toString() + ')(' + JSON.stringify(assets.coreUrl) + ',' + JSON.stringify(assets.wasmUrl) + ');';
+    const blobUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+    let worker;
+    try { worker = new Worker(blobUrl); }
+    catch (error) {
+      URL.revokeObjectURL(blobUrl);
+      throw new Error('Браузер запретил запуск FFmpeg.wasm в Web Worker (возможно, из-за CSP). ' + (error.message || error));
     }
-
-    const inputName = file.name || `source.${fileExtension(file) || 'mp4'}`;
-    setStatus(`Подготавливаю «${inputName}» для Rendi…`, 'info', true);
-    const initResponse = await request({
-      method: 'POST', url: `${RENDI_API}/files/init-upload`, timeout: 35000,
-      headers: rendiHeaders(config.rendiApiKey, true),
-      data: JSON.stringify({ filename: inputName, size_bytes: file.size })
+    localFfmpegWorker = worker;
+    localFfmpegWorkerUrl = blobUrl;
+    worker.addEventListener('message', event => {
+      const message = event.data || {};
+      const pending = localFfmpegPending.get(message.id);
+      if (!pending) return;
+      if (message.kind === 'status') {
+        pending.onStatus?.(message.text || '');
+      } else if (message.kind === 'progress') {
+        const ratio = Number(message.progress);
+        if (Number.isFinite(ratio) && ratio >= 0) {
+          const percent = Math.min(99, Math.round(ratio * 100));
+          if (percent >= pending.lastPercent + 5) {
+            pending.lastPercent = percent;
+            pending.onStatus?.('FFmpeg.wasm: ' + percent + '%');
+          }
+        }
+      } else if (message.kind === 'done') {
+        clearTimeout(pending.timeout);
+        localFfmpegPending.delete(message.id);
+        pending.resolve(message.outputBuffer);
+      } else if (message.kind === 'error') {
+        clearTimeout(pending.timeout);
+        localFfmpegPending.delete(message.id);
+        const details = message.details ? ' Детали: ' + message.details : '';
+        pending.reject(new Error('Ошибка FFmpeg.wasm: ' + (message.message || 'не удалось обработать видео') + '.' + details));
+      }
     });
-    const init = parseResponse(initResponse, 'Rendi upload');
-    if (!init.file_id || !Number(init.part_size) || !Array.isArray(init.upload_urls) || !init.upload_urls.length) {
-      throw new Error('Rendi не вернул параметры multipart-загрузки.');
-    }
-
-    const uploadedParts = [];
-    for (let index = 0; index < init.upload_urls.length; index++) {
-      const start = index * init.part_size;
-      const chunk = file.slice(start, Math.min(start + init.part_size, file.size));
-      setStatus(`Загружаю в Rendi: часть ${index + 1}/${init.upload_urls.length}…`, 'info', true);
-      // The presigned upload URL is used directly by the browser. Rendi exposes
-      // the ETag header for this documented multipart completion flow, so this
-      // does not require an all-sites userscript network permission.
-      const partResponse = await fetch(init.upload_urls[index], { method: 'PUT', body: chunk });
-      if (!partResponse.ok) throw new Error(`Rendi отклонил часть ${index + 1} (HTTP ${partResponse.status}).`);
-      const etag = String(partResponse.headers.get('etag') || '').replace(/^"|"$/g, '');
-      if (!etag) throw new Error(`Rendi не вернул ETag для части ${index + 1}.`);
-      uploadedParts.push({ part_number: index + 1, etag });
-    }
-
-    const completeResponse = await request({
-      method: 'POST', url: `${RENDI_API}/files/${encodeURIComponent(init.file_id)}/complete-upload`, timeout: 35000,
-      headers: rendiHeaders(config.rendiApiKey, true), data: JSON.stringify({ parts: uploadedParts })
+    worker.addEventListener('error', event => {
+      logDebug('FFmpeg.wasm worker crashed', event.message || event);
+      const error = new Error('FFmpeg.wasm worker завершился с ошибкой. Перезагрузи Twitch и повтори попытку.');
+      for (const [id, pending] of localFfmpegPending) {
+        clearTimeout(pending.timeout);
+        pending.reject(error);
+        localFfmpegPending.delete(id);
+      }
+      worker.terminate();
+      if (localFfmpegWorker === worker) localFfmpegWorker = null;
+      if (localFfmpegWorkerUrl) URL.revokeObjectURL(localFfmpegWorkerUrl);
+      localFfmpegWorkerUrl = '';
     });
-    const completed = parseResponse(completeResponse, 'Rendi upload completion');
-    const stored = completed.storage_url ? completed : await waitForRendiStoredFile(init.file_id, config.rendiApiKey);
-    if (!stored.storage_url) throw new Error('Rendi не вернул URL загруженного видео.');
+    return worker;
+  }
 
-    const baseName = String(inputName).replace(/\.[^.]+$/, '') || 'video';
-    const outputName = `${baseName}.webp`;
-    const width = clampInt(maxWidth, 100, 4000, 480);
-    // -loop 0 is FFmpeg's infinite-loop value for animated WebP.
-    const ffmpegCommand = `-i {{in_1}} -vf "fps=12,scale='min(iw,${width})':-2:flags=lanczos" -an -c:v libwebp -q:v 70 -loop 0 {{out_1}}`;
-    setStatus('Запускаю конвертацию видео в анимированный WebP через Rendi…', 'info', true);
-    const commandResponse = await request({
-      method: 'POST', url: `${RENDI_API}/run-ffmpeg-command`, timeout: 35000,
-      headers: rendiHeaders(config.rendiApiKey, true),
-      data: JSON.stringify({
-        input_files: { in_1: stored.storage_url },
-        output_files: { out_1: outputName },
-        ffmpeg_command: ffmpegCommand
-      })
-    });
-    const command = parseResponse(commandResponse, 'Rendi command');
-    if (!command.command_id) throw new Error('Rendi не вернул ID команды.');
-
-    let outputUrl = '';
-    for (let attempt = 0; attempt < 180; attempt++) {
-      await delay(2000);
-      const statusResponse = await request({
-        method: 'GET', url: `${RENDI_API}/commands/${encodeURIComponent(command.command_id)}`,
-        timeout: 25000, headers: rendiHeaders(config.rendiApiKey)
+  async function ffmpegVideoToWebp(file, maxWidth = loadConfig().maxWidth) {
+    if (!file || !file.size) throw new Error('Файл пустой.');
+    const ext = fileExtension(file).replace(/[^a-z0-9]/gi, '') || 'mp4';
+    const baseName = String(file.name || 'video').replace(/\.[^.]+$/, '') || 'video';
+    const outputName = baseName + '.webp';
+    const width = clampInt(maxWidth, 100, 4000, DEFAULT_MAX_WIDTH);
+    setStatus('Подготавливаю «' + (file.name || 'видео') + '» для локальной конвертации…', 'info', true);
+    const worker = await getLocalFfmpegWorker();
+    const inputBuffer = await file.arrayBuffer();
+    const id = ++localFfmpegRequestId;
+    const inputName = 'input_' + id + '.' + ext;
+    const outputPath = 'output_' + id + '.webp';
+    const outputBuffer = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        localFfmpegPending.delete(id);
+        reject(new Error('FFmpeg.wasm не завершил конвертацию за 20 минут. Попробуй более короткое видео или меньший файл.'));
+      }, 1200000);
+      localFfmpegPending.set(id, {
+        resolve, reject, timeout, lastPercent: -5,
+        onStatus: text => setStatus(text || 'FFmpeg.wasm обрабатывает видео…', 'info', true)
       });
-      const status = parseResponse(statusResponse, 'Rendi command status');
-      const state = String(status.status || '').toUpperCase();
-      if (['FAILED', 'ERROR', 'CANCELED', 'CANCELLED'].includes(state)) {
-        throw new Error(`Rendi: ${status.error || status.detail || status.message || state}.`);
+      try {
+        worker.postMessage({ kind: 'convert', id, inputName, outputName: outputPath, inputBuffer, maxWidth: width }, [inputBuffer]);
+      } catch (error) {
+        clearTimeout(timeout);
+        localFfmpegPending.delete(id);
+        reject(error);
       }
-      if (state === 'SUCCESS') {
-        outputUrl = status.output_files?.out_1?.storage_url || '';
-        if (!outputUrl) throw new Error('Rendi завершил конвертацию без URL результата.');
-        break;
-      }
-      if (attempt % 5 === 0) setStatus('Rendi обрабатывает видео…', 'info', true);
-    }
-    if (!outputUrl) throw new Error('Rendi не завершил конвертацию за 6 минут.');
-
-    setStatus('Скачиваю WebP из Rendi…', 'info', true);
-    const blob = await requestBlob(outputUrl, 180000);
-    if (!blob.size) throw new Error('Rendi вернул пустой WebP-файл.');
-    logDebug('Rendi WebP conversion finished', { commandId: command.command_id, bytes: blob.size, width });
-    return new File([blob], outputName, { type: 'image/webp', lastModified: Date.now() });
+    });
+    if (!outputBuffer || !outputBuffer.byteLength) throw new Error('FFmpeg.wasm вернул пустой WebP-файл.');
+    logDebug('FFmpeg.wasm video conversion finished', {
+      input: file.name || inputName, output: outputName,
+      inputBytes: file.size, outputBytes: outputBuffer.byteLength, width
+    });
+    return new File([outputBuffer], outputName, { type: 'image/webp', lastModified: Date.now() });
   }
 
   function formatBytes(bytes) {
@@ -644,36 +731,21 @@
   async function prepareUpload(file) {
     if (!file || !file.size) throw new Error('Файл пустой.');
     if (file.size > MAX_FILE_BYTES) throw new Error(`Файл больше ${formatBytes(MAX_FILE_BYTES)}. Уменьши его перед загрузкой.`);
-
     const mime = mimeFromFile(file);
-    if (!mime || (!mime.startsWith('image/') && !mime.startsWith('video/'))) {
-      throw new Error('Поддерживаются изображения, GIF и видео.');
-    }
-
+    if (!mime || (!mime.startsWith('image/') && !mime.startsWith('video/'))) throw new Error('Поддерживаются изображения, GIF и видео.');
     const config = loadConfig();
     const category = mime.startsWith('video/') ? 'video'
       : (mime === 'image/gif' || /\.gif$/i.test(file.name || '') ? 'gif' : 'image');
     const target = config.conversionRules[category] || 'keep';
-
     if (target === 'keep') {
       if (category === 'image') return resizeStaticImage(file, config.maxWidth, 'keep');
-      // Animated GIFs are preserved as-is. Animation resizing/re-encoding is
-      // intentionally not delegated to any external conversion service.
       return file;
     }
-
     if (category === 'image' && ['webp', 'png', 'jpg'].includes(target)) {
       return resizeStaticImage(file, config.maxWidth, target);
     }
-
-    if (category === 'video' && target === 'webp') {
-      if (!config.rendiApiKey) {
-        throw new Error('Для конвертации видео в WebP укажи Rendi API key в настройках → Конвертация или выбери «Оставить оригинал».');
-      }
-      return rendiVideoToWebp(file, config.maxWidth);
-    }
-
-    throw new Error(`Правило конвертации «${category} → ${target}» не поддерживается. Доступны локальная обработка изображений, сохранение GIF и видео → WebP через Rendi.`);
+    if (category === 'video' && target === 'webp') return ffmpegVideoToWebp(file, config.maxWidth);
+    throw new Error(`Правило конвертации «${category} → ${target}» не поддерживается. Доступны локальная обработка изображений, сохранение GIF и видео → WebP через FFmpeg.wasm.`);
   }
 
   function addItem(url, name, type, sourceKey = '', previewUrl = '') {
@@ -1240,7 +1312,6 @@
       pageSize: config.pageSize,
       previewScale: config.previewScale,
       conversionRules: { ...config.conversionRules },
-      // Rendi credentials are intentionally local-only and must never be copied to a Gist.
       debug: config.debug,
       settingsUpdatedAt: config.settingsUpdatedAt || 0,
       settingsSchemaVersion: SETTINGS_SCHEMA_VERSION
@@ -1304,7 +1375,7 @@
       const localUpdatedAt = Number(config.settingsUpdatedAt) || 0;
 
       // Prefer the newer local settings. If the remote snapshot is newer, migrate
-      // it and publish the new schema so another device won't restore the old WebP default.
+      // it and publish the current conversion settings to other devices.
       if (localUpdatedAt > 0 && localUpdatedAt >= remoteUpdatedAt) {
         await writeGistFile(config, SETTINGS_FILENAME, localSnapshot);
         setStatus('Настройки синхронизированы. Старые правила конвертации обновлены.', 'success', true);
@@ -2142,11 +2213,8 @@
             <label class="twgif-field-label" for="twgif-rule-gif">GIF →</label>
             <select id="twgif-rule-gif" class="twgif-input">${targetOptions(config.conversionRules.gif, [['keep','Оставить GIF']])}</select>
             <label class="twgif-field-label" for="twgif-rule-video">Видео →</label>
-            <select id="twgif-rule-video" class="twgif-input">${targetOptions(config.conversionRules.video, [['keep','Оставить оригинал'],['webp','WebP через Rendi']])}</select>
-            <div class="twgif-help">Обычные изображения конвертируются локально в WebP/JPG/PNG. GIF сохраняется в исходном виде. Для конвертации видео в зацикленный анимированный WebP нужен Rendi API key. Другие внешние конвертеры не используются.</div>
-            <label class="twgif-field-label" for="twgif-rendi-api-key">Rendi API key (только на этом устройстве)</label>
-            <input id="twgif-rendi-api-key" name="twgif-rendi-api-key" class="twgif-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-bwignore="true" data-form-type="other" style="-webkit-text-security:disc" placeholder="Rendi API key" value="${escapeAttr(config.rendiApiKey)}">
-            <div class="twgif-help"><a href="https://www.rendi.dev/docs/direct-upload" target="_blank" rel="noopener noreferrer">Rendi Direct Upload</a> + FFmpeg API. Ключ хранится только локально и никогда не добавляется в Gist. Исходное видео загружается в Rendi для конвертации.</div>
+            <select id="twgif-rule-video" class="twgif-input">${targetOptions(config.conversionRules.video, [['keep','Оставить оригинал'],['webp','Анимированный WebP (FFmpeg.wasm)']])}</select>
+            <div class="twgif-help">Видео конвертируется в анимированный WebP через FFmpeg.wasm прямо в браузере. При первом использовании скачивается движок примерно 31 МБ. Исходное видео не отправляется на сервер конвертации; скорость зависит от процессора и размера видео.</div>
             <button id="twgif-save-convert" class="twgif-small-btn twgif-primary" type="button" style="margin-top:8px">Сохранить правила</button>
           </div>
         </div>`;
@@ -2205,7 +2273,6 @@
           ...DEFAULT_CONFIG(),
           gistToken: current.gistToken,
           gistId: current.gistId,
-          rendiApiKey: current.rendiApiKey,
           settingsUpdatedAt: Date.now()
         });
         galleryPage = 0;
@@ -2224,9 +2291,8 @@
             gif: $('#twgif-rule-gif').value,
             video: $('#twgif-rule-video').value
           },
-          rendiApiKey: $('#twgif-rendi-api-key').value
         });
-        setStatus('Правила конвертации и API-ключи сохранены локально. Ключ Rendi не синхронизируется в Gist.', 'success');
+        setStatus('Правила конвертации сохранены локально. FFmpeg.wasm работает в браузере без API-ключа.', 'success');
       });
     }
 
