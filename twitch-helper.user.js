@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.4.0
+// @version      5.5.0
 // @description  Twitch media gallery with cached FFmpeg.wasm media conversion, original 7TV links, persistent previews, pagination and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -12,6 +12,7 @@
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
 // @connect      kappa.lol
+// @connect      segs.lol
 // @connect      api.github.com
 // @connect      gist.githubusercontent.com
 // @connect      7tv.io
@@ -31,6 +32,7 @@
   const LEGACY_SYNC_KEY = 'twgif_gallery_sync_v1';
   const SYNC_FILENAME = 'twitch-gif-gallery.json';
   const KAPPA_UPLOAD_URL = 'https://kappa.lol/api/upload';
+  const KAPPA_UPLOAD_MIRROR_URL = 'https://segs.lol/api/upload';
   const GITHUB_API = 'https://api.github.com';
   const FFMPEG_CORE_VERSION = '0.12.10';
   const FFMPEG_CORE_BASE_URL = `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/umd`;
@@ -46,6 +48,13 @@
   let chatMediaScanQueued = false;
   let holdPreviewTimer = 0;
   let holdPreviewItem = null;
+  let holdPointerId = null;
+  let holdPointerActive = false;
+  let holdPreviewStarted = false;
+  let holdCandidateCard = null;
+  let holdPointerX = 0;
+  let holdPointerY = 0;
+  let suppressMediaClickUntil = 0;
   const mediaCardCache = new Map();
   const loadedMediaUrls = new Set();
   let activeTrigger = null;
@@ -298,14 +307,15 @@
 
   function request(options) {
     return new Promise((resolve, reject) => {
+      const { acceptHttpErrors = false, ...xhrOptions } = options;
       GM_xmlhttpRequest({
-        ...options,
+        ...xhrOptions,
         timeout: options.timeout || 35000,
         onload: response => {
-          if (response.status >= 200 && response.status < 300) resolve(response);
+          if ((response.status >= 200 && response.status < 300) || acceptHttpErrors) resolve(response);
           else {
             const detail = String(response.responseText || '').slice(0, 500);
-            reject(new Error(`HTTP ${response.status}${detail ? ` — ${detail}` : ''}`));
+            reject(new Error('HTTP ' + response.status + (detail ? ' — ' + detail : '')));
           }
         },
         onerror: () => reject(new Error('Сетевая ошибка. Проверь соединение и доступ к сервису.')),
@@ -387,36 +397,82 @@
     return 'image';
   }
 
-  function normalizeKappaLink(data, fallbackMime, fallbackName) {
+  function normalizeKappaLink(data, fallbackMime, fallbackName, baseUrl = KAPPA_UPLOAD_URL) {
     const raw = String(data.link || data.url || '').trim();
-    if (!raw) throw new Error('kappa.lol не вернул ссылку на файл.');
+    if (!raw) throw new Error('Сервис загрузки не вернул ссылку на файл.');
     let url;
-    try { url = new URL(raw, KAPPA_UPLOAD_URL); }
-    catch (_) { throw new Error('kappa.lol вернул некорректную ссылку.'); }
+    try { url = new URL(raw, baseUrl); }
+    catch (_) { throw new Error('Сервис загрузки вернул некорректную ссылку.'); }
+    const allowedHosts = ['kappa.lol', 'segs.lol', 'gachi.gay', 'plink.kappa.lol'];
+    if (!allowedHosts.includes(url.hostname.toLowerCase())) {
+      throw new Error('Сервис загрузки вернул ссылку с неизвестного домена.');
+    }
     let ext = String(data.ext || getExtension(data.type || fallbackMime, fallbackName)).trim();
-    if (ext && !ext.startsWith('.')) ext = `.${ext}`;
+    if (ext && !ext.startsWith('.')) ext = '.' + ext;
     if (ext && !url.pathname.toLowerCase().endsWith(ext.toLowerCase())) url.pathname += ext;
     url.protocol = 'https:';
-    // kappa.lol and its sibling domains serve the same uploaded objects.
-    url.hostname = 'kappa.lol';
     url.port = '';
     return url.toString();
   }
 
+  function parseKappaUploadPayload(responseText) {
+    const raw = String(responseText || '');
+    try {
+      const value = JSON.parse(raw);
+      if (value && typeof value === 'object') return value;
+    } catch (_) {}
+    // Some failed responses can contain an error object followed by upload metadata.
+    // Recover only a JSON object that actually contains a file link.
+    const candidates = raw.match(/\{[^{}]*\}/g) || [];
+    for (let index = candidates.length - 1; index >= 0; index--) {
+      try {
+        const value = JSON.parse(candidates[index]);
+        if (value && typeof value === 'object' && (value.link || value.url)) return value;
+      } catch (_) {}
+    }
+    return null;
+  }
+
   async function uploadToKappa(file) {
-    const form = new FormData();
-    form.append('file', file, file.name || 'media');
+    const endpoints = [KAPPA_UPLOAD_URL, KAPPA_UPLOAD_MIRROR_URL];
+    let lastError = null;
     logDebug('Kappa upload start', { name: file.name, size: file.size, type: file.type });
-    const response = await request({
-      method: 'POST', url: KAPPA_UPLOAD_URL, data: form, timeout: 120000,
-      headers: { 'Accept': 'application/json' }
-    });
-    const result = parseResponse(response, 'kappa.lol');
-    return {
-      url: normalizeKappaLink(result, file.type || mimeFromFile(file), file.name),
-      type: String(result.type || file.type || mimeFromFile(file) || 'application/octet-stream'),
-      name: file.name || 'Медиафайл'
-    };
+
+    for (let index = 0; index < endpoints.length; index++) {
+      const endpoint = endpoints[index];
+      const form = new FormData();
+      form.append('file', file, file.name || 'media');
+      const response = await request({
+        method: 'POST', url: endpoint, data: form, timeout: 120000, acceptHttpErrors: true,
+        headers: { 'Accept': 'application/json' }
+      });
+      const successfulStatus = response.status >= 200 && response.status < 300;
+      const result = parseKappaUploadPayload(response.responseText);
+
+      // If the server returned usable metadata despite a 5xx status, avoid uploading twice.
+      if (result && (result.link || result.url) && (successfulStatus || response.status >= 500)) {
+        if (!successfulStatus) {
+          logDebug('Kappa returned file metadata with HTTP ' + response.status + '; using the returned link', endpoint);
+        }
+        return {
+          url: normalizeKappaLink(result, file.type || mimeFromFile(file), file.name, endpoint),
+          type: String(result.type || file.type || mimeFromFile(file) || 'application/octet-stream'),
+          name: file.name || 'Медиафайл'
+        };
+      }
+
+      const detail = String(response.responseText || '').slice(0, 500);
+      lastError = new Error('HTTP ' + response.status + (detail ? ' — ' + detail : ''));
+      if (index === 0 && response.status >= 500 && response.status < 600) {
+        logDebug('Primary Kappa upload endpoint failed; trying compatible mirror', {
+          status: response.status, endpoint: endpoint, fallback: endpoints[index + 1]
+        });
+        continue;
+      }
+      throw lastError;
+    }
+
+    throw lastError || new Error('Не удалось загрузить файл на kappa.lol или резервный сервер.');
   }
 
   function getGifDimensions(file) {
@@ -1604,10 +1660,10 @@
     const style = document.createElement('style');
     style.id = 'twgif-style';
     style.textContent = `
-      #twgif-trigger{appearance:none!important;border:0!important;background:transparent!important;color:var(--color-text-base,#efeff1)!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important;margin:0 2px!important;padding:0!important;border-radius:var(--border-radius-medium,4px)!important;cursor:pointer!important;line-height:1!important}
+      #twgif-trigger{appearance:none!important;border:0!important;background:transparent!important;color:var(--color-text-base,#efeff1)!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important;margin:0 2px!important;padding:0!important;align-self:center!important;vertical-align:middle!important;box-sizing:border-box!important;position:relative!important;top:0!important;transform:none!important;border-radius:var(--border-radius-medium,4px)!important;cursor:pointer!important;line-height:1!important}
       #twgif-trigger:hover,#twgif-trigger[aria-expanded=true]{background:var(--color-background-button-text-hover,#2b2b2f)!important;color:var(--color-text-link,#bf94ff)!important}
-      #twgif-trigger svg{display:block;pointer-events:none}
-      #twgif-panel{position:fixed;top:8px;left:8px;bottom:auto;z-index:2147483000;width:400px;max-width:calc(100vw - 16px);max-height:68vh;display:flex;flex-direction:column;overflow:hidden;color:#efeff1;background:#18181b;border:1px solid #34343b;border-radius:10px;box-shadow:0 10px 34px #0009;font:13px/1.4 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-sizing:border-box;pointer-events:auto}
+      #twgif-trigger svg{display:block;width:20px;height:20px;flex:0 0 20px;align-self:center;pointer-events:none}
+      #twgif-panel{position:fixed!important;top:8px;left:8px;bottom:auto;z-index:2147483000!important;width:400px;max-width:calc(100vw - 16px);max-height:68vh;display:flex;flex-direction:column;overflow:hidden;color:#efeff1;background:#18181b;border:1px solid #34343b;border-radius:10px;box-shadow:0 10px 34px #0009;font:13px/1.4 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-sizing:border-box;pointer-events:auto}
       #twgif-panel[hidden]{display:none!important}#twgif-panel *{box-sizing:border-box}
       .twgif-head{display:flex;align-items:center;gap:5px;padding:6px 8px;min-height:42px;border-bottom:1px solid #34343b;flex-shrink:0}
       .twgif-heading{font-size:13px;font-weight:700;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1629,7 +1685,7 @@
       .twgif-drop strong{display:block;color:#d9d9df;font-size:10px;font-weight:600}.twgif-drop span{font-size:9px}.twgif-drop.twgif-drag{border-color:#a970ff;background:#9147ff1a}#twgif-panel.twgif-drag{border-color:#a970ff;box-shadow:0 0 0 2px #9147ff55,0 10px 34px #0009}#twgif-panel.twgif-drag::after{content:'Отпусти файлы для добавления';position:absolute;inset:4px;z-index:20;display:flex;align-items:center;justify-content:center;border:2px dashed #b78cff;border-radius:8px;background:#18181be8;color:#f4eaff;font-size:14px;font-weight:700;pointer-events:none}
       .twgif-masonry{columns:4 78px;column-gap:7px}.twgif-masonry.twgif-grid-mode{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--twgif-tile-min,76px),1fr));align-items:start;gap:7px}.twgif-masonry[hidden]{display:none!important}
       .twgif-card{display:inline-block;position:relative;width:100%;margin:0 0 7px;break-inside:avoid;vertical-align:top;border:1px solid #34343b;border-radius:6px;overflow:visible;background:#202024;cursor:pointer;outline:none;transition:border-color .12s,box-shadow .12s}
-      .twgif-card[hidden]{display:none!important}.twgif-masonry.twgif-grid-mode .twgif-card{display:block;width:100%;margin:0;overflow:visible}
+      .twgif-card[hidden]{display:none!important}.twgif-masonry.twgif-grid-mode .twgif-card{display:block;width:100%;margin:0;overflow:visible}.twgif-card,.twgif-card img,.twgif-card video{user-select:none;-webkit-user-select:none;-webkit-user-drag:none}
       .twgif-media-frame{position:relative;overflow:hidden;border-radius:5px;background:#101012;isolation:isolate}
       .twgif-media{display:block;width:100%;height:auto;max-width:100%;background:#101012;object-fit:contain}.twgif-masonry.twgif-grid-mode .twgif-media{width:100%;height:var(--twgif-thumb-height,90px);object-fit:contain}
       .twgif-media-error{min-height:44px;padding:10px;text-align:center;color:#9c9ca6;font-size:10px}
@@ -1650,7 +1706,7 @@
     if (!document.getElementById('twgif-hold-preview')) {
       const preview = document.createElement('div');
       preview.id = 'twgif-hold-preview';
-      document.body.appendChild(preview);
+      document.documentElement.appendChild(preview);
     }
   }
 
@@ -1677,7 +1733,7 @@
       <div id="twgif-panel-body" class="twgif-panel-body"></div>
       <div id="twgif-status" role="status" aria-live="polite"></div>
     `;
-    document.body.appendChild(panel);
+    document.documentElement.appendChild(panel);
 
     panel.querySelector('#twgif-close').addEventListener('click', closePanel);
     panel.querySelector('#twgif-settings-open').addEventListener('click', () => {
@@ -1816,30 +1872,30 @@
     const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
     const viewportHeight = Math.max(1, document.documentElement.clientHeight || innerHeight);
     const availableWidth = Math.max(1, Math.min(420, regionRect.width - 16, viewportWidth - 16));
+    panel.style.position = 'fixed';
     panel.style.width = String(availableWidth) + 'px';
 
-    const roomAbove = Math.max(42, inputRect.top - 16);
-    panel.style.maxHeight = String(Math.max(42, Math.min(520, viewportHeight * 0.68, roomAbove))) + 'px';
+    // Lock the panel's height at placement time so later gallery renders cannot push it
+    // down across the chat composer. Its bottom always stays at least 8px above the input.
+    const roomAbove = Math.max(0, Math.floor(inputRect.top - 16));
+    const panelHeight = Math.max(0, Math.min(520, Math.floor(viewportHeight * 0.68), roomAbove));
+    panel.style.height = String(panelHeight) + 'px';
+    panel.style.maxHeight = String(panelHeight) + 'px';
     panel.style.bottom = 'auto';
 
-    const panelRect = panel.getBoundingClientRect();
-    const panelHeight = Math.min(panelRect.height || 380, roomAbove);
     const minLeft = 8;
     const maxLeft = Math.max(minLeft, viewportWidth - availableWidth - 8);
     const desiredLeft = inputRect.right - availableWidth;
     const regionLeft = Number.isFinite(regionRect.left) ? regionRect.left + 8 : minLeft;
     const left = Math.round(Math.max(minLeft, Math.min(maxLeft, Math.max(regionLeft, desiredLeft))));
-    const top = Math.round(Math.max(8, inputRect.top - panelHeight - 8));
+    const top = Math.max(0, Math.round(inputRect.top - panelHeight - 8));
     panel.style.left = String(left) + 'px';
     panel.style.top = String(top) + 'px';
   }
 
   function repositionPanel() {
     if (!isPanelOpen()) return;
-    requestAnimationFrame(() => {
-      panelMetrics();
-      requestAnimationFrame(panelMetrics);
-    });
+    requestAnimationFrame(panelMetrics);
   }
 
   function isMediaLink(rawUrl) {
@@ -1966,7 +2022,6 @@
 
     const status = document.getElementById('twgif-status');
     if (status) { status.textContent = lastStatus; status.dataset.type = lastStatusType; }
-    repositionPanel();
   }
 
   function renderGallery() {
@@ -2038,6 +2093,7 @@
   function makeMediaCard(item) {
     const card = document.createElement('div');
     card.className = 'twgif-card';
+    card.draggable = false;
     card.tabIndex = 0;
     card.setAttribute('role', 'button');
     card.setAttribute('aria-label', 'Вставить ссылку на медиа в чат');
@@ -2063,6 +2119,7 @@
       media.alt = '';
     }
     media.className = 'twgif-media';
+    media.draggable = false;
     media.dataset.src = previewUrl;
     media.dataset.loadState = loadedMediaUrls.has(previewUrl) ? 'loaded' : 'pending';
     if (loadedMediaUrls.has(previewUrl)) {
@@ -2096,41 +2153,42 @@
     del.addEventListener('click', event => { event.stopPropagation(); deleteItem(card.__twgifItem.id); });
     card.appendChild(del);
 
-    let holdStarted = false;
     const beginHold = event => {
       if (event.button !== undefined && event.button !== 0) return;
       if (event.target === del || event.target.closest('.twgif-delete')) return;
-      holdStarted = false;
+      if (holdPointerActive) return;
+
+      holdPointerActive = true;
+      holdPointerId = event.pointerId;
+      holdPreviewStarted = false;
+      holdCandidateCard = card;
+      holdPointerX = event.clientX;
+      holdPointerY = event.clientY;
+      if (holdPreviewTimer) clearTimeout(holdPreviewTimer);
       hideHoldPreview();
       holdPreviewTimer = setTimeout(() => {
-        holdStarted = true;
-        showHoldPreview(card.__twgifItem, card);
+        holdPreviewTimer = 0;
+        if (!holdPointerActive) return;
+        const target = cardUnderPointer(holdPointerX, holdPointerY) || holdCandidateCard;
+        if (!target || !target.__twgifItem) return;
+        holdCandidateCard = target;
+        holdPreviewStarted = true;
+        showHoldPreview(target.__twgifItem, target);
       }, 260);
     };
-    const endHold = () => {
-      if (holdPreviewTimer) clearTimeout(holdPreviewTimer);
-      holdPreviewTimer = 0;
-      if (holdStarted) {
-        card.dataset.previewSuppressClick = '1';
-        setTimeout(() => { card.dataset.previewSuppressClick = ''; }, 0);
-      }
-      hideHoldPreview();
-    };
     card.addEventListener('pointerdown', beginHold);
-    card.addEventListener('pointerup', endHold);
-    card.addEventListener('pointercancel', endHold);
-    card.addEventListener('pointerleave', endHold);
 
     const insert = event => {
-      if (card.dataset.previewSuppressClick === '1') {
+      if (Date.now() <= suppressMediaClickUntil) {
         event.preventDefault();
         event.stopPropagation();
-        card.dataset.previewSuppressClick = '';
+        suppressMediaClickUntil = 0;
         return;
       }
       if (event.target === del || event.target.closest('.twgif-delete')) return;
       insertLinkIntoChat(card.__twgifItem.url);
     };
+
     card.addEventListener('click', insert);
     card.addEventListener('keydown', event => {
       if (event.key === 'Enter' || event.key === ' ') {
@@ -2237,6 +2295,39 @@
     const media = holder.firstElementChild;
     if (media && media.tagName === 'VIDEO') { try { media.pause(); } catch (_) {} }
     // Keep the last single preview element and URL attached; do not clear its src.
+  }
+
+  function cardUnderPointer(x, y) {
+    const target = document.elementFromPoint(x, y);
+    return target && target.closest ? target.closest('.twgif-card') : null;
+  }
+
+  function updateHeldPreview(event) {
+    if (!holdPointerActive || event.pointerId !== holdPointerId) return;
+    if (event.pointerType === 'mouse' && !(event.buttons & 1)) {
+      finishHeldPreview(event);
+      return;
+    }
+    holdPointerX = event.clientX;
+    holdPointerY = event.clientY;
+    const target = cardUnderPointer(holdPointerX, holdPointerY);
+    if (!target || !target.__twgifItem) return;
+    const changedCard = holdCandidateCard !== target;
+    holdCandidateCard = target;
+    if (holdPreviewStarted && changedCard) showHoldPreview(target.__twgifItem, target);
+  }
+
+  function finishHeldPreview(event) {
+    if (!holdPointerActive) return;
+    if (event && event.pointerId != null && event.pointerId !== holdPointerId) return;
+    if (holdPreviewTimer) clearTimeout(holdPreviewTimer);
+    holdPreviewTimer = 0;
+    if (holdPreviewStarted) suppressMediaClickUntil = Date.now() + 350;
+    holdPointerActive = false;
+    holdPointerId = null;
+    holdPreviewStarted = false;
+    holdCandidateCard = null;
+    hideHoldPreview();
   }
 
   async function loadCardMedia(card, token) {
@@ -2359,7 +2450,6 @@
     next.onclick = () => { if (galleryPage < pages - 1) { galleryPage++; renderGalleryItems(); } };
 
     loadVisibleMediaSequentially(visible.map(item => mediaCardCache.get(item.id)));
-    repositionPanel();
   }
 
   function renderSettings() {
@@ -2580,6 +2670,13 @@
     if (!panel.contains(event.target) && !trigger?.contains(event.target)) closePanel();
   }, true);
 
+  document.addEventListener('pointermove', updateHeldPreview, true);
+  document.addEventListener('pointerup', finishHeldPreview, true);
+  document.addEventListener('pointercancel', finishHeldPreview, true);
+  document.addEventListener('dragstart', event => {
+    if (event.target && event.target.closest && event.target.closest('.twgif-card')) event.preventDefault();
+  }, true);
+
   document.addEventListener('paste', event => {
     const clipboard = event.clipboardData;
     if (!clipboard) return;
@@ -2621,7 +2718,6 @@
     if (document.visibilityState === 'visible' && isPanelOpen() && panelView === 'gallery') {
       // Resume the sequential loader after browser timer throttling, without resetting src.
       renderGalleryItems();
-      repositionPanel();
     }
   });
 
@@ -2634,7 +2730,7 @@
       }
     }
   }, { passive: true });
-  window.addEventListener('scroll', repositionPanel, { passive: true, capture: true });
+  // Deliberately do not reposition on scroll: the popup stays fixed where it was opened.
 
   function installObservers() {
     if (observer) observer.disconnect();
@@ -2663,7 +2759,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.2.2 started', { href: location.href });
+    logDebug('Userscript v5.5.0 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
