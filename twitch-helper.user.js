@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.1.4
+// @version      5.1.5
 // @description  Twitch media gallery with FreeConvert conversion rules, original 7TV links, persistent previews, pagination and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -36,6 +36,7 @@
   const GITHUB_API = 'https://api.github.com';
   const FREECONVERT_API = 'https://api.freeconvert.com/v1';
   const SETTINGS_FILENAME = 'twitch-gif-gallery-settings.json';
+  const SETTINGS_SCHEMA_VERSION = 2;
 
   let panelView = 'gallery';
   let settingsTab = 'general';
@@ -71,7 +72,8 @@
     tileView: 'masonry',
     pageSize: 100,
     previewScale: 1.6,
-    conversionRules: { image: 'webp', gif: 'webp', video: 'webp' },
+    conversionRules: { image: 'webp', gif: 'webp', video: 'gif' },
+    settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
     freeConvertToken: '',
     gistToken: '',
     gistId: '',
@@ -134,10 +136,13 @@
     const raw = parseJson(GM_getValue(CONFIG_KEY, {}), {}) || {};
     const legacy = parseJson(GM_getValue(LEGACY_SYNC_KEY, {}), {}) || {};
     const defaults = DEFAULT_CONFIG();
-    const rules = raw.conversionRules && typeof raw.conversionRules === 'object' ? raw.conversionRules : {};
+    const previousSchemaVersion = Number(raw.settingsSchemaVersion) || 0;
+    const rules = raw.conversionRules && typeof raw.conversionRules === 'object'
+      ? { ...raw.conversionRules }
+      : {};
     const allowedTargets = ['keep', 'webp', 'gif', 'webm', 'mp4', 'png', 'jpg'];
     const cleanTarget = (value, fallback) => allowedTargets.includes(String(value)) ? String(value) : fallback;
-    return {
+    const config = {
       maxWidth: clampInt(raw.maxWidth ?? defaults.maxWidth, 100, 4000, defaults.maxWidth),
       mediaScale: clampFloat(raw.mediaScale ?? defaults.mediaScale, 0.5, 2, defaults.mediaScale),
       tileView: raw.tileView === 'grid' ? 'grid' : 'masonry',
@@ -146,15 +151,28 @@
       conversionRules: {
         image: cleanTarget(rules.image, 'webp'),
         gif: cleanTarget(rules.gif, 'webp'),
-        video: cleanTarget(rules.video, 'webp')
+        video: cleanTarget(rules.video, 'gif')
       },
       freeConvertToken: String(raw.freeConvertToken || raw.cloudConvertToken || '').trim(),
       gistToken: String(raw.gistToken || legacy.token || '').trim(),
       gistId: String(raw.gistId || legacy.gistId || '').trim(),
       debug: Boolean(raw.debug),
-      settingsUpdatedAt: Number(raw.settingsUpdatedAt) || 0
+      settingsUpdatedAt: Number(raw.settingsUpdatedAt) || 0,
+      settingsSchemaVersion: SETTINGS_SCHEMA_VERSION
     };
+
+    // One-time migration: old versions defaulted video conversion to WebP.
+    // Move that old default to GIF so existing installs actually use the new behavior.
+    if (previousSchemaVersion < SETTINGS_SCHEMA_VERSION) {
+      if (config.conversionRules.video === 'webp') {
+        config.conversionRules.video = 'gif';
+        config.settingsUpdatedAt = Date.now();
+      }
+      GM_setValue(CONFIG_KEY, config);
+    }
+    return config;
   }
+
 
   function saveConfig(next) {
     const current = loadConfig();
@@ -173,7 +191,8 @@
       gistToken: String(next.gistToken ?? current.gistToken).trim(),
       gistId: String(next.gistId ?? current.gistId).trim(),
       debug: Boolean(next.debug ?? current.debug),
-      settingsUpdatedAt: Number.isFinite(Number(next.settingsUpdatedAt)) ? Number(next.settingsUpdatedAt) : Date.now()
+      settingsUpdatedAt: Number.isFinite(Number(next.settingsUpdatedAt)) ? Number(next.settingsUpdatedAt) : Date.now(),
+      settingsSchemaVersion: SETTINGS_SCHEMA_VERSION
     };
     GM_setValue(CONFIG_KEY, config);
     return config;
@@ -531,7 +550,7 @@
 
       // FreeConvert may expose the WebP animation loop setting under a
       // format-specific option name. Prefer the exact option advertised by its API.
-      if (outputFormat === 'webp') {
+      if (['webp', 'gif'].includes(outputFormat)) {
         const loopOption = available.find(option => {
           const name = String(option?.name || '').toLowerCase();
           const dataType = String(option?.data_type || '').toLowerCase();
@@ -559,8 +578,17 @@
     const outName = `${String(file.name || 'media').replace(/\.[^.]+$/, '')}.${outputFormat}`;
     const stamp = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const convertOptions = { loop_count: 0 };
-    if (isVideo && outputFormat === 'webp') {
-      // Keep existing options for other formats unchanged; add only the WebP loop option.
+    if (isVideo && outputFormat === 'gif') {
+      // FreeConvert names the GIF option gif_loop_count; 0 means loop forever.
+      delete convertOptions.loop_count;
+      const loopOptionNames = Object.keys(options).filter(optionName => /loop_count$/i.test(optionName));
+      if (loopOptionNames.length) {
+        for (const optionName of loopOptionNames) convertOptions[optionName] = 0;
+      } else {
+        convertOptions.gif_loop_count = 0;
+      }
+    } else if (isVideo && outputFormat === 'webp') {
+      // Keep existing WebP behavior unchanged; use the option name advertised by FreeConvert.
       for (const optionName of Object.keys(options)) {
         if (/loop/i.test(optionName)) convertOptions[optionName] = 0;
       }
@@ -1330,9 +1358,11 @@
       conversionRules: { ...config.conversionRules },
       freeConvertToken: config.freeConvertToken,
       debug: config.debug,
-      settingsUpdatedAt: config.settingsUpdatedAt || 0
+      settingsUpdatedAt: config.settingsUpdatedAt || 0,
+      settingsSchemaVersion: SETTINGS_SCHEMA_VERSION
     };
   }
+
 
   async function readGistFile(config, filename) {
     const response = await request({
@@ -1380,7 +1410,42 @@
 
     if (!remote || !Number(remote.settingsUpdatedAt)) {
       await writeGistFile(config, SETTINGS_FILENAME, localSnapshot);
-      setStatus('Настройки и API FreeConvert отправлены в Gist.', 'success', true);
+      setStatus('Настройки и FreeConvert API-токен отправлены в Gist.', 'success', true);
+      return;
+    }
+
+    const remoteSchemaVersion = Number(remote.settingsSchemaVersion) || 0;
+    if (remoteSchemaVersion < SETTINGS_SCHEMA_VERSION) {
+      const remoteUpdatedAt = Number(remote.settingsUpdatedAt) || 0;
+      const localUpdatedAt = Number(config.settingsUpdatedAt) || 0;
+
+      // Prefer the newer local settings. If the remote snapshot is newer, migrate
+      // it and publish the new schema so another device won't restore the old WebP default.
+      if (localUpdatedAt > 0 && localUpdatedAt >= remoteUpdatedAt) {
+        await writeGistFile(config, SETTINGS_FILENAME, localSnapshot);
+        setStatus('Настройки синхронизированы. Старый формат Gist обновлён; видео теперь по умолчанию конвертируется в GIF.', 'success', true);
+        return;
+      }
+
+      const migratedRules = {
+        ...(remote.conversionRules && typeof remote.conversionRules === 'object' ? remote.conversionRules : {})
+      };
+      if (migratedRules.video === 'webp') migratedRules.video = 'gif';
+
+      const migratedSettingsUpdatedAt = Date.now();
+      saveConfig({
+        ...remote,
+        conversionRules: migratedRules,
+        gistToken: config.gistToken,
+        gistId: config.gistId,
+        settingsUpdatedAt: migratedSettingsUpdatedAt,
+        settingsSchemaVersion: SETTINGS_SCHEMA_VERSION
+      });
+      const migratedSnapshot = syncableSettings(loadConfig());
+      await writeGistFile(config, SETTINGS_FILENAME, migratedSnapshot);
+      setStatus('Настройки загружены из старого Gist и обновлены. Видео конвертируется в GIF.', 'success', true);
+      logDebug('Settings schema migrated in Gist', { from: remoteSchemaVersion, to: SETTINGS_SCHEMA_VERSION });
+      if (panelView === 'settings') renderSettings();
       return;
     }
 
@@ -1403,6 +1468,7 @@
       logDebug('Settings synced to Gist', { settingsUpdatedAt: config.settingsUpdatedAt });
     }
   }
+
 
   async function performSyncOnce() {
     const config = loadConfig();
@@ -2188,10 +2254,10 @@
             <label class="twgif-field-label" for="twgif-rule-gif">GIF →</label>
             <select id="twgif-rule-gif" class="twgif-input">${targetOptions(config.conversionRules.gif, [['keep','Оставить GIF'],['webp','WebP'],['gif','GIF'],['mp4','MP4']])}</select>
             <label class="twgif-field-label" for="twgif-rule-video">Видео →</label>
-            <select id="twgif-rule-video" class="twgif-input">${targetOptions(config.conversionRules.video, [['keep','Оставить оригинал'],['webp','WebP'],['webm','WebM'],['mp4','MP4']])}</select>
-            <div class="twgif-help">WebP выбран по умолчанию для всех типов. Некоторые сервисы могут не поддерживать преобразование видео в WebP; если FreeConvert отклонит формат, выбери WebM или MP4. Большие GIF и все конвертации, которые нельзя безопасно выполнить локально, идут через FreeConvert.</div>
+            <select id="twgif-rule-video" class="twgif-input">${targetOptions(config.conversionRules.video, [['keep','Оставить оригинал'],['gif','GIF'],['webp','WebP'],['webm','WebM'],['mp4','MP4']])}</select>
+            <div class="twgif-help">Видео по умолчанию конвертируется в GIF с бесконечным повторением. Для GIF используется параметр loop_count = 0 (или gif_loop_count = 0, если его требует FreeConvert). Большие GIF и конвертации, которые нельзя выполнить локально, обрабатываются через FreeConvert.</div>
             <label class="twgif-field-label" for="twgif-freeconvert-token">FreeConvert API-токен</label>
-            <input id="twgif-freeconvert-token" class="twgif-input" type="password" autocomplete="off" spellcheck="false" placeholder="API token" value="${escapeAttr(config.freeConvertToken)}">
+            <input id="twgif-freeconvert-token" name="twgif-freeconvert-api-token" class="twgif-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-bwignore="true" data-form-type="other" style="-webkit-text-security:disc" placeholder="FreeConvert API token" value="${escapeAttr(config.freeConvertToken)}">
             <div class="twgif-help"><a href="https://www.freeconvert.com/api" target="_blank" rel="noopener noreferrer">Документация FreeConvert API</a>. Конвертация использует лимиты/кредиты сервиса. Файл отправляется на внешний сервер обработки. Токен может синхронизироваться в Gist по отдельной кнопке настроек.</div>
             <button id="twgif-save-convert" class="twgif-small-btn twgif-primary" type="button" style="margin-top:8px">Сохранить правила</button>
           </div>
@@ -2202,10 +2268,12 @@
           <div class="twgif-section">
             <div class="twgif-section-title">Коллекция и настройки между устройствами</div>
             <label class="twgif-field-label" for="twgif-gist-token">GitHub token (доступ gist)</label>
-            <input id="twgif-gist-token" class="twgif-input" type="password" autocomplete="off" spellcheck="false" placeholder="GitHub token" value="${escapeAttr(config.gistToken)}">
+            <input id="twgif-gist-token" name="twgif-github-gist-token" class="twgif-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-bwignore="true" data-form-type="other" style="-webkit-text-security:disc" placeholder="GitHub token" value="${escapeAttr(config.gistToken)}">
             <label class="twgif-field-label" for="twgif-gist-id">ID Gist</label>
             <input id="twgif-gist-id" class="twgif-input" type="text" autocomplete="off" spellcheck="false" placeholder="ID Gist" value="${escapeAttr(config.gistId)}">
-            <div class="twgif-help">Коллекция хранит URL/preview URL, названия и метаданные. Secret Gist не приватен для людей, знающих его ссылку.</div>
+            <div class="twgif-help"><b>Первое устройство:</b> создай GitHub token с разрешением <code>gist</code>, вставь его сюда, оставь ID Gist пустым и нажми «Создать Gist». Затем нажми «Синхронизировать галерею» и «Синхронизировать настройки».</div>
+            <div class="twgif-help"><b>Другое устройство:</b> введи <b>тот же GitHub token</b> и <b>тот же ID Gist</b>, которые использовались на первом устройстве. Нажми «Сохранить доступ», затем «Синхронизировать галерею» и «Синхронизировать настройки». ID Gist — длинная строка из URL Gist; сам GitHub token автоматически на другие устройства не переносится.</div>
+            <div class="twgif-help">Gist хранит коллекцию и синхронизируемые настройки. Secret Gist не является приватным для людей, знающих его URL. FreeConvert API-токен попадает в файл настроек Gist в открытом виде; GitHub token в Gist не записывается.</div>
             <div class="twgif-row" style="margin-top:8px">
               <button id="twgif-save-gist" class="twgif-small-btn" type="button">Сохранить доступ</button>
               <button id="twgif-create-gist" class="twgif-small-btn" type="button">Создать Gist</button>
