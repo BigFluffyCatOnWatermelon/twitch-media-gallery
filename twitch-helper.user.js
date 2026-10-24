@@ -108,7 +108,7 @@
         id: String(item.id),
         url: String(item.url),
         previewUrl: String(item.previewUrl || item.url),
-        name: String(item.name || 'РњРµРґРёР°С„Р°Р№Р»').slice(0, 120),
+        name: String(item.name || 'Медиафайл').slice(0, 120),
         type: String(item.type || 'image'),
         sourceKey: String(item.sourceKey || ''),
         addedAt: Number(item.addedAt) || Date.now(),
@@ -298,11 +298,11 @@
           if (response.status >= 200 && response.status < 300) resolve(response);
           else {
             const detail = String(response.responseText || '').slice(0, 500);
-            reject(new Error(`HTTP ${response.status}${detail ? ` вЂ” ${detail}` : ''}`));
+            reject(new Error(`HTTP ${response.status}${detail ? ` — ${detail}` : ''}`));
           }
         },
-        onerror: () => reject(new Error('РЎРµС‚РµРІР°СЏ РѕС€РёР±РєР°. РџСЂРѕРІРµСЂСЊ СЃРѕРµРґРёРЅРµРЅРёРµ Рё РґРѕСЃС‚СѓРї Рє СЃРµСЂРІРёСЃСѓ.')),
-        ontimeout: () => reject(new Error('РСЃС‚РµРєР»Рѕ РІСЂРµРјСЏ РѕР¶РёРґР°РЅРёСЏ РѕС‚РІРµС‚Р° СЃРµСЂРІРµСЂР°.'))
+        onerror: () => reject(new Error('Сетевая ошибка. Проверь соединение и доступ к сервису.')),
+        ontimeout: () => reject(new Error('Истекло время ожидания ответа сервера.'))
       });
     });
   }
@@ -313,7 +313,7 @@
         method: 'GET', url, responseType: 'blob', timeout,
         onload: response => {
           if (response.status < 200 || response.status >= 300) {
-            reject(new Error(`РќРµ СѓРґР°Р»РѕСЃСЊ СЃРєР°С‡Р°С‚СЊ СЂРµР·СѓР»СЊС‚Р°С‚ РєРѕРЅРІРµСЂС‚Р°С†РёРё (HTTP ${response.status}).`));
+            reject(new Error(`Не удалось скачать результат конвертации (HTTP ${response.status}).`));
             return;
           }
           const blob = response.response instanceof Blob
@@ -321,24 +321,24 @@
             : new Blob([response.response], { type: response.responseHeaders?.match(/content-type:\s*([^;\r\n]+)/i)?.[1] || 'application/octet-stream' });
           resolve(blob);
         },
-        onerror: () => reject(new Error('РќРµ СѓРґР°Р»РѕСЃСЊ СЃРєР°С‡Р°С‚СЊ С„Р°Р№Р» РїРѕСЃР»Рµ РєРѕРЅРІРµСЂС‚Р°С†РёРё.')),
-        ontimeout: () => reject(new Error('РСЃС‚РµРєР»Рѕ РІСЂРµРјСЏ СЃРєР°С‡РёРІР°РЅРёСЏ СЂРµР·СѓР»СЊС‚Р°С‚Р° РєРѕРЅРІРµСЂС‚Р°С†РёРё.'))
+        onerror: () => reject(new Error('Не удалось скачать файл после конвертации.')),
+        ontimeout: () => reject(new Error('Истекло время скачивания результата конвертации.'))
       });
     });
   }
 
   function parseResponse(response, label) {
     try { return JSON.parse(response.responseText || '{}'); }
-    catch (_) { throw new Error(`${label}: СЃРµСЂРІРёСЃ РІРµСЂРЅСѓР» РЅРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ JSON.`); }
+    catch (_) { throw new Error(`${label}: сервис вернул некорректный JSON.`); }
   }
 
   function formatGitHubSyncError(error) {
-    const message = String(error?.message || error || 'РќРµРёР·РІРµСЃС‚РЅР°СЏ РѕС€РёР±РєР°');
+    const message = String(error?.message || error || 'Неизвестная ошибка');
     if (/HTTP 401\b/i.test(message) || /Bad credentials/i.test(message)) {
-      return 'GitHub РѕС‚РєР»РѕРЅРёР» С‚РѕРєРµРЅ (401 Bad credentials). РЎРѕР·РґР°Р№ РЅРѕРІС‹Р№ С‚РѕРєРµРЅ Рё Р·Р°РјРµРЅРё СЃС‚Р°СЂС‹Р№: Fine-grained token вЂ” СЂР°Р·СЂРµС€РµРЅРёРµ Gists: Read and write; Classic token вЂ” scope gist. Р—Р°С‚РµРј РЅР°Р¶РјРё В«РЎРѕС…СЂР°РЅРёС‚СЊ РґРѕСЃС‚СѓРїВ» Рё РїРѕРІС‚РѕСЂРё РґРµР№СЃС‚РІРёРµ.';
+      return 'GitHub отклонил токен (401 Bad credentials). Создай новый токен и замени старый: Fine-grained token — разрешение Gists: Read and write; Classic token — scope gist. Затем нажми «Сохранить доступ» и повтори действие.';
     }
     if (/HTTP 403\b/i.test(message)) {
-      return 'GitHub Р·Р°РїСЂРµС‚РёР» РѕРїРµСЂР°С†РёСЋ (403). РџСЂРѕРІРµСЂСЊ СЃСЂРѕРє РґРµР№СЃС‚РІРёСЏ С‚РѕРєРµРЅР° Рё СЂР°Р·СЂРµС€РµРЅРёРµ Gists: Read and write (РґР»СЏ Classic token вЂ” gist).';
+      return 'GitHub запретил операцию (403). Проверь срок действия токена и разрешение Gists: Read and write (для Classic token — gist).';
     }
     return message;
   }
@@ -382,10 +382,10 @@
 
   function normalizeKappaLink(data, fallbackMime, fallbackName) {
     const raw = String(data.link || data.url || '').trim();
-    if (!raw) throw new Error('kappa.lol РЅРµ РІРµСЂРЅСѓР» СЃСЃС‹Р»РєСѓ РЅР° С„Р°Р№Р».');
+    if (!raw) throw new Error('kappa.lol не вернул ссылку на файл.');
     let url;
     try { url = new URL(raw, KAPPA_UPLOAD_URL); }
-    catch (_) { throw new Error('kappa.lol РІРµСЂРЅСѓР» РЅРµРєРѕСЂСЂРµРєС‚РЅСѓСЋ СЃСЃС‹Р»РєСѓ.'); }
+    catch (_) { throw new Error('kappa.lol вернул некорректную ссылку.'); }
     let ext = String(data.ext || getExtension(data.type || fallbackMime, fallbackName)).trim();
     if (ext && !ext.startsWith('.')) ext = `.${ext}`;
     if (ext && !url.pathname.toLowerCase().endsWith(ext.toLowerCase())) url.pathname += ext;
@@ -408,7 +408,7 @@
     return {
       url: normalizeKappaLink(result, file.type || mimeFromFile(file), file.name),
       type: String(result.type || file.type || mimeFromFile(file) || 'application/octet-stream'),
-      name: file.name || 'РњРµРґРёР°С„Р°Р№Р»'
+      name: file.name || 'Медиафайл'
     };
   }
 
@@ -416,7 +416,7 @@
     return file.slice(0, 10).arrayBuffer().then(buffer => {
       const bytes = new Uint8Array(buffer);
       if (bytes.length < 10 || bytes[0] !== 0x47 || bytes[1] !== 0x49 || bytes[2] !== 0x46) {
-        throw new Error('Р¤Р°Р№Р» СЃ СЂР°СЃС€РёСЂРµРЅРёРµРј GIF РїРѕРІСЂРµР¶РґС‘РЅ РёР»Рё РЅРµ СЏРІР»СЏРµС‚СЃСЏ GIF.');
+        throw new Error('Файл с расширением GIF повреждён или не является GIF.');
       }
       return { width: bytes[6] | (bytes[7] << 8), height: bytes[8] | (bytes[9] << 8) };
     });
@@ -435,7 +435,7 @@
         const objectUrl = URL.createObjectURL(file);
         const timer = setTimeout(() => {
           URL.revokeObjectURL(objectUrl);
-          reject(new Error('РР·РѕР±СЂР°Р¶РµРЅРёРµ СЃР»РёС€РєРѕРј РґРѕР»РіРѕ РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚СЃСЏ.'));
+          reject(new Error('Изображение слишком долго обрабатывается.'));
         }, 15000);
         image.onload = () => {
           clearTimeout(timer);
@@ -446,7 +446,7 @@
         image.onerror = () => {
           clearTimeout(timer);
           URL.revokeObjectURL(objectUrl);
-          reject(new Error('РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРѕС‡РёС‚Р°С‚СЊ РёР·РѕР±СЂР°Р¶РµРЅРёРµ.'));
+          reject(new Error('Не удалось прочитать изображение.'));
         };
         image.src = objectUrl;
       });
@@ -455,13 +455,13 @@
 
   function canvasToBlob(canvas, mime, quality) {
     return new Promise((resolve, reject) => {
-      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ СѓРјРµРЅСЊС€РµРЅРЅРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ.')), mime, quality);
+      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Не удалось сохранить уменьшенное изображение.')), mime, quality);
     });
   }
 
   async function resizeStaticImage(file, maxWidth, outputFormat = 'webp') {
     const dims = await getStaticImageDimensions(file);
-    if (!dims.width || !dims.height) throw new Error('РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ СЂР°Р·РјРµСЂС‹ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ.');
+    if (!dims.width || !dims.height) throw new Error('Не удалось определить размеры изображения.');
 
     const sourceMime = mimeFromFile(file);
     const needsResize = dims.width > maxWidth;
@@ -474,14 +474,14 @@
       : ({ webp: 'image/webp', png: 'image/png', jpg: 'image/jpeg' }[outputFormat] || '');
 
     if (!targetMime || !['image/webp', 'image/png', 'image/jpeg'].includes(targetMime)) {
-      throw new Error(`Р”Р»СЏ С„РѕСЂРјР°С‚Р° ${outputFormat} РЅСѓР¶РЅР° РІРЅРµС€РЅСЏСЏ РєРѕРЅРІРµСЂС‚Р°С†РёСЏ FreeConvert.`);
+      throw new Error(`Для формата ${outputFormat} нужна внешняя конвертация FreeConvert.`);
     }
 
     const needsConvert = sourceMime !== targetMime;
     if (!needsResize && !needsConvert) return file;
 
     if (dims.width * dims.height > 20_000_000) {
-      throw new Error('РР·РѕР±СЂР°Р¶РµРЅРёРµ СЃР»РёС€РєРѕРј Р±РѕР»СЊС€РѕРµ РґР»СЏ Р»РѕРєР°Р»СЊРЅРѕРіРѕ Canvas. РЈРјРµРЅСЊС€Рё РµРіРѕ Р·Р°СЂР°РЅРµРµ РёР»Рё РІС‹Р±РµСЂРё СЃРѕРІРјРµСЃС‚РёРјС‹Р№ С„РѕСЂРјР°С‚/СЃРµСЂРІРёСЃ.');
+      throw new Error('Изображение слишком большое для локального Canvas. Уменьши его заранее или выбери совместимый формат/сервис.');
     }
 
     const scale = Math.min(1, maxWidth / dims.width);
@@ -491,7 +491,7 @@
     canvas.width = width;
     canvas.height = height;
     const context = canvas.getContext('2d');
-    if (!context) throw new Error('Р‘СЂР°СѓР·РµСЂ РЅРµ СЃРјРѕРі СЃРѕР·РґР°С‚СЊ С…РѕР»СЃС‚ РґР»СЏ РёР·РјРµРЅРµРЅРёСЏ СЂР°Р·РјРµСЂР° РёР·РѕР±СЂР°Р¶РµРЅРёСЏ.');
+    if (!context) throw new Error('Браузер не смог создать холст для изменения размера изображения.');
 
     const bitmap = await createImageBitmap(file);
     if (targetMime === 'image/jpeg') {
@@ -587,7 +587,7 @@
   async function freeConvertFile(file, outputFormat, maxWidth = loadConfig().maxWidth) {
     const config = loadConfig();
     if (!config.freeConvertToken) {
-      throw new Error('Р”Р»СЏ РІС‹Р±СЂР°РЅРЅРѕР№ РєРѕРЅРІРµСЂС‚Р°С†РёРё РЅСѓР¶РµРЅ FreeConvert API-С‚РѕРєРµРЅ. РћС‚РєСЂРѕР№ РЅР°СЃС‚СЂРѕР№РєРё в†’ РљРѕРЅРІРµСЂС‚Р°С†РёСЏ.');
+      throw new Error('Для выбранной конвертации нужен FreeConvert API-токен. Открой настройки → Конвертация.');
     }
 
     const inputFormat = fileExtension(file);
@@ -630,7 +630,7 @@
     };
 
     logDebug('FreeConvert job create', { inputFormat, outputFormat, width: maxWidth, isVideo, availableOptions: options, convertOptions, size: file.size });
-    setStatus(`РџРµСЂРµРґР°СЋ В«${file.name || 'РјРµРґРёР°'}В» РІ FreeConvertвЂ¦`, 'info', true);
+    setStatus(`Передаю «${file.name || 'медиа'}» в FreeConvert…`, 'info', true);
 
     const createResponse = await request({
       method: 'POST',
@@ -650,7 +650,7 @@
     let uploadForm = importTask?.result?.form || importTask?.form || null;
 
     const jobId = jobRoot.id || jobRoot.job || created.job || created.id || importTask?.job;
-    if (!jobId) throw new Error('FreeConvert РЅРµ РІРµСЂРЅСѓР» ID Р·Р°РґР°С‡Рё. РџСЂРѕРІРµСЂСЊ API-С‚РѕРєРµРЅ Рё С„РѕСЂРјР°С‚ РѕС‚РІРµС‚Р°.');
+    if (!jobId) throw new Error('FreeConvert не вернул ID задачи. Проверь API-токен и формат ответа.');
 
     // If the import form is not included in the initial job response, wait briefly for the task detail.
     if (!uploadForm) {
@@ -674,14 +674,14 @@
     }
 
     if (!uploadForm?.url || !uploadForm?.parameters) {
-      throw new Error('FreeConvert РЅРµ РІС‹РґР°Р» С„РѕСЂРјСѓ Р·Р°РіСЂСѓР·РєРё. РџСЂРѕРІРµСЂСЊ С‚РѕРєРµРЅ Рё РґРѕСЃС‚СѓРї Рє API.');
+      throw new Error('FreeConvert не выдал форму загрузки. Проверь токен и доступ к API.');
     }
 
     const uploadData = new FormData();
     for (const [key, value] of Object.entries(uploadForm.parameters)) uploadData.append(key, String(value));
     uploadData.append('file', file, file.name || `source.${inputFormat}`);
 
-    setStatus(`Р—Р°РіСЂСѓР¶Р°СЋ С„Р°Р№Р» РІ FreeConvert (${formatBytes(file.size)})вЂ¦`, 'info', true);
+    setStatus(`Загружаю файл в FreeConvert (${formatBytes(file.size)})…`, 'info', true);
     await request({
       method: 'POST',
       url: uploadForm.url,
@@ -710,7 +710,7 @@
       const allFailed = tasks.find(task => ['failed', 'error', 'canceled'].includes(String(task.status || '').toLowerCase()));
 
       if (allFailed) {
-        taskError = allFailed.message || allFailed.msg || allFailed.result?.msg || allFailed.result?.errorCode || allFailed.error || allFailed.code || `${allFailed.name || allFailed.operation} Р·Р°РІРµСЂС€РёР»СЃСЏ СЃРѕ СЃС‚Р°С‚СѓСЃРѕРј ${allFailed.status}`;
+        taskError = allFailed.message || allFailed.msg || allFailed.result?.msg || allFailed.result?.errorCode || allFailed.error || allFailed.code || `${allFailed.name || allFailed.operation} завершился со статусом ${allFailed.status}`;
         break;
       }
 
@@ -728,18 +728,18 @@
       }
 
       if (attempt % 5 === 0) {
-        setStatus(`РћР±СЂР°Р±РѕС‚РєР° FreeConvertвЂ¦ ${Math.min(99, Math.round((attempt / 180) * 100))}%`, 'info', true);
+        setStatus(`Обработка FreeConvert… ${Math.min(99, Math.round((attempt / 180) * 100))}%`, 'info', true);
       }
     }
 
     if (taskError) throw new Error(`FreeConvert: ${taskError}`);
     if (!done || !exportUrl) {
-      throw new Error('FreeConvert РЅРµ Р·Р°РІРµСЂС€РёР» Р·Р°РґР°С‡Сѓ Р·Р° 6 РјРёРЅСѓС‚. РџСЂРѕРІРµСЂСЊ API-Р»РёРјРёС‚ РёР»Рё РІС‹Р±РµСЂРё РґСЂСѓРіРѕР№ С„РѕСЂРјР°С‚ РІ РЅР°СЃС‚СЂРѕР№РєР°С….');
+      throw new Error('FreeConvert не завершил задачу за 6 минут. Проверь API-лимит или выбери другой формат в настройках.');
     }
 
-    setStatus('РЎРєР°С‡РёРІР°СЋ РѕР±СЂР°Р±РѕС‚Р°РЅРЅС‹Р№ С„Р°Р№Р»вЂ¦', 'info', true);
+    setStatus('Скачиваю обработанный файл…', 'info', true);
     const blob = await requestBlob(exportUrl, 180000);
-    if (!blob.size) throw new Error('FreeConvert РІРµСЂРЅСѓР» РїСѓСЃС‚РѕР№ С„Р°Р№Р».');
+    if (!blob.size) throw new Error('FreeConvert вернул пустой файл.');
 
     const typeMap = {
       webp: 'image/webp', gif: 'image/gif', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
@@ -765,21 +765,21 @@
       const file = parseResponse(response, 'Rendi file');
       if (String(file.status || '').toUpperCase() === 'STORED' && file.storage_url) return file;
       if (['FAILED', 'ERROR', 'CANCELED', 'CANCELLED'].includes(String(file.status || '').toUpperCase())) {
-        throw new Error(`Rendi РЅРµ СЃРѕС…СЂР°РЅРёР» РёСЃС…РѕРґРЅС‹Р№ С„Р°Р№Р»: ${file.error || file.detail || file.status}.`);
+        throw new Error(`Rendi не сохранил исходный файл: ${file.error || file.detail || file.status}.`);
       }
       await delay(1000);
     }
-    throw new Error('Rendi РЅРµ РїРѕРґРіРѕС‚РѕРІРёР» Р·Р°РіСЂСѓР¶РµРЅРЅС‹Р№ С„Р°Р№Р» Р·Р° РѕС‚РІРµРґС‘РЅРЅРѕРµ РІСЂРµРјСЏ.');
+    throw new Error('Rendi не подготовил загруженный файл за отведённое время.');
   }
 
   async function rendiVideoToWebp(file, maxWidth = loadConfig().maxWidth) {
     const config = loadConfig();
     if (!config.rendiApiKey) {
-      throw new Error('Р”Р»СЏ РєРѕРЅРІРµСЂС‚Р°С†РёРё РІРёРґРµРѕ РІ WebP С‡РµСЂРµР· Rendi СѓРєР°Р¶Рё Rendi API key РІ РЅР°СЃС‚СЂРѕР№РєР°С… в†’ РљРѕРЅРІРµСЂС‚Р°С†РёСЏ.');
+      throw new Error('Для конвертации видео в WebP через Rendi укажи Rendi API key в настройках → Конвертация.');
     }
 
     const inputName = file.name || `source.${fileExtension(file) || 'mp4'}`;
-    setStatus(`РџРѕРґРіРѕС‚Р°РІР»РёРІР°СЋ В«${inputName}В» РґР»СЏ RendiвЂ¦`, 'info', true);
+    setStatus(`Подготавливаю «${inputName}» для Rendi…`, 'info', true);
     const initResponse = await request({
       method: 'POST', url: `${RENDI_API}/files/init-upload`, timeout: 35000,
       headers: rendiHeaders(config.rendiApiKey, true),
@@ -787,21 +787,21 @@
     });
     const init = parseResponse(initResponse, 'Rendi upload');
     if (!init.file_id || !Number(init.part_size) || !Array.isArray(init.upload_urls) || !init.upload_urls.length) {
-      throw new Error('Rendi РЅРµ РІРµСЂРЅСѓР» РїР°СЂР°РјРµС‚СЂС‹ multipart-Р·Р°РіСЂСѓР·РєРё.');
+      throw new Error('Rendi не вернул параметры multipart-загрузки.');
     }
 
     const uploadedParts = [];
     for (let index = 0; index < init.upload_urls.length; index++) {
       const start = index * init.part_size;
       const chunk = file.slice(start, Math.min(start + init.part_size, file.size));
-      setStatus(`Р—Р°РіСЂСѓР¶Р°СЋ РІ Rendi: С‡Р°СЃС‚СЊ ${index + 1}/${init.upload_urls.length}вЂ¦`, 'info', true);
+      setStatus(`Загружаю в Rendi: часть ${index + 1}/${init.upload_urls.length}…`, 'info', true);
       // The presigned upload URL is used directly by the browser. Rendi exposes
       // the ETag header for this documented multipart completion flow, so this
       // does not require an all-sites userscript network permission.
       const partResponse = await fetch(init.upload_urls[index], { method: 'PUT', body: chunk });
-      if (!partResponse.ok) throw new Error(`Rendi РѕС‚РєР»РѕРЅРёР» С‡Р°СЃС‚СЊ ${index + 1} (HTTP ${partResponse.status}).`);
+      if (!partResponse.ok) throw new Error(`Rendi отклонил часть ${index + 1} (HTTP ${partResponse.status}).`);
       const etag = String(partResponse.headers.get('etag') || '').replace(/^"|"$/g, '');
-      if (!etag) throw new Error(`Rendi РЅРµ РІРµСЂРЅСѓР» ETag РґР»СЏ С‡Р°СЃС‚Рё ${index + 1}.`);
+      if (!etag) throw new Error(`Rendi не вернул ETag для части ${index + 1}.`);
       uploadedParts.push({ part_number: index + 1, etag });
     }
 
@@ -811,14 +811,14 @@
     });
     const completed = parseResponse(completeResponse, 'Rendi upload completion');
     const stored = completed.storage_url ? completed : await waitForRendiStoredFile(init.file_id, config.rendiApiKey);
-    if (!stored.storage_url) throw new Error('Rendi РЅРµ РІРµСЂРЅСѓР» URL Р·Р°РіСЂСѓР¶РµРЅРЅРѕРіРѕ РІРёРґРµРѕ.');
+    if (!stored.storage_url) throw new Error('Rendi не вернул URL загруженного видео.');
 
     const baseName = String(inputName).replace(/\.[^.]+$/, '') || 'video';
     const outputName = `${baseName}.webp`;
     const width = clampInt(maxWidth, 100, 4000, 480);
     // -loop 0 is FFmpeg's infinite-loop value for animated WebP.
     const ffmpegCommand = `-i {{in_1}} -vf "fps=12,scale='min(iw,${width})':-2:flags=lanczos" -an -c:v libwebp -q:v 70 -loop 0 {{out_1}}`;
-    setStatus('Р—Р°РїСѓСЃРєР°СЋ РєРѕРЅРІРµСЂС‚Р°С†РёСЋ РІРёРґРµРѕ РІ Р°РЅРёРјРёСЂРѕРІР°РЅРЅС‹Р№ WebP С‡РµСЂРµР· RendiвЂ¦', 'info', true);
+    setStatus('Запускаю конвертацию видео в анимированный WebP через Rendi…', 'info', true);
     const commandResponse = await request({
       method: 'POST', url: `${RENDI_API}/run-ffmpeg-command`, timeout: 35000,
       headers: rendiHeaders(config.rendiApiKey, true),
@@ -829,7 +829,7 @@
       })
     });
     const command = parseResponse(commandResponse, 'Rendi command');
-    if (!command.command_id) throw new Error('Rendi РЅРµ РІРµСЂРЅСѓР» ID РєРѕРјР°РЅРґС‹.');
+    if (!command.command_id) throw new Error('Rendi не вернул ID команды.');
 
     let outputUrl = '';
     for (let attempt = 0; attempt < 180; attempt++) {
@@ -845,34 +845,34 @@
       }
       if (state === 'SUCCESS') {
         outputUrl = status.output_files?.out_1?.storage_url || '';
-        if (!outputUrl) throw new Error('Rendi Р·Р°РІРµСЂС€РёР» РєРѕРЅРІРµСЂС‚Р°С†РёСЋ Р±РµР· URL СЂРµР·СѓР»СЊС‚Р°С‚Р°.');
+        if (!outputUrl) throw new Error('Rendi завершил конвертацию без URL результата.');
         break;
       }
-      if (attempt % 5 === 0) setStatus('Rendi РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РІРёРґРµРѕвЂ¦', 'info', true);
+      if (attempt % 5 === 0) setStatus('Rendi обрабатывает видео…', 'info', true);
     }
-    if (!outputUrl) throw new Error('Rendi РЅРµ Р·Р°РІРµСЂС€РёР» РєРѕРЅРІРµСЂС‚Р°С†РёСЋ Р·Р° 6 РјРёРЅСѓС‚.');
+    if (!outputUrl) throw new Error('Rendi не завершил конвертацию за 6 минут.');
 
-    setStatus('РЎРєР°С‡РёРІР°СЋ WebP РёР· RendiвЂ¦', 'info', true);
+    setStatus('Скачиваю WebP из Rendi…', 'info', true);
     const blob = await requestBlob(outputUrl, 180000);
-    if (!blob.size) throw new Error('Rendi РІРµСЂРЅСѓР» РїСѓСЃС‚РѕР№ WebP-С„Р°Р№Р».');
+    if (!blob.size) throw new Error('Rendi вернул пустой WebP-файл.');
     logDebug('Rendi WebP conversion finished', { commandId: command.command_id, bytes: blob.size, width });
     return new File([blob], outputName, { type: 'image/webp', lastModified: Date.now() });
   }
 
   function formatBytes(bytes) {
     if (!Number.isFinite(bytes)) return '';
-    if (bytes < 1024) return `${bytes} Р‘`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} РљР‘`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} РњР‘`;
+    if (bytes < 1024) return `${bytes} Б`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} КБ`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
   }
 
   async function prepareUpload(file) {
-    if (!file || !file.size) throw new Error('Р¤Р°Р№Р» РїСѓСЃС‚РѕР№.');
-    if (file.size > MAX_FILE_BYTES) throw new Error(`Р¤Р°Р№Р» Р±РѕР»СЊС€Рµ ${formatBytes(MAX_FILE_BYTES)}. РЈРјРµРЅСЊС€Рё РµРіРѕ РїРµСЂРµРґ Р·Р°РіСЂСѓР·РєРѕР№.`);
+    if (!file || !file.size) throw new Error('Файл пустой.');
+    if (file.size > MAX_FILE_BYTES) throw new Error(`Файл больше ${formatBytes(MAX_FILE_BYTES)}. Уменьши его перед загрузкой.`);
 
     const mime = mimeFromFile(file);
     if (!mime || (!mime.startsWith('image/') && !mime.startsWith('video/'))) {
-      throw new Error('РџРѕРґРґРµСЂР¶РёРІР°СЋС‚СЃСЏ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ, GIF Рё РІРёРґРµРѕ.');
+      throw new Error('Поддерживаются изображения, GIF и видео.');
     }
 
     const config = loadConfig();
@@ -889,7 +889,7 @@
       if (category === 'gif') {
         const dimensions = await getGifDimensions(file);
         if (dimensions.width > config.maxWidth) {
-          if (!config.freeConvertToken) throw new Error(`GIF С€РёСЂРµ ${config.maxWidth}px. Р”Р»СЏ РёР·РјРµРЅРµРЅРёСЏ СЂР°Р·РјРµСЂР° СѓРєР°Р¶Рё FreeConvert API-С‚РѕРєРµРЅ РёР»Рё РІС‹Р±РµСЂРё РєРѕРЅРІРµСЂС‚Р°С†РёСЋ РІ РЅР°СЃС‚СЂРѕР№РєР°С….`);
+          if (!config.freeConvertToken) throw new Error(`GIF шире ${config.maxWidth}px. Для изменения размера укажи FreeConvert API-токен или выбери конвертацию в настройках.`);
           return freeConvertFile(file, 'gif', config.maxWidth);
         }
       }
@@ -916,7 +916,7 @@
       }
     }
 
-    // Rendi is purpose-built here for video в†’ animated WebP. Other conversion
+    // Rendi is purpose-built here for video → animated WebP. Other conversion
     // rules retain the existing FreeConvert behavior.
     if (category === 'video' && target === 'webp' && config.rendiApiKey) {
       return rendiVideoToWebp(file, config.maxWidth);
@@ -934,7 +934,7 @@
       (normalizedPreview && item.previewUrl === normalizedPreview)
     );
     if (existing) {
-      setStatus('Р­С‚Рѕ РјРµРґРёР° СѓР¶Рµ РµСЃС‚СЊ РІ РіР°Р»РµСЂРµРµ.', 'info');
+      setStatus('Это медиа уже есть в галерее.', 'info');
       return false;
     }
 
@@ -943,7 +943,7 @@
       id: makeId(),
       url: normalizedUrl,
       previewUrl: normalizedPreview,
-      name: String(name || 'РњРµРґРёР°С„Р°Р№Р»').slice(0, 120),
+      name: String(name || 'Медиафайл').slice(0, 120),
       type: type || 'image',
       sourceKey: String(sourceKey || ''),
       addedAt: now,
@@ -951,7 +951,7 @@
     });
     galleryPage = 0;
     persistData(data);
-    setStatus('Р”РѕР±Р°РІР»РµРЅРѕ РІ РєРѕР»Р»РµРєС†РёСЋ.', 'success');
+    setStatus('Добавлено в коллекцию.', 'success');
     return true;
   }
 
@@ -982,7 +982,7 @@
     return new Promise((resolve, reject) => {
       const image = new Image();
       let settled = false;
-      const timer = setTimeout(() => finish(new Error('РЎСЃС‹Р»РєР° РЅРµ Р·Р°РіСЂСѓР·РёР»Р°СЃСЊ Р·Р° 12 СЃРµРєСѓРЅРґ. РќСѓР¶РЅР° РїСЂСЏРјР°СЏ СЃСЃС‹Р»РєР° РЅР° С„Р°Р№Р».')), timeoutMs);
+      const timer = setTimeout(() => finish(new Error('Ссылка не загрузилась за 12 секунд. Нужна прямая ссылка на файл.')), timeoutMs);
       function finish(error, value) {
         if (settled) return;
         settled = true;
@@ -993,8 +993,8 @@
       }
       image.onload = () => image.naturalWidth && image.naturalHeight
         ? finish(null, { width: image.naturalWidth, height: image.naturalHeight })
-        : finish(new Error('РџРѕ СЃСЃС‹Р»РєРµ РЅРµС‚ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ.'));
-      image.onerror = () => finish(new Error('РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ РёР·РѕР±СЂР°Р¶РµРЅРёРµ РїРѕ СЌС‚РѕР№ СЃСЃС‹Р»РєРµ. РСЃРїРѕР»СЊР·СѓР№ РїСЂСЏРјСѓСЋ СЃСЃС‹Р»РєСѓ РЅР° С„Р°Р№Р».'));
+        : finish(new Error('По ссылке нет изображения.'));
+      image.onerror = () => finish(new Error('Не удалось открыть изображение по этой ссылке. Используй прямую ссылку на файл.'));
       image.src = url;
     });
   }
@@ -1009,7 +1009,7 @@
     const id = parse7TVEmoteId(url);
     if (!id) return null;
 
-    setStatus('РџРѕР»СѓС‡Р°СЋ РїСЂСЏРјСѓСЋ СЃСЃС‹Р»РєСѓ РЅР° СЌРјРѕСѓС‚ 7TVвЂ¦', 'info', true);
+    setStatus('Получаю прямую ссылку на эмоут 7TV…', 'info', true);
     logDebug('7TV emote link detected', { id });
 
     let emote = null;
@@ -1060,7 +1060,7 @@
       await waitForImage(fallbackUrl, 10000);
       return { url: fallbackUrl, name: `7TV ${id}`, type: 'image', emoteId: id };
     } catch (_) {
-      throw new Error('РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ С„Р°Р№Р» СЌРјРѕСѓС‚Р° РёР· 7TV. РџСЂРѕРІРµСЂСЊ СЃСЃС‹Р»РєСѓ РёР»Рё РґРѕСЃС‚СѓРї Рє 7tv.io.');
+      throw new Error('Не удалось получить файл эмоута из 7TV. Проверь ссылку или доступ к 7tv.io.');
     }
   }
 
@@ -1068,8 +1068,8 @@
     const text = String(rawUrl || '').trim().replace(/^<|>$/g, '');
     let parsed;
     try { parsed = new URL(text); }
-    catch (_) { throw new Error('Р’СЃС‚Р°РІСЊ РїСЂСЏРјСѓСЋ СЃСЃС‹Р»РєСѓ РЅР° РјРµРґРёР° РёР»Рё СЃСЃС‹Р»РєСѓ 7TV РІРёРґР° https://7tv.app/emotes/ID.'); }
-    if (!['https:', 'http:'].includes(parsed.protocol)) throw new Error('Р Р°Р·СЂРµС€РµРЅС‹ С‚РѕР»СЊРєРѕ HTTP- Рё HTTPS-СЃСЃС‹Р»РєРё.');
+    catch (_) { throw new Error('Вставь прямую ссылку на медиа или ссылку 7TV вида https://7tv.app/emotes/ID.'); }
+    if (!['https:', 'http:'].includes(parsed.protocol)) throw new Error('Разрешены только HTTP- и HTTPS-ссылки.');
 
     // Keep the user's original 7TV page URL as the item/link inserted into chat.
     // Resolve a CDN URL only for the gallery preview.
@@ -1083,7 +1083,7 @@
     if (!name && sevenTv) name = sevenTv.name;
     if (!name) {
       try { name = decodeURIComponent(new URL(originalUrl).pathname.split('/').filter(Boolean).pop() || new URL(originalUrl).hostname).slice(0, 120); }
-      catch (_) { name = 'РњРµРґРёР°С„Р°Р№Р»'; }
+      catch (_) { name = 'Медиафайл'; }
     }
 
     addItem(originalUrl, name, type, '', previewUrl);
@@ -1095,19 +1095,19 @@
 
   async function processSingleFile(file, sourceKey) {
     try {
-      setStatus(`РџРѕРґРіРѕС‚Р°РІР»РёРІР°СЋ В«${file.name || 'РјРµРґРёР°'}В»вЂ¦`, 'info', true);
+      setStatus(`Подготавливаю «${file.name || 'медиа'}»…`, 'info', true);
       const prepared = await prepareUpload(file);
-      setStatus(`Р—Р°РіСЂСѓР¶Р°СЋ В«${prepared.name || file.name}В» РЅР° kappa.lolвЂ¦`, 'info', true);
+      setStatus(`Загружаю «${prepared.name || file.name}» на kappa.lol…`, 'info', true);
       const uploaded = await uploadToKappa(prepared);
       const ext = fileExtension(prepared);
       const type = ext === 'gif' ? 'gif'
         : ['webm', 'mp4', 'mov', 'mkv', 'avi'].includes(ext) ? 'video' : 'image';
-      addItem(uploaded.url, prepared.name || file.name || 'РњРµРґРёР°С„Р°Р№Р»', type, sourceKey, uploaded.url);
-      setStatus(`Р“РѕС‚РѕРІРѕ: ${prepared.name || file.name} Р·Р°РіСЂСѓР¶РµРЅ РЅР° kappa.lol.`, 'success');
+      addItem(uploaded.url, prepared.name || file.name || 'Медиафайл', type, sourceKey, uploaded.url);
+      setStatus(`Готово: ${prepared.name || file.name} загружен на kappa.lol.`, 'success');
       return true;
     } catch (error) {
       logDebug('File processing failed', file.name, error);
-      setStatus(`${file.name || 'Р¤Р°Р№Р»'}: ${error.message || error}`, 'error', true);
+      setStatus(`${file.name || 'Файл'}: ${error.message || error}`, 'error', true);
       return false;
     }
   }
@@ -1118,7 +1118,7 @@
       return mime.startsWith('image/') || mime.startsWith('video/');
     });
     if (!files.length) {
-      setStatus('Р‘СѓС„РµСЂ РёР»Рё РїРµСЂРµС‚Р°СЃРєРёРІР°РЅРёРµ РЅРµ СЃРѕРґРµСЂР¶Р°С‚ РёР·РѕР±СЂР°Р¶РµРЅРёРµ РёР»Рё РІРёРґРµРѕ.', 'error');
+      setStatus('Буфер или перетаскивание не содержат изображение или видео.', 'error');
       return;
     }
 
@@ -1130,7 +1130,7 @@
       }
       if (loadData().items.some(item => item.sourceKey && item.sourceKey === key)) {
         logDebug('File fingerprint already exists in collection; upload skipped', { name: file.name, size: file.size });
-        setStatus(`В«${file.name || 'Р¤Р°Р№Р»'}В» СѓР¶Рµ РµСЃС‚СЊ РІ РіР°Р»РµСЂРµРµ вЂ” РїРѕРІС‚РѕСЂРЅР°СЏ Р·Р°РіСЂСѓР·РєР° РїСЂРѕРїСѓС‰РµРЅР°.`, 'info');
+        setStatus(`«${file.name || 'Файл'}» уже есть в галерее — повторная загрузка пропущена.`, 'info');
         recentFileFingerprints.set(key, Date.now() + 20000);
         continue;
       }
@@ -1167,7 +1167,7 @@
     if (cachedCard) cachedCard.remove();
     mediaCardCache.delete(id);
     persistData(data);
-    setStatus('РЈРґР°Р»РµРЅРѕ РёР· РіР°Р»РµСЂРµРё.', 'success');
+    setStatus('Удалено из галереи.', 'success');
   }
 
   // ----- Twitch composer integration -----
@@ -1348,7 +1348,7 @@
   async function insertLinkIntoChat(url) {
     const editor = getChatInput() || (activeComposer && activeComposer.isConnected ? activeComposer : null);
     if (!editor || !isEditor(editor)) {
-      setStatus('РќРµ РЅР°С€С‘Р» РїРѕР»Рµ РІРІРѕРґР° С‡Р°С‚Р° Twitch. РћС‚РєСЂРѕР№ С‡Р°С‚ Рё РїРѕРІС‚РѕСЂРё.', 'error', true);
+      setStatus('Не нашёл поле ввода чата Twitch. Открой чат и повтори.', 'error', true);
       return false;
     }
     activeComposer = editor;
@@ -1372,7 +1372,7 @@
     let after = getEditorText(editor);
     if (after !== initialText && after.includes(url)) {
       captureComposerSelection();
-      setStatus('РЎСЃС‹Р»РєР° РІСЃС‚Р°РІР»РµРЅР° РІ С‡Р°С‚. РќР°Р¶РјРё Enter РґР»СЏ РѕС‚РїСЂР°РІРєРё.', 'success');
+      setStatus('Ссылка вставлена в чат. Нажми Enter для отправки.', 'success');
       return true;
     }
 
@@ -1386,7 +1386,7 @@
     after = getEditorText(editor);
     if (after !== initialText && after.includes(url)) {
       captureComposerSelection();
-      setStatus('РЎСЃС‹Р»РєР° РІСЃС‚Р°РІР»РµРЅР° РІ С‡Р°С‚. РќР°Р¶РјРё Enter РґР»СЏ РѕС‚РїСЂР°РІРєРё.', 'success');
+      setStatus('Ссылка вставлена в чат. Нажми Enter для отправки.', 'success');
       return true;
     }
 
@@ -1404,11 +1404,11 @@
     after = getEditorText(editor);
     if (after !== initialText && after.includes(url)) {
       captureComposerSelection();
-      setStatus('РЎСЃС‹Р»РєР° РІСЃС‚Р°РІР»РµРЅР° РІ С‡Р°С‚. РќР°Р¶РјРё Enter РґР»СЏ РѕС‚РїСЂР°РІРєРё.', 'success');
+      setStatus('Ссылка вставлена в чат. Нажми Enter для отправки.', 'success');
       return true;
     }
 
-    setStatus('Twitch РЅРµ РїСЂРёРЅСЏР» РІСЃС‚Р°РІРєСѓ С‡РµСЂРµР· СЂРµРґР°РєС‚РѕСЂ. РќРёС‡РµРіРѕ РЅРµ Р±С‹Р»Рѕ РѕС‚РїСЂР°РІР»РµРЅРѕ; РїРѕРїСЂРѕР±СѓР№ РµС‰С‘ СЂР°Р·.', 'error', true);
+    setStatus('Twitch не принял вставку через редактор. Ничего не было отправлено; попробуй ещё раз.', 'error', true);
     logDebug('Insert failed; editor text unchanged', { before: initialText.slice(-120), after: after.slice(-120) });
     return false;
   }
@@ -1431,7 +1431,7 @@
       })
     });
     const payload = parseResponse(response, 'GitHub Gist');
-    if (!payload.id) throw new Error('GitHub РЅРµ РІРµСЂРЅСѓР» ID Gist.');
+    if (!payload.id) throw new Error('GitHub не вернул ID Gist.');
     return payload.id;
   }
 
@@ -1454,7 +1454,7 @@
       content = rawResponse.responseText;
     }
     const parsed = parseJson(content, null);
-    if (!parsed || !Array.isArray(parsed.items)) throw new Error('Р’ Gist РЅРµ РЅР°Р№РґРµРЅ С„Р°Р№Р» РєРѕР»Р»РµРєС†РёРё РІ РѕР¶РёРґР°РµРјРѕРј С„РѕСЂРјР°С‚Рµ.');
+    if (!parsed || !Array.isArray(parsed.items)) throw new Error('В Gist не найден файл коллекции в ожидаемом формате.');
     return parseDataForMerge(parsed);
   }
 
@@ -1535,7 +1535,7 @@
   async function syncSettingsNow() {
     const config = loadConfig();
     if (!config.gistToken || !config.gistId) {
-      throw new Error('РЎРЅР°С‡Р°Р»Р° СЃРѕС…СЂР°РЅРё GitHub token Рё ID Gist РІРѕ РІРєР»Р°РґРєРµ СЃРёРЅС…СЂРѕРЅРёР·Р°С†РёРё.');
+      throw new Error('Сначала сохрани GitHub token и ID Gist во вкладке синхронизации.');
     }
 
     const remote = await readGistFile(config, SETTINGS_FILENAME);
@@ -1543,7 +1543,7 @@
 
     if (!remote || !Number(remote.settingsUpdatedAt)) {
       await writeGistFile(config, SETTINGS_FILENAME, localSnapshot);
-      setStatus('РќР°СЃС‚СЂРѕР№РєРё Рё FreeConvert API-С‚РѕРєРµРЅ РѕС‚РїСЂР°РІР»РµРЅС‹ РІ Gist.', 'success', true);
+      setStatus('Настройки и FreeConvert API-токен отправлены в Gist.', 'success', true);
       return;
     }
 
@@ -1556,7 +1556,7 @@
       // it and publish the new schema so another device won't restore the old WebP default.
       if (localUpdatedAt > 0 && localUpdatedAt >= remoteUpdatedAt) {
         await writeGistFile(config, SETTINGS_FILENAME, localSnapshot);
-        setStatus('РќР°СЃС‚СЂРѕР№РєРё СЃРёРЅС…СЂРѕРЅРёР·РёСЂРѕРІР°РЅС‹. РЎС‚Р°СЂС‹Р№ С„РѕСЂРјР°С‚ Gist РѕР±РЅРѕРІР»С‘РЅ; РІРёРґРµРѕ С‚РµРїРµСЂСЊ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РєРѕРЅРІРµСЂС‚РёСЂСѓРµС‚СЃСЏ РІ GIF.', 'success', true);
+        setStatus('Настройки синхронизированы. Старый формат Gist обновлён; видео теперь по умолчанию конвертируется в GIF.', 'success', true);
         return;
       }
 
@@ -1576,7 +1576,7 @@
       });
       const migratedSnapshot = syncableSettings(loadConfig());
       await writeGistFile(config, SETTINGS_FILENAME, migratedSnapshot);
-      setStatus('РќР°СЃС‚СЂРѕР№РєРё Р·Р°РіСЂСѓР¶РµРЅС‹ РёР· СЃС‚Р°СЂРѕРіРѕ Gist Рё РѕР±РЅРѕРІР»РµРЅС‹. Р’РёРґРµРѕ РєРѕРЅРІРµСЂС‚РёСЂСѓРµС‚СЃСЏ РІ GIF.', 'success', true);
+      setStatus('Настройки загружены из старого Gist и обновлены. Видео конвертируется в GIF.', 'success', true);
       logDebug('Settings schema migrated in Gist', { from: remoteSchemaVersion, to: SETTINGS_SCHEMA_VERSION });
       if (panelView === 'settings') renderSettings();
       return;
@@ -1592,12 +1592,12 @@
       });
       const snapshot = loadConfig();
       GM_setValue(CONFIG_KEY, { ...snapshot, settingsUpdatedAt: Number(remote.settingsUpdatedAt) });
-      setStatus('РќР°СЃС‚СЂРѕР№РєРё Р·Р°РіСЂСѓР¶РµРЅС‹ РёР· Gist, РІРєР»СЋС‡Р°СЏ FreeConvert API-С‚РѕРєРµРЅ.', 'success', true);
+      setStatus('Настройки загружены из Gist, включая FreeConvert API-токен.', 'success', true);
       logDebug('Settings synced from Gist', { settingsUpdatedAt: remote.settingsUpdatedAt });
       if (panelView === 'settings') renderSettings();
     } else {
       await writeGistFile(config, SETTINGS_FILENAME, localSnapshot);
-      setStatus('РўРµРєСѓС‰РёРµ РЅР°СЃС‚СЂРѕР№РєРё, РІРєР»СЋС‡Р°СЏ FreeConvert API-С‚РѕРєРµРЅ, СЃРёРЅС…СЂРѕРЅРёР·РёСЂРѕРІР°РЅС‹.', 'success', true);
+      setStatus('Текущие настройки, включая FreeConvert API-токен, синхронизированы.', 'success', true);
       logDebug('Settings synced to Gist', { settingsUpdatedAt: config.settingsUpdatedAt });
     }
   }
@@ -1605,13 +1605,13 @@
 
   async function performSyncOnce() {
     const config = loadConfig();
-    if (!config.gistToken || !config.gistId) throw new Error('РЎРЅР°С‡Р°Р»Р° РЅР°СЃС‚СЂРѕР№ GitHub token Рё ID Gist.');
+    if (!config.gistToken || !config.gistId) throw new Error('Сначала настрой GitHub token и ID Gist.');
     const remote = await getRemoteData(config);
     const local = loadData();
     const merged = mergeData(local, remote);
     persistData(merged, false);
     if (dataSignature(merged) !== dataSignature(remote)) await writeRemoteData(config, merged);
-    setStatus(`РЎРёРЅС…СЂРѕРЅРёР·РёСЂРѕРІР°РЅРѕ В· ${merged.items.length} СЌР»РµРјРµРЅС‚РѕРІ.`, 'success');
+    setStatus(`Синхронизировано · ${merged.items.length} элементов.`, 'success');
     logDebug('Gist sync complete', { count: merged.items.length, gistId: config.gistId });
   }
 
@@ -1629,7 +1629,7 @@
     if (syncTimer) clearTimeout(syncTimer);
     syncTimer = setTimeout(() => syncNow().catch(error => {
       logDebug('Automatic Gist sync failed', error);
-      setStatus(`РђРІС‚РѕСЃРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ: ${formatGitHubSyncError(error)}`, 'error', true);
+      setStatus(`Автосинхронизация: ${formatGitHubSyncError(error)}`, 'error', true);
     }), 1400);
   }
 
@@ -1696,19 +1696,19 @@
     panel.id = 'twgif-panel';
     panel.hidden = true;
     panel.setAttribute('role', 'dialog');
-    panel.setAttribute('aria-label', 'РљРѕР»Р»РµРєС†РёСЏ GIF Рё РёР·РѕР±СЂР°Р¶РµРЅРёР№');
+    panel.setAttribute('aria-label', 'Коллекция GIF и изображений');
     panel.innerHTML = `
       <div class="twgif-head">
-        <button id="twgif-settings-back-top" class="twgif-head-btn" type="button" title="РќР°Р·Р°Рґ Рє РіР°Р»РµСЂРµРµ" aria-label="РќР°Р·Р°Рґ" hidden>в†ђ</button>
-        <div id="twgif-heading" class="twgif-heading">GIF Рё РєР°СЂС‚РёРЅРєРё</div>
+        <button id="twgif-settings-back-top" class="twgif-head-btn" type="button" title="Назад к галерее" aria-label="Назад" hidden>←</button>
+        <div id="twgif-heading" class="twgif-heading">GIF и картинки</div>
         <div id="twgif-settings-tabs" class="twgif-settings-tabs" hidden>
-          <button class="twgif-tab" type="button" data-tab="general" title="Р’РёРґ Рё РѕР±С‰РёРµ" aria-label="РћР±С‰РёРµ РЅР°СЃС‚СЂРѕР№РєРё" aria-selected="false">в—«</button>
-          <button class="twgif-tab" type="button" data-tab="convert" title="РљРѕРЅРІРµСЂС‚Р°С†РёСЏ" aria-label="РќР°СЃС‚СЂРѕР№РєРё РєРѕРЅРІРµСЂС‚Р°С†РёРё" aria-selected="false">в‡„</button>
-          <button class="twgif-tab" type="button" data-tab="sync" title="РЎРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ" aria-label="РЎРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ" aria-selected="false">вЃ</button>
-          <button class="twgif-tab" type="button" data-tab="debug" title="РћС‚Р»Р°РґРєР°" aria-label="РћС‚Р»Р°РґРєР°" aria-selected="false">вЊ</button>
+          <button class="twgif-tab" type="button" data-tab="general" title="Вид и общие" aria-label="Общие настройки" aria-selected="false">◫</button>
+          <button class="twgif-tab" type="button" data-tab="convert" title="Конвертация" aria-label="Настройки конвертации" aria-selected="false">⇄</button>
+          <button class="twgif-tab" type="button" data-tab="sync" title="Синхронизация" aria-label="Синхронизация" aria-selected="false">☁</button>
+          <button class="twgif-tab" type="button" data-tab="debug" title="Отладка" aria-label="Отладка" aria-selected="false">⌘</button>
         </div>
-        <button id="twgif-settings-open" class="twgif-head-btn" type="button" title="РќР°СЃС‚СЂРѕР№РєРё" aria-label="РќР°СЃС‚СЂРѕР№РєРё">${SVG_SETTINGS}</button>
-        <button id="twgif-close" class="twgif-head-btn" type="button" title="Р—Р°РєСЂС‹С‚СЊ" aria-label="Р—Р°РєСЂС‹С‚СЊ">${SVG_CLOSE}</button>
+        <button id="twgif-settings-open" class="twgif-head-btn" type="button" title="Настройки" aria-label="Настройки">${SVG_SETTINGS}</button>
+        <button id="twgif-close" class="twgif-head-btn" type="button" title="Закрыть" aria-label="Закрыть">${SVG_CLOSE}</button>
       </div>
       <div id="twgif-panel-body" class="twgif-panel-body"></div>
       <div id="twgif-status" role="status" aria-live="polite"></div>
@@ -1773,8 +1773,8 @@
     const button = document.createElement('button');
     button.id = 'twgif-trigger';
     button.type = 'button';
-    button.title = 'GIF Рё РёР·РѕР±СЂР°Р¶РµРЅРёСЏ';
-    button.setAttribute('aria-label', 'РћС‚РєСЂС‹С‚СЊ РєРѕР»Р»РµРєС†РёСЋ GIF Рё РёР·РѕР±СЂР°Р¶РµРЅРёР№');
+    button.title = 'GIF и изображения';
+    button.setAttribute('aria-label', 'Открыть коллекцию GIF и изображений');
     button.setAttribute('aria-haspopup', 'dialog');
     button.setAttribute('aria-expanded', 'false');
     button.innerHTML = SVG_GALLERY;
@@ -1800,7 +1800,7 @@
     if (!button) button = createTrigger();
     activeTrigger = button;
 
-    const settingsButton = toolbar.querySelector('[data-a-target="chat-settings-button"], [aria-label*="Chat settings" i], [aria-label*="РќР°СЃС‚СЂРѕР№РєРё С‡Р°С‚Р°" i]');
+    const settingsButton = toolbar.querySelector('[data-a-target="chat-settings-button"], [aria-label*="Chat settings" i], [aria-label*="Настройки чата" i]');
     const rightGroup = settingsButton?.parentElement || toolbar.querySelector('[class*="buttons-right"]') || toolbar;
 
     // Put our icon immediately before chat settings (and next to channel points/emote buttons).
@@ -1885,17 +1885,17 @@
     button.type = 'button';
     button.className = 'twgif-chat-add';
     button.textContent = '+';
-    button.title = 'Р”РѕР±Р°РІРёС‚СЊ РјРµРґРёР° РІ GIF-РіР°Р»РµСЂРµСЋ';
-    button.setAttribute('aria-label', 'Р”РѕР±Р°РІРёС‚СЊ РјРµРґРёР° РІ РіР°Р»РµСЂРµСЋ');
+    button.title = 'Добавить медиа в GIF-галерею';
+    button.setAttribute('aria-label', 'Добавить медиа в галерею');
     button.addEventListener('pointerdown', event => { event.preventDefault(); event.stopPropagation(); }, true);
     button.addEventListener('click', async event => {
       event.preventDefault(); event.stopPropagation();
       try {
         await addUrl(anchor.href);
-        button.textContent = 'вњ“';
+        button.textContent = '✓';
         setTimeout(() => { if (button.isConnected) button.textContent = '+'; }, 1200);
       } catch (error) {
-        setStatus(`РќРµ СѓРґР°Р»РѕСЃСЊ РґРѕР±Р°РІРёС‚СЊ СЃСЃС‹Р»РєСѓ РёР· С‡Р°С‚Р°: ${error.message || error}`, 'error', true);
+        setStatus(`Не удалось добавить ссылку из чата: ${error.message || error}`, 'error', true);
       }
     });
     anchor.insertAdjacentElement('afterend', button);
@@ -1949,7 +1949,7 @@
     renderPanelView();
     repositionPanel();
     if (loadConfig().gistToken && loadConfig().gistId) {
-      syncNow().catch(error => setStatus(`РЎРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ: ${formatGitHubSyncError(error)}`, 'error', true));
+      syncNow().catch(error => setStatus(`Синхронизация: ${formatGitHubSyncError(error)}`, 'error', true));
     }
     logDebug('Panel opened');
   }
@@ -1970,7 +1970,7 @@
     const settingsOpen = panel.querySelector('#twgif-settings-open');
 
     const inSettings = panelView === 'settings';
-    heading.textContent = inSettings ? 'РќР°СЃС‚СЂРѕР№РєРё' : 'GIF Рё РєР°СЂС‚РёРЅРєРё';
+    heading.textContent = inSettings ? 'Настройки' : 'GIF и картинки';
     settingsBack.hidden = !inSettings;
     settingsTabs.hidden = !inSettings;
     settingsOpen.hidden = inSettings;
@@ -2000,14 +2000,14 @@
     if (!body) return;
     body.innerHTML = `
       <div class="twgif-toolbar">
-        <input id="twgif-url-input" class="twgif-input twgif-url-input" type="url" placeholder="РЎСЃС‹Р»РєР° РЅР° РјРµРґРёР° РёР»Рё СЌРјРѕСѓС‚ 7TVвЂ¦" autocomplete="url" aria-label="РЎСЃС‹Р»РєР° РґР»СЏ РґРѕР±Р°РІР»РµРЅРёСЏ">
-        <button id="twgif-add-url" class="twgif-small-btn twgif-primary twgif-toolbar-icon" type="button" title="Р”РѕР±Р°РІРёС‚СЊ СЃСЃС‹Р»РєСѓ" aria-label="Р”РѕР±Р°РІРёС‚СЊ СЃСЃС‹Р»РєСѓ">+</button>
+        <input id="twgif-url-input" class="twgif-input twgif-url-input" type="url" placeholder="Ссылка на медиа или эмоут 7TV…" autocomplete="url" aria-label="Ссылка для добавления">
+        <button id="twgif-add-url" class="twgif-small-btn twgif-primary twgif-toolbar-icon" type="button" title="Добавить ссылку" aria-label="Добавить ссылку">+</button>
         <span id="twgif-count" class="twgif-count"></span>
       </div>
-      <div id="twgif-drop" class="twgif-drop"><div><strong>РџРµСЂРµС‚Р°С‰Рё С„Р°Р№Р»С‹ РёР»Рё РЅР°Р¶РјРё Ctrl+V</strong><span>РњРµРґРёР° РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚СЃСЏ РїРѕ РїСЂР°РІРёР»Р°Рј РІРѕ РІРєР»Р°РґРєРµ РєРѕРЅРІРµСЂС‚Р°С†РёРё</span></div><button id="twgif-file-pick" class="twgif-small-btn" type="button">Р’С‹Р±СЂР°С‚СЊ</button><input id="twgif-file-input" type="file" accept="image/*,video/*,.gif,.webm,.mp4,.mov,.mkv,.avi" multiple hidden></div>
+      <div id="twgif-drop" class="twgif-drop"><div><strong>Перетащи файлы или нажми Ctrl+V</strong><span>Медиа обрабатывается по правилам во вкладке конвертации</span></div><button id="twgif-file-pick" class="twgif-small-btn" type="button">Выбрать</button><input id="twgif-file-input" type="file" accept="image/*,video/*,.gif,.webm,.mp4,.mov,.mkv,.avi" multiple hidden></div>
       <div id="twgif-masonry" class="twgif-masonry"></div>
       <div id="twgif-empty" class="twgif-empty" hidden></div>
-      <div id="twgif-pagination" class="twgif-pagination" hidden><button id="twgif-page-prev" class="twgif-small-btn" type="button">вЂ№</button><span id="twgif-page-label" class="twgif-page-label"></span><button id="twgif-page-next" class="twgif-small-btn" type="button">вЂє</button></div>
+      <div id="twgif-pagination" class="twgif-pagination" hidden><button id="twgif-page-prev" class="twgif-small-btn" type="button">‹</button><span id="twgif-page-label" class="twgif-page-label"></span><button id="twgif-page-next" class="twgif-small-btn" type="button">›</button></div>
     `;
 
     const urlInput = body.querySelector('#twgif-url-input');
@@ -2016,7 +2016,7 @@
       const value = urlInput.value.trim();
       if (!value) { urlInput.focus(); return; }
       addButton.disabled = true;
-      setStatus('РџСЂРѕРІРµСЂСЏСЋ СЃСЃС‹Р»РєСѓвЂ¦', 'info', true);
+      setStatus('Проверяю ссылку…', 'info', true);
       try {
         await addUrl(value);
         urlInput.value = '';
@@ -2066,7 +2066,7 @@
     card.className = 'twgif-card';
     card.tabIndex = 0;
     card.setAttribute('role', 'button');
-    card.setAttribute('aria-label', 'Р’СЃС‚Р°РІРёС‚СЊ СЃСЃС‹Р»РєСѓ РЅР° РјРµРґРёР° РІ С‡Р°С‚');
+    card.setAttribute('aria-label', 'Вставить ссылку на медиа в чат');
     card.__twgifItem = item;
 
     const frame = document.createElement('div');
@@ -2107,7 +2107,7 @@
       media.dataset.loadState = 'error';
       const note = document.createElement('div');
       note.className = 'twgif-media-error';
-      note.textContent = 'РџСЂРµРІСЊСЋ РЅРµРґРѕСЃС‚СѓРїРЅРѕ';
+      note.textContent = 'Превью недоступно';
       media.replaceWith(note);
     }, { once: true });
     frame.appendChild(media);
@@ -2116,8 +2116,8 @@
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'twgif-delete';
-    del.title = 'РЈРґР°Р»РёС‚СЊ РёР· РіР°Р»РµСЂРµРё';
-    del.setAttribute('aria-label', 'РЈРґР°Р»РёС‚СЊ РјРµРґРёР°');
+    del.title = 'Удалить из галереи';
+    del.setAttribute('aria-label', 'Удалить медиа');
     del.innerHTML = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m3 3 6 6M9 3 3 9"/></svg>';
     del.addEventListener('click', event => { event.stopPropagation(); deleteItem(card.__twgifItem.id); });
     card.appendChild(del);
@@ -2303,7 +2303,7 @@
           if (loadedMediaUrls.has(newPreview)) media.src = newPreview;
           else { media.removeAttribute('src'); }
         }
-        if (oldItem.url !== item.url) card.setAttribute('aria-label', 'Р’СЃС‚Р°РІРёС‚СЊ СЃСЃС‹Р»РєСѓ РЅР° РјРµРґРёР° РІ С‡Р°С‚');
+        if (oldItem.url !== item.url) card.setAttribute('aria-label', 'Вставить ссылку на медиа в чат');
       }
       card.hidden = false;
       orderedVisibleCards.push(card);
@@ -2327,10 +2327,10 @@
     masonry.hidden = visible.length === 0;
     count.textContent = String(items.length);
     empty.hidden = visible.length > 0;
-    empty.textContent = 'РљРѕР»Р»РµРєС†РёСЏ РїСѓСЃС‚Р°. Р”РѕР±Р°РІСЊ СЃСЃС‹Р»РєСѓ РёР»Рё РїРµСЂРµС‚Р°С‰Рё С„Р°Р№Р».';
+    empty.textContent = 'Коллекция пуста. Добавь ссылку или перетащи файл.';
 
     pagination.hidden = items.length <= pageSize;
-    pageLabel.textContent = `РЎС‚СЂ. ${galleryPage + 1} / ${pages}`;
+    pageLabel.textContent = `Стр. ${galleryPage + 1} / ${pages}`;
     prev.disabled = galleryPage === 0;
     next.disabled = galleryPage >= pages - 1;
     prev.onclick = () => { if (galleryPage > 0) { galleryPage--; renderGalleryItems(); } };
@@ -2353,25 +2353,25 @@
       content = `
         <div class="twgif-settings">
           <div class="twgif-section">
-            <div class="twgif-section-title">Р“Р°Р»РµСЂРµСЏ</div>
-            <label class="twgif-field-label" for="twgif-media-scale">РњР°СЃС€С‚Р°Р± РїР»РёС‚РѕРє</label>
+            <div class="twgif-section-title">Галерея</div>
+            <label class="twgif-field-label" for="twgif-media-scale">Масштаб плиток</label>
             <select id="twgif-media-scale" class="twgif-input">
               ${targetOptions(String(config.mediaScale), [['0.5','50%'],['0.7','70%'],['0.85','85%'],['1','100%'],['1.2','120%'],['1.4','140%'],['1.6','160%'],['2','200%']])}
             </select>
-            <label class="twgif-field-label" for="twgif-tile-view">Р’РёРґ РїР»РёС‚РѕРє</label>
+            <label class="twgif-field-label" for="twgif-tile-view">Вид плиток</label>
             <select id="twgif-tile-view" class="twgif-input">
-              <option value="masonry" ${config.tileView === 'masonry' ? 'selected' : ''}>РџР»РѕС‚РЅР°СЏ РјРѕР·Р°РёРєР°</option>
-              <option value="grid" ${config.tileView === 'grid' ? 'selected' : ''}>Р РѕРІРЅР°СЏ СЃРµС‚РєР°</option>
+              <option value="masonry" ${config.tileView === 'masonry' ? 'selected' : ''}>Плотная мозаика</option>
+              <option value="grid" ${config.tileView === 'grid' ? 'selected' : ''}>Ровная сетка</option>
             </select>
-            <label class="twgif-field-label" for="twgif-page-size">РњРµРґРёР° РЅР° СЃС‚СЂР°РЅРёС†Рµ (10вЂ“500)</label>
+            <label class="twgif-field-label" for="twgif-page-size">Медиа на странице (10–500)</label>
             <input id="twgif-page-size" class="twgif-input" type="number" min="10" max="500" step="10" value="${config.pageSize}">
-            <label class="twgif-field-label" for="twgif-preview-scale">РЈРІРµР»РёС‡РµРЅРёРµ РїСЂРё СѓРґРµСЂР¶Р°РЅРёРё</label>
+            <label class="twgif-field-label" for="twgif-preview-scale">Увеличение при удержании</label>
             <select id="twgif-preview-scale" class="twgif-input">
               ${targetOptions(String(config.previewScale), [['1.1','110%'],['1.3','130%'],['1.6','160%'],['2','200%'],['2.5','250%'],['3','300%']])}
             </select>
             <div class="twgif-row" style="margin-top:8px">
-              <button id="twgif-save-gallery-settings" class="twgif-small-btn twgif-primary" type="button">РџСЂРёРјРµРЅРёС‚СЊ</button>
-              <button id="twgif-reset-defaults" class="twgif-small-btn" type="button">РќР°СЃС‚СЂРѕР№РєРё РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ</button>
+              <button id="twgif-save-gallery-settings" class="twgif-small-btn twgif-primary" type="button">Применить</button>
+              <button id="twgif-reset-defaults" class="twgif-small-btn" type="button">Настройки по умолчанию</button>
             </div>
           </div>
         </div>`;
@@ -2379,56 +2379,56 @@
       content = `
         <div class="twgif-settings">
           <div class="twgif-section">
-            <div class="twgif-section-title">РџСЂР°РІРёР»Р° РєРѕРЅРІРµСЂС‚Р°С†РёРё</div>
-            <label class="twgif-field-label" for="twgif-max-width">РњР°РєСЃРёРјР°Р»СЊРЅР°СЏ С€РёСЂРёРЅР° (px)</label>
+            <div class="twgif-section-title">Правила конвертации</div>
+            <label class="twgif-field-label" for="twgif-max-width">Максимальная ширина (px)</label>
             <input id="twgif-max-width" class="twgif-input" type="number" min="100" max="4000" step="50" value="${config.maxWidth}">
-            <label class="twgif-field-label" for="twgif-rule-image">РћР±С‹С‡РЅС‹Рµ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ в†’</label>
-            <select id="twgif-rule-image" class="twgif-input">${targetOptions(config.conversionRules.image, [['keep','РќРµ РєРѕРЅРІРµСЂС‚РёСЂРѕРІР°С‚СЊ'],['webp','WebP'],['jpg','JPG'],['png','PNG']])}</select>
-            <label class="twgif-field-label" for="twgif-rule-gif">GIF в†’</label>
-            <select id="twgif-rule-gif" class="twgif-input">${targetOptions(config.conversionRules.gif, [['keep','РћСЃС‚Р°РІРёС‚СЊ GIF'],['webp','WebP'],['gif','GIF'],['mp4','MP4']])}</select>
-            <label class="twgif-field-label" for="twgif-rule-video">Р’РёРґРµРѕ в†’</label>
-            <select id="twgif-rule-video" class="twgif-input">${targetOptions(config.conversionRules.video, [['keep','РћСЃС‚Р°РІРёС‚СЊ РѕСЂРёРіРёРЅР°Р»'],['gif','GIF'],['webp','WebP'],['webm','WebM'],['mp4','MP4']])}</select>
-            <div class="twgif-help">Р’РёРґРµРѕ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РєРѕРЅРІРµСЂС‚РёСЂСѓРµС‚СЃСЏ РІ GIF СЃ Р±РµСЃРєРѕРЅРµС‡РЅС‹Рј РїРѕРІС‚РѕСЂРµРЅРёРµРј. Р”Р»СЏ GIF РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РїР°СЂР°РјРµС‚СЂ loop_count = 0 (РёР»Рё gif_loop_count = 0, РµСЃР»Рё РµРіРѕ С‚СЂРµР±СѓРµС‚ FreeConvert). РџСЂРё РІС‹Р±РѕСЂРµ В«Р’РёРґРµРѕ в†’ WebPВ» Рё Р·Р°РїРѕР»РЅРµРЅРЅРѕРј РєР»СЋС‡Рµ Rendi РІРёРґРµРѕ РїСЂРµРІСЂР°С‰Р°РµС‚СЃСЏ РІ Р·Р°С†РёРєР»РµРЅРЅС‹Р№ Р°РЅРёРјРёСЂРѕРІР°РЅРЅС‹Р№ WebP С‡РµСЂРµР· Rendi; РѕСЃС‚Р°Р»СЊРЅС‹Рµ С„РѕСЂРјР°С‚С‹ РїСЂРѕРґРѕР»Р¶Р°СЋС‚ РѕР±СЂР°Р±Р°С‚С‹РІР°С‚СЊСЃСЏ FreeConvert.</div>
-            <label class="twgif-field-label" for="twgif-rendi-api-key">Rendi API key (С‚РѕР»СЊРєРѕ РЅР° СЌС‚РѕРј СѓСЃС‚СЂРѕР№СЃС‚РІРµ)</label>
+            <label class="twgif-field-label" for="twgif-rule-image">Обычные изображения →</label>
+            <select id="twgif-rule-image" class="twgif-input">${targetOptions(config.conversionRules.image, [['keep','Не конвертировать'],['webp','WebP'],['jpg','JPG'],['png','PNG']])}</select>
+            <label class="twgif-field-label" for="twgif-rule-gif">GIF →</label>
+            <select id="twgif-rule-gif" class="twgif-input">${targetOptions(config.conversionRules.gif, [['keep','Оставить GIF'],['webp','WebP'],['gif','GIF'],['mp4','MP4']])}</select>
+            <label class="twgif-field-label" for="twgif-rule-video">Видео →</label>
+            <select id="twgif-rule-video" class="twgif-input">${targetOptions(config.conversionRules.video, [['keep','Оставить оригинал'],['gif','GIF'],['webp','WebP'],['webm','WebM'],['mp4','MP4']])}</select>
+            <div class="twgif-help">Видео по умолчанию конвертируется в GIF с бесконечным повторением. Для GIF используется параметр loop_count = 0 (или gif_loop_count = 0, если его требует FreeConvert). При выборе «Видео → WebP» и заполненном ключе Rendi видео превращается в зацикленный анимированный WebP через Rendi; остальные форматы продолжают обрабатываться FreeConvert.</div>
+            <label class="twgif-field-label" for="twgif-rendi-api-key">Rendi API key (только на этом устройстве)</label>
             <input id="twgif-rendi-api-key" name="twgif-rendi-api-key" class="twgif-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-bwignore="true" data-form-type="other" style="-webkit-text-security:disc" placeholder="Rendi API key" value="${escapeAttr(config.rendiApiKey)}">
-            <div class="twgif-help"><a href="https://www.rendi.dev/docs/direct-upload" target="_blank" rel="noopener noreferrer">Rendi Direct Upload</a> + FFmpeg API. РљР»СЋС‡ С…СЂР°РЅРёС‚СЃСЏ С‚РѕР»СЊРєРѕ Р»РѕРєР°Р»СЊРЅРѕ Рё РЅРёРєРѕРіРґР° РЅРµ РґРѕР±Р°РІР»СЏРµС‚СЃСЏ РІ Gist. РСЃС…РѕРґРЅРѕРµ РІРёРґРµРѕ Р·Р°РіСЂСѓР¶Р°РµС‚СЃСЏ РІ Rendi РґР»СЏ РєРѕРЅРІРµСЂС‚Р°С†РёРё.</div>
-            <label class="twgif-field-label" for="twgif-freeconvert-token">FreeConvert API-С‚РѕРєРµРЅ</label>
+            <div class="twgif-help"><a href="https://www.rendi.dev/docs/direct-upload" target="_blank" rel="noopener noreferrer">Rendi Direct Upload</a> + FFmpeg API. Ключ хранится только локально и никогда не добавляется в Gist. Исходное видео загружается в Rendi для конвертации.</div>
+            <label class="twgif-field-label" for="twgif-freeconvert-token">FreeConvert API-токен</label>
             <input id="twgif-freeconvert-token" name="twgif-freeconvert-api-token" class="twgif-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-bwignore="true" data-form-type="other" style="-webkit-text-security:disc" placeholder="FreeConvert API token" value="${escapeAttr(config.freeConvertToken)}">
-            <div class="twgif-help"><a href="https://www.freeconvert.com/api" target="_blank" rel="noopener noreferrer">Р”РѕРєСѓРјРµРЅС‚Р°С†РёСЏ FreeConvert API</a>. РљРѕРЅРІРµСЂС‚Р°С†РёСЏ РёСЃРїРѕР»СЊР·СѓРµС‚ Р»РёРјРёС‚С‹/РєСЂРµРґРёС‚С‹ СЃРµСЂРІРёСЃР°. Р¤Р°Р№Р» РѕС‚РїСЂР°РІР»СЏРµС‚СЃСЏ РЅР° РІРЅРµС€РЅРёР№ СЃРµСЂРІРµСЂ РѕР±СЂР°Р±РѕС‚РєРё. РўРѕРєРµРЅ РјРѕР¶РµС‚ СЃРёРЅС…СЂРѕРЅРёР·РёСЂРѕРІР°С‚СЊСЃСЏ РІ Gist РїРѕ РѕС‚РґРµР»СЊРЅРѕР№ РєРЅРѕРїРєРµ РЅР°СЃС‚СЂРѕРµРє.</div>
-            <button id="twgif-save-convert" class="twgif-small-btn twgif-primary" type="button" style="margin-top:8px">РЎРѕС…СЂР°РЅРёС‚СЊ РїСЂР°РІРёР»Р°</button>
+            <div class="twgif-help"><a href="https://www.freeconvert.com/api" target="_blank" rel="noopener noreferrer">Документация FreeConvert API</a>. Конвертация использует лимиты/кредиты сервиса. Файл отправляется на внешний сервер обработки. Токен может синхронизироваться в Gist по отдельной кнопке настроек.</div>
+            <button id="twgif-save-convert" class="twgif-small-btn twgif-primary" type="button" style="margin-top:8px">Сохранить правила</button>
           </div>
         </div>`;
     } else if (settingsTab === 'sync') {
       content = `
         <div class="twgif-settings">
           <div class="twgif-section">
-            <div class="twgif-section-title">РљРѕР»Р»РµРєС†РёСЏ Рё РЅР°СЃС‚СЂРѕР№РєРё РјРµР¶РґСѓ СѓСЃС‚СЂРѕР№СЃС‚РІР°РјРё</div>
-            <label class="twgif-field-label" for="twgif-gist-token">GitHub token (РґРѕСЃС‚СѓРї gist)</label>
+            <div class="twgif-section-title">Коллекция и настройки между устройствами</div>
+            <label class="twgif-field-label" for="twgif-gist-token">GitHub token (доступ gist)</label>
             <input id="twgif-gist-token" name="twgif-github-gist-token" class="twgif-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-bwignore="true" data-form-type="other" style="-webkit-text-security:disc" placeholder="GitHub token" value="${escapeAttr(config.gistToken)}">
             <label class="twgif-field-label" for="twgif-gist-id">ID Gist</label>
             <input id="twgif-gist-id" class="twgif-input" type="text" autocomplete="off" spellcheck="false" placeholder="ID Gist" value="${escapeAttr(config.gistId)}">
-            <div class="twgif-help"><b>РџРµСЂРІРѕРµ СѓСЃС‚СЂРѕР№СЃС‚РІРѕ:</b> СЃРѕР·РґР°Р№ GitHub token СЃ СЂР°Р·СЂРµС€РµРЅРёРµРј <code>gist</code>, РІСЃС‚Р°РІСЊ РµРіРѕ СЃСЋРґР°, РѕСЃС‚Р°РІСЊ ID Gist РїСѓСЃС‚С‹Рј Рё РЅР°Р¶РјРё В«РЎРѕР·РґР°С‚СЊ GistВ». Р—Р°С‚РµРј РЅР°Р¶РјРё В«РЎРёРЅС…СЂРѕРЅРёР·РёСЂРѕРІР°С‚СЊ РіР°Р»РµСЂРµСЋВ» Рё В«РЎРёРЅС…СЂРѕРЅРёР·РёСЂРѕРІР°С‚СЊ РЅР°СЃС‚СЂРѕР№РєРёВ».</div>
-            <div class="twgif-help"><b>Р”СЂСѓРіРѕРµ СѓСЃС‚СЂРѕР№СЃС‚РІРѕ:</b> РІРІРµРґРё <b>С‚РѕС‚ Р¶Рµ GitHub token</b> Рё <b>С‚РѕС‚ Р¶Рµ ID Gist</b>, РєРѕС‚РѕСЂС‹Рµ РёСЃРїРѕР»СЊР·РѕРІР°Р»РёСЃСЊ РЅР° РїРµСЂРІРѕРј СѓСЃС‚СЂРѕР№СЃС‚РІРµ. РќР°Р¶РјРё В«РЎРѕС…СЂР°РЅРёС‚СЊ РґРѕСЃС‚СѓРїВ», Р·Р°С‚РµРј В«РЎРёРЅС…СЂРѕРЅРёР·РёСЂРѕРІР°С‚СЊ РіР°Р»РµСЂРµСЋВ» Рё В«РЎРёРЅС…СЂРѕРЅРёР·РёСЂРѕРІР°С‚СЊ РЅР°СЃС‚СЂРѕР№РєРёВ». ID Gist вЂ” РґР»РёРЅРЅР°СЏ СЃС‚СЂРѕРєР° РёР· URL Gist; СЃР°Рј GitHub token Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё РЅР° РґСЂСѓРіРёРµ СѓСЃС‚СЂРѕР№СЃС‚РІР° РЅРµ РїРµСЂРµРЅРѕСЃРёС‚СЃСЏ.</div>
-            <div class="twgif-help">Gist С…СЂР°РЅРёС‚ РєРѕР»Р»РµРєС†РёСЋ Рё СЃРёРЅС…СЂРѕРЅРёР·РёСЂСѓРµРјС‹Рµ РЅР°СЃС‚СЂРѕР№РєРё. Secret Gist РЅРµ СЏРІР»СЏРµС‚СЃСЏ РїСЂРёРІР°С‚РЅС‹Рј РґР»СЏ Р»СЋРґРµР№, Р·РЅР°СЋС‰РёС… РµРіРѕ URL. FreeConvert API-С‚РѕРєРµРЅ РїРѕРїР°РґР°РµС‚ РІ С„Р°Р№Р» РЅР°СЃС‚СЂРѕРµРє Gist РІ РѕС‚РєСЂС‹С‚РѕРј РІРёРґРµ; GitHub token РІ Gist РЅРµ Р·Р°РїРёСЃС‹РІР°РµС‚СЃСЏ.</div>
+            <div class="twgif-help"><b>Первое устройство:</b> создай GitHub token с разрешением <code>gist</code>, вставь его сюда, оставь ID Gist пустым и нажми «Создать Gist». Затем нажми «Синхронизировать галерею» и «Синхронизировать настройки».</div>
+            <div class="twgif-help"><b>Другое устройство:</b> введи <b>тот же GitHub token</b> и <b>тот же ID Gist</b>, которые использовались на первом устройстве. Нажми «Сохранить доступ», затем «Синхронизировать галерею» и «Синхронизировать настройки». ID Gist — длинная строка из URL Gist; сам GitHub token автоматически на другие устройства не переносится.</div>
+            <div class="twgif-help">Gist хранит коллекцию и синхронизируемые настройки. Secret Gist не является приватным для людей, знающих его URL. FreeConvert API-токен попадает в файл настроек Gist в открытом виде; GitHub token в Gist не записывается.</div>
             <div class="twgif-row" style="margin-top:8px">
-              <button id="twgif-save-gist" class="twgif-small-btn" type="button">РЎРѕС…СЂР°РЅРёС‚СЊ РґРѕСЃС‚СѓРї</button>
-              <button id="twgif-create-gist" class="twgif-small-btn" type="button">РЎРѕР·РґР°С‚СЊ Gist</button>
-              <button id="twgif-sync-now" class="twgif-small-btn" type="button">РЎРёРЅС…СЂРѕРЅРёР·РёСЂРѕРІР°С‚СЊ РіР°Р»РµСЂРµСЋ</button>
+              <button id="twgif-save-gist" class="twgif-small-btn" type="button">Сохранить доступ</button>
+              <button id="twgif-create-gist" class="twgif-small-btn" type="button">Создать Gist</button>
+              <button id="twgif-sync-now" class="twgif-small-btn" type="button">Синхронизировать галерею</button>
             </div>
-            <button id="twgif-sync-settings" class="twgif-small-btn twgif-primary" type="button" style="margin-top:8px">РЎРёРЅС…СЂРѕРЅРёР·РёСЂРѕРІР°С‚СЊ РЅР°СЃС‚СЂРѕР№РєРё</button>
-            <div class="twgif-help">РћС‚РґРµР»СЊРЅР°СЏ РєРЅРѕРїРєР° СЃРёРЅС…СЂРѕРЅРёР·РёСЂСѓРµС‚ РЅР°СЃС‚СЂРѕР№РєРё РѕС‚РѕР±СЂР°Р¶РµРЅРёСЏ, РїСЂР°РІРёР»Р° РєРѕРЅРІРµСЂС‚Р°С†РёРё Рё FreeConvert API-С‚РѕРєРµРЅ. РўРѕРєРµРЅ С…СЂР°РЅРёС‚СЃСЏ РІ РѕС‚РґРµР»СЊРЅРѕРј С„Р°Р№Р»Рµ Gist РІ РѕС‚РєСЂС‹С‚РѕРј РІРёРґРµ: Р»СЋР±РѕР№, Сѓ РєРѕРіРѕ РµСЃС‚СЊ URL Secret Gist, РјРѕР¶РµС‚ РїСЂРѕС‡РёС‚Р°С‚СЊ РµРіРѕ. GitHub-С‚РѕРєРµРЅ РІ Gist РЅРµ Р·Р°РїРёСЃС‹РІР°РµС‚СЃСЏ.</div>
-            <div class="twgif-help"><a href="https://github.com/settings/tokens/new?scopes=gist&description=Twitch%20GIF%20Gallery" target="_blank" rel="noopener noreferrer">РЎРѕР·РґР°С‚СЊ GitHub-С‚РѕРєРµРЅ СЃ СЂР°Р·СЂРµС€РµРЅРёРµРј gist</a>.</div>
+            <button id="twgif-sync-settings" class="twgif-small-btn twgif-primary" type="button" style="margin-top:8px">Синхронизировать настройки</button>
+            <div class="twgif-help">Отдельная кнопка синхронизирует настройки отображения, правила конвертации и FreeConvert API-токен. Токен хранится в отдельном файле Gist в открытом виде: любой, у кого есть URL Secret Gist, может прочитать его. GitHub-токен в Gist не записывается.</div>
+            <div class="twgif-help"><a href="https://github.com/settings/tokens/new?scopes=gist&description=Twitch%20GIF%20Gallery" target="_blank" rel="noopener noreferrer">Создать GitHub-токен с разрешением gist</a>.</div>
           </div>
         </div>`;
     } else {
       content = `
         <div class="twgif-settings">
           <div class="twgif-section">
-            <div class="twgif-section-title">РћС‚Р»Р°РґРєР° Рё СЂРµР·РµСЂРІРЅР°СЏ РєРѕРїРёСЏ</div>
-            <label class="twgif-check-row"><input id="twgif-debug-toggle" type="checkbox" ${config.debug ? 'checked' : ''}> РџРѕРґСЂРѕР±РЅС‹Рµ Р·Р°РїРёСЃРё РІ РєРѕРЅСЃРѕР»СЊ Рё Р¶СѓСЂРЅР°Р»</label>
-            <div class="twgif-row" style="margin:7px 0"><button id="twgif-copy-debug" class="twgif-small-btn" type="button">РљРѕРїРёСЂРѕРІР°С‚СЊ Р¶СѓСЂРЅР°Р»</button><button id="twgif-clear-debug" class="twgif-small-btn" type="button">РћС‡РёСЃС‚РёС‚СЊ Р¶СѓСЂРЅР°Р»</button><button id="twgif-export" class="twgif-small-btn" type="button">Р­РєСЃРїРѕСЂС‚ JSON</button><button id="twgif-import" class="twgif-small-btn" type="button">РРјРїРѕСЂС‚ JSON</button><input id="twgif-import-file" type="file" accept="application/json,.json" hidden></div>
-            <textarea id="twgif-debug-log" class="twgif-debug-log" readonly spellcheck="false" aria-label="Р–СѓСЂРЅР°Р» РѕС‚Р»Р°РґРєРё"></textarea>
-            <div class="twgif-help">РўРѕРєРµРЅС‹ РЅРµ Р·Р°РїРёСЃС‹РІР°СЋС‚СЃСЏ РІ Р¶СѓСЂРЅР°Р». Р­РєСЃРїРѕСЂС‚ JSON РІРєР»СЋС‡Р°РµС‚ РєРѕР»Р»РµРєС†РёСЋ, РЅРѕ РЅРµ API-С‚РѕРєРµРЅС‹.</div>
+            <div class="twgif-section-title">Отладка и резервная копия</div>
+            <label class="twgif-check-row"><input id="twgif-debug-toggle" type="checkbox" ${config.debug ? 'checked' : ''}> Подробные записи в консоль и журнал</label>
+            <div class="twgif-row" style="margin:7px 0"><button id="twgif-copy-debug" class="twgif-small-btn" type="button">Копировать журнал</button><button id="twgif-clear-debug" class="twgif-small-btn" type="button">Очистить журнал</button><button id="twgif-export" class="twgif-small-btn" type="button">Экспорт JSON</button><button id="twgif-import" class="twgif-small-btn" type="button">Импорт JSON</button><input id="twgif-import-file" type="file" accept="application/json,.json" hidden></div>
+            <textarea id="twgif-debug-log" class="twgif-debug-log" readonly spellcheck="false" aria-label="Журнал отладки"></textarea>
+            <div class="twgif-help">Токены не записываются в журнал. Экспорт JSON включает коллекцию, но не API-токены.</div>
           </div>
         </div>`;
     }
@@ -2445,7 +2445,7 @@
           previewScale: $('#twgif-preview-scale').value
         });
         galleryPage = 0;
-        setStatus('РќР°СЃС‚СЂРѕР№РєРё РіР°Р»РµСЂРµРё СЃРѕС…СЂР°РЅРµРЅС‹.', 'success');
+        setStatus('Настройки галереи сохранены.', 'success');
       });
       $('#twgif-reset-defaults').addEventListener('click', () => {
         const current = loadConfig();
@@ -2459,7 +2459,7 @@
         });
         galleryPage = 0;
         settingsTab = 'general';
-        setStatus('РќР°СЃС‚СЂРѕР№РєРё РѕС‚РѕР±СЂР°Р¶РµРЅРёСЏ Рё РїСЂР°РІРёР»Р° РєРѕРЅРІРµСЂС‚Р°С†РёРё СЃР±СЂРѕС€РµРЅС‹. API-С‚РѕРєРµРЅС‹ Рё РґРѕСЃС‚СѓРї Рє Gist СЃРѕС…СЂР°РЅРµРЅС‹.', 'success', true);
+        setStatus('Настройки отображения и правила конвертации сброшены. API-токены и доступ к Gist сохранены.', 'success', true);
         renderSettings();
       });
     }
@@ -2476,38 +2476,38 @@
           freeConvertToken: $('#twgif-freeconvert-token').value,
           rendiApiKey: $('#twgif-rendi-api-key').value
         });
-        setStatus('РџСЂР°РІРёР»Р° РєРѕРЅРІРµСЂС‚Р°С†РёРё Рё API-РєР»СЋС‡Рё СЃРѕС…СЂР°РЅРµРЅС‹ Р»РѕРєР°Р»СЊРЅРѕ. РљР»СЋС‡ Rendi РЅРµ СЃРёРЅС…СЂРѕРЅРёР·РёСЂСѓРµС‚СЃСЏ РІ Gist.', 'success');
+        setStatus('Правила конвертации и API-ключи сохранены локально. Ключ Rendi не синхронизируется в Gist.', 'success');
       });
     }
 
     if (settingsTab === 'sync') {
       $('#twgif-save-gist').addEventListener('click', () => {
         saveConfig({ gistToken: $('#twgif-gist-token').value, gistId: $('#twgif-gist-id').value });
-        setStatus('Р”Р°РЅРЅС‹Рµ РґРѕСЃС‚СѓРїР° СЃРѕС…СЂР°РЅРµРЅС‹ Р»РѕРєР°Р»СЊРЅРѕ; РґРµР№СЃС‚РІРёС‚РµР»СЊРЅРѕСЃС‚СЊ С‚РѕРєРµРЅР° РїСЂРѕРІРµСЂРёС‚СЃСЏ РїСЂРё СЃРѕР·РґР°РЅРёРё РёР»Рё СЃРёРЅС…СЂРѕРЅРёР·Р°С†РёРё Gist.', 'success', true);
+        setStatus('Данные доступа сохранены локально; действительность токена проверится при создании или синхронизации Gist.', 'success', true);
       });
       $('#twgif-create-gist').addEventListener('click', async event => {
         const button = event.currentTarget;
         const cfg = saveConfig({ gistToken: $('#twgif-gist-token').value, gistId: $('#twgif-gist-id').value });
-        if (!cfg.gistToken) { setStatus('Р’РІРµРґРё GitHub-С‚РѕРєРµРЅ СЃ СЂР°Р·СЂРµС€РµРЅРёРµРј gist.', 'error', true); return; }
-        if (cfg.gistId) { setStatus('ID Gist СѓР¶Рµ Р·Р°РїРѕР»РЅРµРЅ. РћС‡РёСЃС‚Рё РїРѕР»Рµ ID, РµСЃР»Рё РЅСѓР¶РЅРѕ СЃРѕР·РґР°С‚СЊ РЅРѕРІС‹Р№.', 'error', true); return; }
+        if (!cfg.gistToken) { setStatus('Введи GitHub-токен с разрешением gist.', 'error', true); return; }
+        if (cfg.gistId) { setStatus('ID Gist уже заполнен. Очисти поле ID, если нужно создать новый.', 'error', true); return; }
         button.disabled = true;
         try {
-          setStatus('РЎРѕР·РґР°СЋ GistвЂ¦', 'info', true);
+          setStatus('Создаю Gist…', 'info', true);
           const id = await createGist(cfg, loadData());
           saveConfig({ gistId: id });
           $('#twgif-gist-id').value = id;
-          setStatus(`Gist СЃРѕР·РґР°РЅ: ${id}. РўРµРїРµСЂСЊ РјРѕР¶РЅРѕ СЃРёРЅС…СЂРѕРЅРёР·РёСЂРѕРІР°С‚СЊ РєРѕР»Р»РµРєС†РёСЋ Рё РЅР°СЃС‚СЂРѕР№РєРё.`, 'success', true);
+          setStatus(`Gist создан: ${id}. Теперь можно синхронизировать коллекцию и настройки.`, 'success', true);
         } catch (error) {
-          setStatus(`РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ Gist: ${formatGitHubSyncError(error)}`, 'error', true);
+          setStatus(`Не удалось создать Gist: ${formatGitHubSyncError(error)}`, 'error', true);
         } finally { button.disabled = false; }
       });
       $('#twgif-sync-now').addEventListener('click', async () => {
         saveConfig({ gistToken: $('#twgif-gist-token').value, gistId: $('#twgif-gist-id').value });
-        try { await syncNow(); } catch (error) { setStatus(`РЎРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ РіР°Р»РµСЂРµРё: ${formatGitHubSyncError(error)}`, 'error', true); }
+        try { await syncNow(); } catch (error) { setStatus(`Синхронизация галереи: ${formatGitHubSyncError(error)}`, 'error', true); }
       });
       $('#twgif-sync-settings').addEventListener('click', async () => {
         saveConfig({ gistToken: $('#twgif-gist-token').value, gistId: $('#twgif-gist-id').value });
-        try { await syncSettingsNow(); } catch (error) { setStatus(`РЎРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ РЅР°СЃС‚СЂРѕРµРє: ${formatGitHubSyncError(error)}`, 'error', true); }
+        try { await syncSettingsNow(); } catch (error) { setStatus(`Синхронизация настроек: ${formatGitHubSyncError(error)}`, 'error', true); }
       });
     }
 
@@ -2516,17 +2516,17 @@
       $('#twgif-debug-toggle').addEventListener('change', event => {
         saveConfig({ debug: event.currentTarget.checked });
         logDebug(`Debug mode ${event.currentTarget.checked ? 'enabled' : 'disabled'}`);
-        setStatus(`РћС‚Р»Р°РґРєР° ${event.currentTarget.checked ? 'РІРєР»СЋС‡РµРЅР°' : 'РІС‹РєР»СЋС‡РµРЅР°'}.`, 'success');
+        setStatus(`Отладка ${event.currentTarget.checked ? 'включена' : 'выключена'}.`, 'success');
       });
       $('#twgif-copy-debug').addEventListener('click', async () => {
-        const text = debugLogs.join('\n') || 'Р–СѓСЂРЅР°Р» РїСѓСЃС‚.';
-        try { await navigator.clipboard.writeText(text); setStatus('Р–СѓСЂРЅР°Р» СЃРєРѕРїРёСЂРѕРІР°РЅ.', 'success'); }
-        catch (_) { $('#twgif-debug-log').focus(); $('#twgif-debug-log').select(); setStatus('РќР°Р¶РјРё Ctrl+C, С‡С‚РѕР±С‹ СЃРєРѕРїРёСЂРѕРІР°С‚СЊ РІС‹РґРµР»РµРЅРЅС‹Р№ Р¶СѓСЂРЅР°Р».', 'info'); }
+        const text = debugLogs.join('\n') || 'Журнал пуст.';
+        try { await navigator.clipboard.writeText(text); setStatus('Журнал скопирован.', 'success'); }
+        catch (_) { $('#twgif-debug-log').focus(); $('#twgif-debug-log').select(); setStatus('Нажми Ctrl+C, чтобы скопировать выделенный журнал.', 'info'); }
       });
       $('#twgif-clear-debug').addEventListener('click', () => {
         debugLogs.length = 0;
         $('#twgif-debug-log').value = '';
-        setStatus('Р–СѓСЂРЅР°Р» РѕС‡РёС‰РµРЅ.', 'success');
+        setStatus('Журнал очищен.', 'success');
       });
       $('#twgif-export').addEventListener('click', exportBackup);
       $('#twgif-import').addEventListener('click', () => $('#twgif-import-file').click());
@@ -2539,8 +2539,8 @@
           const data = parseDataForMerge(json);
           const merged = mergeData(loadData(), data);
           persistData(merged);
-          setStatus(`РљРѕР»Р»РµРєС†РёСЏ РѕР±СЉРµРґРёРЅРµРЅР°, СЌР»РµРјРµРЅС‚РѕРІ: ${merged.items.length}.`, 'success');
-        } catch (error) { setStatus(`РќРµ СѓРґР°Р»РѕСЃСЊ РёРјРїРѕСЂС‚РёСЂРѕРІР°С‚СЊ JSON: ${error.message || error}`, 'error', true); }
+          setStatus(`Коллекция объединена, элементов: ${merged.items.length}.`, 'success');
+        } catch (error) { setStatus(`Не удалось импортировать JSON: ${error.message || error}`, 'error', true); }
       });
     }
   }
@@ -2558,7 +2558,7 @@
     link.download = `twitch-gif-gallery-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(link); link.click(); link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
-    setStatus('Р РµР·РµСЂРІРЅР°СЏ РєРѕРїРёСЏ РєРѕР»Р»РµРєС†РёРё РїРѕРґРіРѕС‚РѕРІР»РµРЅР°.', 'success');
+    setStatus('Резервная копия коллекции подготовлена.', 'success');
   }
 
   // A document-level capture listener closes the popup without blocking the Twitch chat click below it.
@@ -2589,7 +2589,7 @@
     event.stopPropagation();
     if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
     if (!isPanelOpen()) openPanel(document.getElementById('twgif-trigger'));
-    setStatus('РР·РѕР±СЂР°Р¶РµРЅРёРµ РёР· Р±СѓС„РµСЂР° РїРѕР»СѓС‡РµРЅРѕвЂ¦', 'info', true);
+    setStatus('Изображение из буфера получено…', 'info', true);
     processFiles(files);
   }, true);
 
@@ -2650,4 +2650,3 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
   else start();
 })();
-
