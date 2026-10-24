@@ -569,13 +569,13 @@
       const payload = parseResponse(response, 'FreeConvert tasks');
       const tasks = findTaskList(payload);
       if (tasks.length) return { payload, tasks };
-      if (jobError && /HTTP 401\\b/i.test(String(jobError.message || jobError))) {
+      if (jobError && /HTTP 401\b/i.test(String(jobError.message || jobError))) {
         throw new Error('FreeConvert не разрешил прочитать состояние задачи (HTTP 401). Проверь API-токен в личном кабинете FreeConvert и заново сохрани его в настройках скрипта.');
       }
       return { payload, tasks };
     } catch (error) {
       const details = `${jobError?.message || ''} ${error?.message || error}`;
-      if (/HTTP 401\\b/i.test(details)) {
+      if (/HTTP 401\b/i.test(details)) {
         throw new Error('FreeConvert вернул HTTP 401 при чтении состояния задачи. Проверь API-токен в личном кабинете FreeConvert, затем заново сохрани его в настройках скрипта и повтори загрузку.');
       }
       throw error;
@@ -715,7 +715,7 @@
           uploadForm = task?.result?.form || task?.form || null;
         } catch (error) {
           logDebug('FreeConvert waiting for upload form', error.message || error);
-          if (/HTTP 401\\b/i.test(String(error?.message || error))) throw error;
+          if (/HTTP 401\b/i.test(String(error?.message || error))) throw error;
         }
       }
     }
@@ -965,7 +965,7 @@
         return await rendiVideoToWebp(file, config.maxWidth);
       } catch (error) {
         const message = String(error?.message || error || '');
-        const planDenied = /HTTP 403\\b/i.test(message) && /account's plan cannot upload files/i.test(message);
+        const planDenied = /HTTP 403\b/i.test(message) && /account's plan cannot upload files/i.test(message);
         if (!planDenied) throw error;
 
         if (!config.freeConvertToken) {
