@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.6.0
+// @version      5.6.1
 // @description  Twitch media gallery with cached FFmpeg.wasm media conversion, original 7TV links, persistent previews, pagination and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -588,61 +588,62 @@
   }
 
   async function resizeStaticImage(file, maxWidth, outputFormat = 'webp') {
-    const dims = await getStaticImageDimensions(file);
-    if (!dims.width || !dims.height) throw new Error('Не удалось определить размеры изображения.');
-
-    const sourceMime = mimeFromFile(file);
-    const needsResize = dims.width > maxWidth;
-    if (outputFormat === 'keep' && !needsResize) return file;
-
-    const targetMime = outputFormat === 'keep'
-      ? (['image/webp', 'image/png', 'image/jpeg'].includes(sourceMime) ? sourceMime : 'image/webp')
-      : ({ webp: 'image/webp', png: 'image/png', jpg: 'image/jpeg' }[outputFormat] || '');
-    if (!targetMime || !['image/webp', 'image/png', 'image/jpeg'].includes(targetMime)) {
-      throw new Error('Локальная обработка формата ' + outputFormat + ' недоступна.');
-    }
-
-    const needsConvert = sourceMime !== targetMime;
-    if (!needsResize && !needsConvert) return file;
-    if (dims.width * dims.height > 40_000_000) {
-      throw new Error('Изображение слишком большое для локального Canvas. Используй FFmpeg или уменьши исходник.');
-    }
-
-    const scale = Math.min(1, maxWidth / dims.width);
-    const width = Math.max(1, Math.round(dims.width * scale));
-    const height = Math.max(1, Math.round(dims.height * scale));
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error('Браузер не смог создать холст для изменения размера изображения.');
-
+    // Decode only once: use the same bitmap to read dimensions and draw the output.
     const bitmap = await createImageBitmap(file);
     try {
+      const dims = { width: bitmap.width, height: bitmap.height };
+      if (!dims.width || !dims.height) throw new Error('Не удалось определить размеры изображения.');
+
+      const sourceMime = mimeFromFile(file);
+      const needsResize = dims.width > maxWidth;
+      if (outputFormat === 'keep' && !needsResize) return file;
+
+      const targetMime = outputFormat === 'keep'
+        ? (['image/webp', 'image/png', 'image/jpeg'].includes(sourceMime) ? sourceMime : 'image/webp')
+        : ({ webp: 'image/webp', png: 'image/png', jpg: 'image/jpeg' }[outputFormat] || '');
+      if (!targetMime || !['image/webp', 'image/png', 'image/jpeg'].includes(targetMime)) {
+        throw new Error('Локальная обработка формата ' + outputFormat + ' недоступна.');
+      }
+
+      const needsConvert = sourceMime !== targetMime;
+      if (!needsResize && !needsConvert) return file;
+      if (dims.width * dims.height > 40_000_000) {
+        throw new Error('Изображение слишком большое для локального Canvas. Используй FFmpeg или уменьши исходник.');
+      }
+
+      const scale = Math.min(1, maxWidth / dims.width);
+      const width = Math.max(1, Math.round(dims.width * scale));
+      const height = Math.max(1, Math.round(dims.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Браузер не смог создать холст для изменения размера изображения.');
+
       if (targetMime === 'image/jpeg') {
         context.fillStyle = '#fff';
         context.fillRect(0, 0, width, height);
       }
       context.drawImage(bitmap, 0, 0, width, height);
+
+      const blob = await canvasToBlob(canvas, targetMime, targetMime === 'image/png' ? undefined : 0.84);
+      if (!blob || blob.size < 20 || blob.type !== targetMime) {
+        throw new Error('Браузер не смог создать корректный файл ' + outputFormat.toUpperCase() + '.');
+      }
+      if (targetMime === 'image/webp') {
+        const signature = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+        if (signature.length < 12 || signature[0] !== 0x52 || signature[1] !== 0x49 || signature[2] !== 0x46 || signature[3] !== 0x46 ||
+            signature[8] !== 0x57 || signature[9] !== 0x45 || signature[10] !== 0x42 || signature[11] !== 0x50) {
+          throw new Error('Браузер вернул невалидный WebP-файл.');
+        }
+      }
+      const baseName = String(file.name || 'image').replace(/\.[^.]+$/, '') || 'image';
+      const name = baseName + getExtension(blob.type, file.name);
+      logDebug('Static image converted locally with Canvas', { from: dims, to: { width, height }, mime: blob.type, inputBytes: file.size, bytes: blob.size });
+      return new File([blob], name, { type: blob.type, lastModified: Date.now() });
     } finally {
       if (typeof bitmap.close === 'function') bitmap.close();
     }
-
-    const blob = await canvasToBlob(canvas, targetMime, targetMime === 'image/png' ? undefined : 0.84);
-    if (!blob || blob.size < 20 || blob.type !== targetMime) {
-      throw new Error('Браузер не смог создать корректный файл ' + outputFormat.toUpperCase() + '.');
-    }
-    if (targetMime === 'image/webp') {
-      const signature = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
-      if (signature.length < 12 || signature[0] !== 0x52 || signature[1] !== 0x49 || signature[2] !== 0x46 || signature[3] !== 0x46 ||
-          signature[8] !== 0x57 || signature[9] !== 0x45 || signature[10] !== 0x42 || signature[11] !== 0x50) {
-        throw new Error('Браузер вернул невалидный WebP-файл.');
-      }
-    }
-    const baseName = String(file.name || 'image').replace(/\.[^.]+$/, '') || 'image';
-    const name = baseName + getExtension(blob.type, file.name);
-    logDebug('Static image converted locally with Canvas', { from: dims, to: { width, height }, mime: blob.type, inputBytes: file.size, bytes: blob.size });
-    return new File([blob], name, { type: blob.type, lastModified: Date.now() });
   }
 
   function delay(ms) {
@@ -2920,7 +2921,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.6.0 started', { href: location.href });
+    logDebug('Userscript v5.6.1 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
