@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.0
+// @version      5.9.1
 // @description  Twitch media gallery with cached FFmpeg.wasm media conversion, original 7TV links, persistent previews, pagination and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -2140,7 +2140,7 @@
       .twgif-toolbar-icon{width:30px;min-width:30px;height:30px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:19px}
       .twgif-drop{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 7px;margin-bottom:8px;border:1px dashed #41414b;border-radius:7px;color:#a8a8b3;font-size:10px}
       .twgif-drop strong{display:block;color:#d9d9df;font-size:10px;font-weight:600}.twgif-drop span{font-size:9px}.twgif-drop.twgif-drag{border-color:#a970ff;background:#9147ff1a}#twgif-panel.twgif-drag{border-color:#a970ff;box-shadow:0 0 0 2px #9147ff55,0 10px 34px #0009}#twgif-panel.twgif-drag::after{content:'Отпусти файлы для добавления';position:absolute;inset:4px;z-index:20;display:flex;align-items:center;justify-content:center;border:2px dashed #b78cff;border-radius:8px;background:#18181be8;color:#f4eaff;font-size:14px;font-weight:700;pointer-events:none}
-      .twgif-masonry{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--twgif-tile-min,76px),1fr));grid-auto-rows:1px;align-items:start;gap:6px}.twgif-masonry.twgif-grid-mode{grid-auto-rows:auto;gap:6px}.twgif-masonry[hidden]{display:none!important}
+      .twgif-masonry{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--twgif-tile-min,76px),1fr));grid-auto-rows:0.25px;align-items:start;gap:6px}.twgif-masonry.twgif-grid-mode{grid-auto-rows:auto;gap:6px}.twgif-masonry[hidden]{display:none!important}
       .twgif-card{display:block;align-self:start;position:relative;width:100%;margin:0;vertical-align:top;border:1px solid #34343b;border-radius:6px;overflow:visible;background:#202024;cursor:pointer;outline:none;transition:border-color .12s,box-shadow .12s}
       .twgif-card[hidden]{display:none!important}.twgif-masonry.twgif-grid-mode .twgif-card{display:block;width:100%;margin:0;overflow:visible;grid-row-end:auto!important}.twgif-card,.twgif-card img,.twgif-card video{user-select:none;-webkit-user-select:none;-webkit-user-drag:none}
       .twgif-media-frame{position:relative;overflow:hidden;border-radius:5px;background:#101012;isolation:isolate}
@@ -2931,7 +2931,7 @@
             masonry.classList.contains('twgif-grid-mode') || card.hidden) continue;
         const height = card.getBoundingClientRect().height;
         const rowGap = Number.parseFloat(getComputedStyle(masonry).rowGap) || 0;
-        const span = Math.max(1, Math.ceil((height + rowGap) / (1 + rowGap)));
+        const span = Math.max(1, Math.ceil((height + rowGap) / (0.25 + rowGap)));
         if (card.__twgifGridSpan !== span) {
           card.__twgifGridSpan = span;
           card.style.gridRowEnd = 'span ' + span;
@@ -2958,11 +2958,11 @@
     masonry.style.setProperty('--twgif-scale', String(scale));
     masonry.style.setProperty('--twgif-tile-min', `${Math.round(76 * scale)}px`);
     masonry.style.setProperty('--twgif-thumb-height', `${Math.round(90 * scale)}px`);
-    const gap = Math.max(3, Math.round(7 * scale));
+    const gap = Math.max(3, Math.round(6 * scale));
     masonry.style.columnGap = `${gap}px`;
     masonry.style.rowGap = `${gap}px`;
     masonry.style.gap = `${gap}px`;
-    masonry.style.gridAutoRows = config.tileView === 'grid' ? 'auto' : '1px';
+    masonry.style.gridAutoRows = config.tileView === 'grid' ? 'auto' : '0.25px';
 
     const data = loadData();
     const storedItems = data.items.slice().sort(compareGalleryItems);
@@ -3236,7 +3236,7 @@
             webpCompressionLevel: $('#twgif-webp-effort').value
           }
         });
-        setStatus('Правила форматов и настройки сжатия сохранены локально.', 'success', true);
+        setStatus('Правила форматов и сжатия сохранены; при настроенном Gist синхронизируются автоматически.', 'success', true);
       });
     }
 
@@ -3418,7 +3418,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.9.0 started', { href: location.href });
+    logDebug('Userscript v5.9.1 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
