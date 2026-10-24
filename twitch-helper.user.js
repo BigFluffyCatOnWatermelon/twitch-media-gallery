@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.5.0
+// @version      5.6.0
 // @description  Twitch media gallery with cached FFmpeg.wasm media conversion, original 7TV links, persistent previews, pagination and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -64,6 +64,8 @@
   let lastStatus = '';
   let lastStatusType = 'info';
   let statusTimer = 0;
+  let progressHideTimer = 0;
+  let progressGeneration = 0;
   let syncTimer = 0;
   let syncRunning = false;
   let syncAgain = false;
@@ -288,8 +290,10 @@
     lastStatusType = type;
     const element = document.getElementById('twgif-status');
     if (element) {
-      element.textContent = lastStatus;
+      const messageElement = element.querySelector('#twgif-status-message');
+      if (messageElement) messageElement.textContent = lastStatus;
       element.dataset.type = lastStatusType;
+      element.dataset.empty = lastStatus ? 'false' : 'true';
     }
     if (statusTimer) clearTimeout(statusTimer);
     if (!sticky && lastStatus) {
@@ -298,11 +302,50 @@
         if (lastStatus === messageAtSet) {
           lastStatus = '';
           const current = document.getElementById('twgif-status');
-          if (current) current.textContent = '';
+          const messageElement = current && current.querySelector('#twgif-status-message');
+          if (messageElement) messageElement.textContent = '';
+          if (current) current.dataset.empty = 'true';
         }
       }, 7000);
     }
-    if (message) logDebug(`status:${type}`, message);
+    if (message) logDebug('status:' + type, message);
+  }
+
+  function setProgress(percent, active = true) {
+    const indicator = document.getElementById('twgif-progress');
+    if (!indicator) return;
+    if (progressHideTimer) clearTimeout(progressHideTimer);
+    progressHideTimer = 0;
+    if (!active) {
+      progressGeneration++;
+      indicator.hidden = true;
+      return;
+    }
+
+    progressGeneration++;
+    indicator.hidden = false;
+    const label = indicator.querySelector('#twgif-progress-label');
+    const isDeterminate = percent !== null && percent !== '' && Number.isFinite(Number(percent));
+    if (isDeterminate) {
+      const value = Math.max(0, Math.min(100, Math.round(Number(percent))));
+      indicator.dataset.indeterminate = 'false';
+      indicator.style.setProperty('--twgif-progress', String(value));
+      if (label) label.textContent = value + '%';
+      indicator.setAttribute('aria-label', 'Обработка: ' + value + '%');
+    } else {
+      indicator.dataset.indeterminate = 'true';
+      indicator.style.setProperty('--twgif-progress', '24');
+      if (label) label.textContent = '…';
+      indicator.setAttribute('aria-label', 'Идёт обработка');
+    }
+  }
+
+  function finishProgress(delayMs = 900) {
+    if (progressHideTimer) clearTimeout(progressHideTimer);
+    const generation = progressGeneration;
+    progressHideTimer = setTimeout(() => {
+      if (generation === progressGeneration) setProgress(null, false);
+    }, delayMs);
   }
 
   function request(options) {
@@ -407,6 +450,9 @@
     if (!allowedHosts.includes(url.hostname.toLowerCase())) {
       throw new Error('Сервис загрузки вернул ссылку с неизвестного домена.');
     }
+    if (/^\/api(?:\/|$)/i.test(url.pathname) || /\/api\/upload\/?$/i.test(url.pathname)) {
+      throw new Error('Сервис загрузки вернул адрес API вместо ссылки на файл.');
+    }
     let ext = String(data.ext || getExtension(data.type || fallbackMime, fallbackName)).trim();
     if (ext && !ext.startsWith('.')) ext = '.' + ext;
     if (ext && !url.pathname.toLowerCase().endsWith(ext.toLowerCase())) url.pathname += ext;
@@ -421,8 +467,6 @@
       const value = JSON.parse(raw);
       if (value && typeof value === 'object') return value;
     } catch (_) {}
-    // Some failed responses can contain an error object followed by upload metadata.
-    // Recover only a JSON object that actually contains a file link.
     const candidates = raw.match(/\{[^{}]*\}/g) || [];
     for (let index = candidates.length - 1; index >= 0; index--) {
       try {
@@ -447,29 +491,41 @@
         headers: { 'Accept': 'application/json' }
       });
       const successfulStatus = response.status >= 200 && response.status < 300;
-      const result = parseKappaUploadPayload(response.responseText);
-
-      // If the server returned usable metadata despite a 5xx status, avoid uploading twice.
-      if (result && (result.link || result.url) && (successfulStatus || response.status >= 500)) {
-        if (!successfulStatus) {
-          logDebug('Kappa returned file metadata with HTTP ' + response.status + '; using the returned link', endpoint);
+      if (!successfulStatus) {
+        const detail = String(response.responseText || '').slice(0, 500);
+        lastError = new Error('HTTP ' + response.status + (detail ? ' — ' + detail : ''));
+        if (index === 0 && response.status >= 500 && response.status < 600) {
+          logDebug('Kappa primary upload endpoint returned a server error; trying fallback endpoint', {
+            status: response.status, endpoint, fallback: endpoints[index + 1]
+          });
+          continue;
         }
+        throw lastError;
+      }
+
+      const result = parseKappaUploadPayload(response.responseText);
+      if (!result || !(result.link || result.url) || result.error) {
+        lastError = new Error('Сервис загрузки не вернул корректную ссылку на файл.');
+        if (index === 0) {
+          logDebug('Kappa upload response did not contain usable file metadata; trying fallback endpoint', endpoint);
+          continue;
+        }
+        throw lastError;
+      }
+      try {
         return {
           url: normalizeKappaLink(result, file.type || mimeFromFile(file), file.name, endpoint),
           type: String(result.type || file.type || mimeFromFile(file) || 'application/octet-stream'),
           name: file.name || 'Медиафайл'
         };
+      } catch (error) {
+        lastError = error;
+        if (index === 0) {
+          logDebug('Kappa returned an invalid file URL; trying fallback endpoint', { endpoint, error: error.message || error });
+          continue;
+        }
+        throw error;
       }
-
-      const detail = String(response.responseText || '').slice(0, 500);
-      lastError = new Error('HTTP ' + response.status + (detail ? ' — ' + detail : ''));
-      if (index === 0 && response.status >= 500 && response.status < 600) {
-        logDebug('Primary Kappa upload endpoint failed; trying compatible mirror', {
-          status: response.status, endpoint: endpoint, fallback: endpoints[index + 1]
-        });
-        continue;
-      }
-      throw lastError;
     }
 
     throw lastError || new Error('Не удалось загрузить файл на kappa.lol или резервный сервер.');
@@ -530,21 +586,17 @@
     const needsResize = dims.width > maxWidth;
     if (outputFormat === 'keep' && !needsResize) return file;
 
-    // Canvas can reliably export these formats. If the user selected "keep" for
-    // an oversized AVIF/SVG/BMP, resize to WebP instead of failing silently.
-    let targetMime = outputFormat === 'keep'
+    const targetMime = outputFormat === 'keep'
       ? (['image/webp', 'image/png', 'image/jpeg'].includes(sourceMime) ? sourceMime : 'image/webp')
       : ({ webp: 'image/webp', png: 'image/png', jpg: 'image/jpeg' }[outputFormat] || '');
-
     if (!targetMime || !['image/webp', 'image/png', 'image/jpeg'].includes(targetMime)) {
-      throw new Error(`Локальная обработка формата ${outputFormat} недоступна.`);
+      throw new Error('Локальная обработка формата ' + outputFormat + ' недоступна.');
     }
 
     const needsConvert = sourceMime !== targetMime;
     if (!needsResize && !needsConvert) return file;
-
-    if (dims.width * dims.height > 20_000_000) {
-      throw new Error('Изображение слишком большое для локального Canvas. Уменьши его заранее или выбери совместимый формат/сервис.');
+    if (dims.width * dims.height > 40_000_000) {
+      throw new Error('Изображение слишком большое для локального Canvas. Используй FFmpeg или уменьши исходник.');
     }
 
     const scale = Math.min(1, maxWidth / dims.width);
@@ -557,19 +609,31 @@
     if (!context) throw new Error('Браузер не смог создать холст для изменения размера изображения.');
 
     const bitmap = await createImageBitmap(file);
-    if (targetMime === 'image/jpeg') {
-      context.fillStyle = '#fff';
-      context.fillRect(0, 0, width, height);
+    try {
+      if (targetMime === 'image/jpeg') {
+        context.fillStyle = '#fff';
+        context.fillRect(0, 0, width, height);
+      }
+      context.drawImage(bitmap, 0, 0, width, height);
+    } finally {
+      if (typeof bitmap.close === 'function') bitmap.close();
     }
-    context.drawImage(bitmap, 0, 0, width, height);
-    if (typeof bitmap.close === 'function') bitmap.close();
 
-    const blob = await canvasToBlob(canvas, targetMime, targetMime === 'image/png' ? undefined : 0.86);
-    const finalMime = blob.type || targetMime;
+    const blob = await canvasToBlob(canvas, targetMime, targetMime === 'image/png' ? undefined : 0.84);
+    if (!blob || blob.size < 20 || blob.type !== targetMime) {
+      throw new Error('Браузер не смог создать корректный файл ' + outputFormat.toUpperCase() + '.');
+    }
+    if (targetMime === 'image/webp') {
+      const signature = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+      if (signature.length < 12 || signature[0] !== 0x52 || signature[1] !== 0x49 || signature[2] !== 0x46 || signature[3] !== 0x46 ||
+          signature[8] !== 0x57 || signature[9] !== 0x45 || signature[10] !== 0x42 || signature[11] !== 0x50) {
+        throw new Error('Браузер вернул невалидный WebP-файл.');
+      }
+    }
     const baseName = String(file.name || 'image').replace(/\.[^.]+$/, '') || 'image';
-    const name = `${baseName}${getExtension(finalMime, file.name)}`;
-    logDebug('Static image converted locally', { from: dims, to: { width, height }, mime: finalMime, bytes: blob.size });
-    return new File([blob], name, { type: finalMime, lastModified: Date.now() });
+    const name = baseName + getExtension(blob.type, file.name);
+    logDebug('Static image converted locally with Canvas', { from: dims, to: { width, height }, mime: blob.type, inputBytes: file.size, bytes: blob.size });
+    return new File([blob], name, { type: blob.type, lastModified: Date.now() });
   }
 
   function delay(ms) {
@@ -799,9 +863,10 @@
         const ratio = Number(message.progress);
         if (Number.isFinite(ratio) && ratio >= 0) {
           const percent = Math.min(99, Math.round(ratio * 100));
-          if (percent >= pending.lastPercent + 5) {
+          if (percent >= pending.lastPercent + 2 || percent === 99) {
             pending.lastPercent = percent;
             pending.onStatus?.('FFmpeg.wasm: ' + percent + '%');
+            pending.onProgress?.(percent);
           }
         }
       } else if (message.kind === 'done') {
@@ -849,8 +914,7 @@
     const outputPath = 'output_' + id + '.' + outputFormat;
     const mime = mimeFromFile(file);
     const sourceIsGif = mime === 'image/gif' || originalName.toLowerCase().endsWith('.gif');
-    const sourceIsStillImage = mime.startsWith('image/') && !sourceIsGif &&
-      ['png', 'jpg', 'jpeg', 'bmp', 'avif'].includes(inputExt);
+    const sourceIsStillImage = mime.startsWith('image/') && !sourceIsGif;
     const outputIsVideo = outputFormat === 'mp4' || outputFormat === 'webm';
     const scaleFilter = "scale='trunc(min(iw," + width + ")/2)*2':-2:flags=lanczos";
     const args = [];
@@ -870,10 +934,19 @@
         outputPath
       );
     } else if (outputFormat === 'webp') {
-      args.push(
-        '-vf', 'fps=12,' + scaleFilter,
-        '-an', '-c:v', 'libwebp', '-q:v', '70', '-loop', '0', outputPath
-      );
+      if (sourceIsStillImage) {
+        args.push(
+          '-vf', scaleFilter, '-frames:v', '1',
+          '-an', '-c:v', 'libwebp', '-quality', '78', '-compression_level', '3',
+          outputPath
+        );
+      } else {
+        args.push(
+          '-vf', 'fps=10,' + scaleFilter,
+          '-an', '-c:v', 'libwebp', '-quality', '68', '-compression_level', '3',
+          '-loop', '0', outputPath
+        );
+      }
     } else if (outputFormat === 'jpg') {
       args.push('-vf', scaleFilter, '-frames:v', '1', '-q:v', '2', outputPath);
     } else if (outputFormat === 'png') {
@@ -893,6 +966,7 @@
     }
 
     setStatus('FFmpeg.wasm: ' + inputExt.toUpperCase() + ' → ' + outputFormat.toUpperCase() + '…', 'info', true);
+    setProgress(null, true);
     const outputBuffer = await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         localFfmpegPending.delete(id);
@@ -900,7 +974,11 @@
       }, 1200000);
       localFfmpegPending.set(id, {
         resolve, reject, timeout, lastPercent: -5,
-        onStatus: text => setStatus(text || 'FFmpeg.wasm обрабатывает медиа…', 'info', true)
+        onStatus: text => {
+          setStatus(text || 'FFmpeg.wasm обрабатывает медиа…', 'info', true);
+          if (!/\d{1,3}%/.test(String(text || ''))) setProgress(null, true);
+        },
+        onProgress: percent => setProgress(8 + Math.round(percent * 0.56), true)
       });
       try {
         worker.postMessage({ kind: 'convert', id, inputName, outputName: outputPath, inputBuffer, args }, [inputBuffer]);
@@ -910,7 +988,8 @@
         reject(error);
       }
     });
-    if (!outputBuffer || !outputBuffer.byteLength) throw new Error('FFmpeg.wasm вернул пустой файл.');
+    validateConvertedOutput(outputFormat, outputBuffer);
+    setProgress(65, true);
     logDebug('FFmpeg.wasm conversion finished', {
       input: file.name || inputName, output: outputName,
       inputBytes: file.size, outputBytes: outputBuffer.byteLength, maxWidth: width
@@ -922,6 +1001,39 @@
     return new File([outputBuffer], outputName, { type: typeMap[outputFormat], lastModified: Date.now() });
   }
 
+  function validateConvertedOutput(format, buffer) {
+    if (!buffer || buffer.byteLength < 20) {
+      throw new Error('FFmpeg.wasm вернул пустой или повреждённый файл (' + (buffer ? buffer.byteLength : 0) + ' байт). Файл не загружен.');
+    }
+    const bytes = new Uint8Array(buffer);
+    const ascii = (start, length) => String.fromCharCode(...bytes.slice(start, start + length));
+    let valid = false;
+    switch (format) {
+      case 'webp':
+        valid = ascii(0, 4) === 'RIFF' && ascii(8, 4) === 'WEBP';
+        break;
+      case 'png':
+        valid = bytes.length >= 24 && bytes[0] === 0x89 && ascii(1, 3) === 'PNG';
+        break;
+      case 'jpg':
+        valid = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[bytes.length - 2] === 0xff && bytes[bytes.length - 1] === 0xd9;
+        break;
+      case 'gif':
+        valid = ascii(0, 3) === 'GIF' && (ascii(3, 3) === '87a' || ascii(3, 3) === '89a');
+        break;
+      case 'mp4':
+        valid = ascii(4, 4) === 'ftyp';
+        break;
+      case 'webm':
+        valid = bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3;
+        break;
+    }
+    if (!valid) {
+      logDebug('Converted output signature invalid', { format, bytes: buffer.byteLength, firstBytes: Array.from(bytes.slice(0, 16)) });
+      throw new Error('FFmpeg.wasm создал некорректный файл ' + format.toUpperCase() + '. Файл не загружен; попробуй ещё раз или другой формат.');
+    }
+  }
+
   function formatBytes(bytes) {
     if (!Number.isFinite(bytes)) return '';
     if (bytes < 1024) return `${bytes} Б`;
@@ -931,7 +1043,7 @@
 
   async function prepareUpload(file) {
     if (!file || !file.size) throw new Error('Файл пустой.');
-    if (file.size > MAX_FILE_BYTES) throw new Error(`Файл больше ${formatBytes(MAX_FILE_BYTES)}. Уменьши его перед загрузкой.`);
+    if (file.size > MAX_FILE_BYTES) throw new Error('Файл больше ' + formatBytes(MAX_FILE_BYTES) + '. Уменьши его перед загрузкой.');
     const mime = mimeFromFile(file);
     if (!mime || (!mime.startsWith('image/') && !mime.startsWith('video/'))) throw new Error('Поддерживаются изображения, GIF и видео.');
     const config = loadConfig();
@@ -939,8 +1051,22 @@
       : (mime === 'image/gif' || String(file.name || '').toLowerCase().endsWith('.gif') ? 'gif' : 'image');
     const target = config.conversionRules[category] || 'keep';
     if (target === 'keep') return file;
+
+    // Still images use the browser's native Canvas encoder (usually much faster than WASM).
+    // Animated GIFs and videos remain on FFmpeg to preserve animation and time-based output.
+    if (category === 'image' && ['webp', 'png', 'jpg'].includes(target)) {
+      try {
+        setStatus('Конвертирую изображение встроенными средствами браузера…', 'info', true);
+        setProgress(null, true);
+        return await resizeStaticImage(file, config.maxWidth, target);
+      } catch (error) {
+        logDebug('Canvas conversion failed; falling back to FFmpeg.wasm', { name: file.name, target, error: error.message || error });
+      }
+    }
     return ffmpegMediaToFormat(file, target, config.maxWidth);
   }
+
+
 
   function addItem(url, name, type, sourceKey = '', previewUrl = '') {
     const data = loadData();
@@ -1112,23 +1238,34 @@
   }
 
   async function processSingleFile(file, sourceKey) {
+    setProgress(0, true);
     try {
-      setStatus(`Подготавливаю «${file.name || 'медиа'}»…`, 'info', true);
+      setStatus('Подготавливаю «' + (file.name || 'медиа') + '»…', 'info', true);
+      setProgress(4, true);
       const prepared = await prepareUpload(file);
-      setStatus(`Загружаю «${prepared.name || file.name}» на kappa.lol…`, 'info', true);
+      setProgress(65, true);
+      setStatus('Загружаю «' + (prepared.name || file.name) + '» на kappa.lol…', 'info', true);
+      // Upload byte progress is not consistently exposed by userscript managers,
+      // so keep the ring animated rather than showing a fabricated percentage.
+      setProgress(null, true);
       const uploaded = await uploadToKappa(prepared);
       const ext = fileExtension(prepared);
       const type = ext === 'gif' ? 'gif'
         : ['webm', 'mp4', 'mov', 'mkv', 'avi'].includes(ext) ? 'video' : 'image';
       addItem(uploaded.url, prepared.name || file.name || 'Медиафайл', type, sourceKey, uploaded.url);
-      setStatus(`Готово: ${prepared.name || file.name} загружен на kappa.lol.`, 'success');
+      setProgress(100, true);
+      setStatus('Готово: ' + (prepared.name || file.name) + ' загружен на kappa.lol.', 'success');
+      finishProgress(1200);
       return true;
     } catch (error) {
       logDebug('File processing failed', file.name, error);
-      setStatus(`${file.name || 'Файл'}: ${error.message || error}`, 'error', true);
+      setStatus((file.name || 'Файл') + ': ' + (error.message || error), 'error', true);
+      finishProgress(2400);
       return false;
     }
   }
+
+
 
   async function processFiles(fileList) {
     const files = Array.from(fileList || []).filter(file => {
@@ -1693,7 +1830,8 @@
       .twgif-delete svg{width:10px;height:10px;display:block;pointer-events:none}.twgif-card:hover .twgif-delete,.twgif-card:focus-within .twgif-delete{opacity:1;pointer-events:auto}.twgif-delete:hover{background:#b42335;border-color:#ef4444;transform:scale(1.08)}
       .twgif-pagination{display:flex;align-items:center;justify-content:center;gap:10px;padding:9px 0 0}.twgif-pagination[hidden]{display:none!important}.twgif-page-label{font-size:10px;color:#b7b7c1;min-width:54px;text-align:center}
       .twgif-empty{padding:22px 8px;text-align:center;color:#a8a8b3;font-size:12px}.twgif-empty[hidden]{display:none}
-      #twgif-status{padding:6px 10px 7px;border-top:1px solid #34343b;font-size:10px;color:#aaaab5;overflow-wrap:anywhere;flex-shrink:0}#twgif-status:empty{display:none}#twgif-status[data-type=success]{color:#55d995}#twgif-status[data-type=error]{color:#ff8585}
+      #twgif-status{display:flex;align-items:center;gap:10px;padding:6px 10px 7px;border-top:1px solid #34343b;font-size:10px;color:#aaaab5;overflow-wrap:anywhere;flex-shrink:0;min-height:29px}#twgif-status[data-empty=true]{display:none}#twgif-status-message{flex:1;min-width:0;overflow-wrap:anywhere}#twgif-status[data-type=success]{color:#55d995}#twgif-status[data-type=error]{color:#ff8585}
+       #twgif-progress{--twgif-progress:0;display:inline-flex;align-items:center;gap:4px;flex:0 0 auto;color:#e1c9ff;font-size:10px;font-variant-numeric:tabular-nums;line-height:1}#twgif-progress[hidden]{display:none!important}#twgif-progress svg{display:block;width:18px;height:18px;overflow:visible}#twgif-progress circle{fill:none;stroke-width:3.5}#twgif-progress .twgif-progress-track{stroke:#45414e}#twgif-progress .twgif-progress-value{stroke:#b78cff;stroke-linecap:round;stroke-dasharray:100;stroke-dashoffset:calc(100 - var(--twgif-progress));transform:rotate(-90deg);transform-origin:50% 50%;transition:stroke-dashoffset .12s linear}#twgif-progress[data-indeterminate=true] svg{animation:twgif-progress-spin .8s linear infinite}#twgif-progress[data-indeterminate=true] .twgif-progress-value{stroke-dasharray:28 72;stroke-dashoffset:0}@keyframes twgif-progress-spin{to{transform:rotate(360deg)}}
       .twgif-settings{display:flex;flex-direction:column;gap:7px}.twgif-section{border:1px solid #33333a;border-radius:7px;padding:8px}.twgif-section-title{margin:0 0 7px;font-size:11px;font-weight:700;color:#dddde5}.twgif-help{color:#a8a8b3;font-size:10px;line-height:1.45;margin:5px 0 0}.twgif-help a{color:#bf94ff;text-decoration:none}.twgif-help a:hover{text-decoration:underline}.twgif-field-label{display:block;margin:6px 0 4px;font-size:10px;color:#c8c8d0}.twgif-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.twgif-row>.twgif-input{flex:1 1 145px}.twgif-check-row{display:flex;align-items:center;gap:7px;font-size:11px;color:#dbdbe2;margin:3px 0}.twgif-check-row input{accent-color:#9147ff}
       .twgif-debug-log{display:block;width:100%;min-height:78px;max-height:125px;resize:vertical;background:#0c0c0e;color:#bfc0cb;border:1px solid #36363d;border-radius:5px;padding:6px;font:10px/1.35 ui-monospace,Consolas,monospace}
       .twgif-chat-add{appearance:none!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;vertical-align:middle!important;width:16px!important;height:16px!important;margin:0 0 0 4px!important;padding:0!important;border:1px solid #9147ff70!important;border-radius:4px!important;color:#d7b8ff!important;background:#18181bcc!important;font:700 12px/1 system-ui!important;cursor:pointer!important;opacity:.35;transition:opacity .12s,background .12s!important}.twgif-chat-add:hover{opacity:1!important;background:#9147ff!important;color:#fff!important}
@@ -1731,7 +1869,13 @@
         <button id="twgif-close" class="twgif-head-btn" type="button" title="Закрыть" aria-label="Закрыть">${SVG_CLOSE}</button>
       </div>
       <div id="twgif-panel-body" class="twgif-panel-body"></div>
-      <div id="twgif-status" role="status" aria-live="polite"></div>
+      <div id="twgif-status" data-empty="true" role="status" aria-live="polite">
+      <span id="twgif-status-message"></span>
+      <span id="twgif-progress" hidden data-indeterminate="true" aria-label="Идёт обработка">
+        <svg viewBox="0 0 36 36" aria-hidden="true"><circle class="twgif-progress-track" cx="18" cy="18" r="15.5"></circle><circle class="twgif-progress-value" cx="18" cy="18" r="15.5"></circle></svg>
+        <span id="twgif-progress-label">…</span>
+      </span>
+    </div>
     `;
     document.documentElement.appendChild(panel);
 
@@ -2021,7 +2165,12 @@
     }
 
     const status = document.getElementById('twgif-status');
-    if (status) { status.textContent = lastStatus; status.dataset.type = lastStatusType; }
+    if (status) {
+      const message = status.querySelector('#twgif-status-message');
+      if (message) message.textContent = lastStatus;
+      status.dataset.type = lastStatusType;
+      status.dataset.empty = lastStatus ? 'false' : 'true';
+    }
   }
 
   function renderGallery() {
@@ -2759,7 +2908,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.5.0 started', { href: location.href });
+    logDebug('Userscript v5.6.0 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
