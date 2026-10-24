@@ -477,7 +477,7 @@
     return null;
   }
 
-  async function uploadToKappa(file) {
+  async function uploadToKappa(file, onUploadProgress = null) {
     const endpoints = [KAPPA_UPLOAD_URL, KAPPA_UPLOAD_MIRROR_URL];
     let lastError = null;
     logDebug('Kappa upload start', { name: file.name, size: file.size, type: file.type });
@@ -488,6 +488,15 @@
       form.append('file', file, file.name || 'media');
       const response = await request({
         method: 'POST', url: endpoint, data: form, timeout: 120000, acceptHttpErrors: true,
+        upload: {
+          onprogress: event => {
+            const loaded = Number(event && event.loaded);
+            const total = Number(event && event.total);
+            if (total > 0 && loaded >= 0 && typeof onUploadProgress === 'function') {
+              onUploadProgress(Math.max(0, Math.min(100, loaded / total * 100)));
+            }
+          }
+        },
         headers: { 'Accept': 'application/json' }
       });
       const successfulStatus = response.status >= 200 && response.status < 300;
@@ -1248,7 +1257,10 @@
       // Upload byte progress is not consistently exposed by userscript managers,
       // so keep the ring animated rather than showing a fabricated percentage.
       setProgress(null, true);
-      const uploaded = await uploadToKappa(prepared);
+      const uploaded = await uploadToKappa(prepared, percent => {
+        // Conversion occupies the first 65%; upload occupies the last 35%.
+        setProgress(65 + Math.round(percent * 0.35), true);
+      });
       const ext = fileExtension(prepared);
       const type = ext === 'gif' ? 'gif'
         : ['webm', 'mp4', 'mov', 'mkv', 'avi'].includes(ext) ? 'video' : 'image';
