@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.1.5
+// @version      5.1.6
 // @description  Twitch media gallery with FreeConvert conversion rules, original 7TV links, persistent previews, pagination and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -325,6 +325,17 @@
     catch (_) { throw new Error(`${label}: сервис вернул некорректный JSON.`); }
   }
 
+  function formatGitHubSyncError(error) {
+    const message = String(error?.message || error || 'Неизвестная ошибка');
+    if (/HTTP 401\\b/i.test(message) || /Bad credentials/i.test(message)) {
+      return 'GitHub отклонил токен (401 Bad credentials). Создай новый токен и замени старый: Fine-grained token — разрешение Gists: Read and write; Classic token — scope gist. Затем нажми «Сохранить доступ» и повтори действие.';
+    }
+    if (/HTTP 403\\b/i.test(message)) {
+      return 'GitHub запретил операцию (403). Проверь срок действия токена и разрешение Gists: Read and write (для Classic token — gist).';
+    }
+    return message;
+  }
+
   function makeId() {
     if (globalThis.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
     return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
@@ -611,7 +622,7 @@
       }
     };
 
-    logDebug('FreeConvert job create', { inputFormat, outputFormat, width: maxWidth, isVideo, options, size: file.size });
+    logDebug('FreeConvert job create', { inputFormat, outputFormat, width: maxWidth, isVideo, availableOptions: options, convertOptions, size: file.size });
     setStatus(`Передаю «${file.name || 'медиа'}» в FreeConvert…`, 'info', true);
 
     const createResponse = await request({
@@ -1496,7 +1507,7 @@
     if (syncTimer) clearTimeout(syncTimer);
     syncTimer = setTimeout(() => syncNow().catch(error => {
       logDebug('Automatic Gist sync failed', error);
-      setStatus(`Автосинхронизация: ${error.message || error}`, 'error', true);
+      setStatus(`Автосинхронизация: ${formatGitHubSyncError(error)}`, 'error', true);
     }), 1400);
   }
 
@@ -1816,7 +1827,7 @@
     renderPanelView();
     repositionPanel();
     if (loadConfig().gistToken && loadConfig().gistId) {
-      syncNow().catch(error => setStatus(`Синхронизация: ${error.message || error}`, 'error', true));
+      syncNow().catch(error => setStatus(`Синхронизация: ${formatGitHubSyncError(error)}`, 'error', true));
     }
     logDebug('Panel opened');
   }
@@ -2345,7 +2356,7 @@
     if (settingsTab === 'sync') {
       $('#twgif-save-gist').addEventListener('click', () => {
         saveConfig({ gistToken: $('#twgif-gist-token').value, gistId: $('#twgif-gist-id').value });
-        setStatus('Доступ к Gist сохранён на этом устройстве.', 'success');
+        setStatus('Данные доступа сохранены локально; действительность токена проверится при создании или синхронизации Gist.', 'success', true);
       });
       $('#twgif-create-gist').addEventListener('click', async event => {
         const button = event.currentTarget;
@@ -2360,16 +2371,16 @@
           $('#twgif-gist-id').value = id;
           setStatus(`Gist создан: ${id}. Теперь можно синхронизировать коллекцию и настройки.`, 'success', true);
         } catch (error) {
-          setStatus(`Не удалось создать Gist: ${error.message || error}`, 'error', true);
+          setStatus(`Не удалось создать Gist: ${formatGitHubSyncError(error)}`, 'error', true);
         } finally { button.disabled = false; }
       });
       $('#twgif-sync-now').addEventListener('click', async () => {
         saveConfig({ gistToken: $('#twgif-gist-token').value, gistId: $('#twgif-gist-id').value });
-        try { await syncNow(); } catch (error) { setStatus(`Синхронизация галереи: ${error.message || error}`, 'error', true); }
+        try { await syncNow(); } catch (error) { setStatus(`Синхронизация галереи: ${formatGitHubSyncError(error)}`, 'error', true); }
       });
       $('#twgif-sync-settings').addEventListener('click', async () => {
         saveConfig({ gistToken: $('#twgif-gist-token').value, gistId: $('#twgif-gist-id').value });
-        try { await syncSettingsNow(); } catch (error) { setStatus(`Синхронизация настроек: ${error.message || error}`, 'error', true); }
+        try { await syncSettingsNow(); } catch (error) { setStatus(`Синхронизация настроек: ${formatGitHubSyncError(error)}`, 'error', true); }
       });
     }
 
