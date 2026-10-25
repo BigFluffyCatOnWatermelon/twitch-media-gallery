@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.10
+// @version      5.9.11
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with FFmpeg conversion, tile-aware previews and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -2662,8 +2662,10 @@
         document.querySelector('button[aria-label="toggle settings" i]') || null;
     }
 
+    // On Kick, only search the footer/composer, not the chat header. Otherwise the icon
+    // can accidentally attach to the header gear and float above the input row.
     const region = isKickSite()
-      ? (document.querySelector('#channel-chatroom') || document.querySelector('#chatroom-footer'))
+      ? document.querySelector('#chatroom-footer')
       : (toolbar || input?.closest('form')?.parentElement);
     const inputRect = input?.getBoundingClientRect();
     const selectors = [
@@ -2685,9 +2687,8 @@
           seen.add(element);
           if (!element.isConnected || !element.getClientRects().length || element.closest('#twgif-panel')) continue;
           const rect = element.getBoundingClientRect();
-          // On Kick, ignore gear buttons in the chat header or site-wide page.
-          if (isKickSite() && inputRect &&
-              Math.abs((rect.top + rect.height / 2) - (inputRect.top + inputRect.height / 2)) > 150) continue;
+          // Kick candidates have already been scoped to the chat footer, so don't
+          // accidentally reject controls just because the input and action row differ in height.
           candidates.push(element);
         }
       }
@@ -2721,7 +2722,7 @@
     if (isKickSite()) {
       const footer = document.querySelector('#chatroom-footer');
       const settings = findChatSettingsButton(input, toolbar);
-      if (settings) return settings;
+      if (settings && footer?.contains(settings)) return settings;
       // If Kick's footer has no labelled settings button, stay in its real control row.
       return footer?.querySelector('#send-message-button, button[data-testid*="send" i], button[aria-label*="send" i]') ||
         footer?.querySelector('.ml-auto button') ||
@@ -3941,7 +3942,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.9.10 started', { href: location.href });
+    logDebug('Userscript v5.9.11 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
