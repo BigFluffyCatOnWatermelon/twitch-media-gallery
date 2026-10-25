@@ -2508,13 +2508,18 @@
 
     hideDropsToolbarButtons(toolbar);
     const settingsButton = toolbar.querySelector('[data-a-target="chat-settings-button"], [aria-label*="Chat settings" i], [aria-label*="Настройки чата" i]');
-    const rightGroup = settingsButton?.parentElement || toolbar.querySelector('[class*="buttons-right"]') || toolbar;
+    const settingsWrapper = settingsButton?.parentElement;
+    // Twitch places the "Настройки чата" tooltip inside the same wrapper as its button.
+    // Inserting our trigger into that wrapper widens its box, so Twitch centers the
+    // tooltip between our icon and the settings icon. Insert beside the whole wrapper instead.
+    const hasSettingsTooltip = Boolean(settingsWrapper?.querySelector('[data-a-target="tw-tooltip-label"], [role="tooltip"], .tw-tooltip'));
+    const settingsAnchor = hasSettingsTooltip ? settingsWrapper : settingsButton;
+    const rightGroup = settingsAnchor?.parentElement || toolbar.querySelector('[class*="buttons-right"]') || toolbar;
 
-    // Keep a little space from chat settings so its hover tooltip does not overlap our icon.
-    if (settingsButton && settingsButton.parentElement === rightGroup) {
-      if (button.parentElement !== rightGroup || button.nextElementSibling !== settingsButton) {
-        rightGroup.insertBefore(button, settingsButton);
-        logDebug('Picker button mounted left of chat settings', { toolbar: toolbar.className, group: rightGroup.className });
+    if (settingsAnchor && settingsAnchor.parentElement === rightGroup) {
+      if (button.parentElement !== rightGroup || button.nextElementSibling !== settingsAnchor) {
+        rightGroup.insertBefore(button, settingsAnchor);
+        logDebug('Picker button mounted before chat settings tooltip wrapper', { toolbar: toolbar.className, group: rightGroup.className, tooltipWrapper: hasSettingsTooltip });
       }
     } else if (button.parentElement !== rightGroup) {
       rightGroup.insertBefore(button, rightGroup.firstChild);
