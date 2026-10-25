@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.2
-// @description  Twitch media gallery with cached FFmpeg.wasm media conversion, original 7TV links, persistent previews, pagination and Gist settings sync.
+// @version      5.9.3
+// @description  Twitch media gallery with cached FFmpeg.wasm conversion for files and URLs, original 7TV links, tile-aware previews and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @match        https://www.twitch.tv/*
@@ -19,6 +19,7 @@
 // @connect      7tv.app
 // @connect      cdn.7tv.app
 // @connect      cdn.jsdelivr.net
+// @connect      *
 // ==/UserScript==
 
 (() => {
@@ -38,7 +39,7 @@
   const FFMPEG_CORE_BASE_URL = `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/umd`;
   const FFMPEG_CACHE_DB = 'twgif-ffmpeg-assets-v1';
   const SETTINGS_FILENAME = 'twitch-gif-gallery-settings.json';
-  const SETTINGS_SCHEMA_VERSION = 7;
+  const SETTINGS_SCHEMA_VERSION = 8;
 
   let panelView = 'gallery';
   let settingsTab = 'general';
@@ -97,6 +98,7 @@
     tileView: 'masonry',
     pageSize: 100,
     previewMaxSize: 1920,
+    previewTileBoost: 5,
     conversionRules: { image: 'webp', gif: 'keep', video: 'webp' },
     compression: {
       imageQuality: 82,
@@ -219,6 +221,7 @@
       tileView: raw.tileView === 'grid' ? 'grid' : 'masonry',
       pageSize: clampInt(raw.pageSize ?? 100, 10, 500, 100),
       previewMaxSize: clampInt(raw.previewMaxSize ?? defaults.previewMaxSize, 480, 4000, defaults.previewMaxSize),
+      previewTileBoost: clampInt(raw.previewTileBoost ?? defaults.previewTileBoost, 0, 100, defaults.previewTileBoost),
       conversionRules: {
         image: cleanTarget('image', rules.image ?? defaults.conversionRules.image),
         gif: cleanTarget('gif', rules.gif ?? defaults.conversionRules.gif),
@@ -261,6 +264,7 @@
       tileView: (next.tileView ?? current.tileView) === 'grid' ? 'grid' : 'masonry',
       pageSize: clampInt(next.pageSize ?? current.pageSize, 10, 500, defaults.pageSize),
       previewMaxSize: clampInt(next.previewMaxSize ?? current.previewMaxSize, 480, 4000, defaults.previewMaxSize),
+      previewTileBoost: clampInt(next.previewTileBoost ?? current.previewTileBoost, 0, 100, defaults.previewTileBoost),
       conversionRules: rules,
       compression,
       gistToken: String(next.gistToken ?? current.gistToken).trim(),
@@ -508,23 +512,49 @@
     });
   }
 
-  function requestBlob(url, timeout = 120000) {
+  function requestBlob(url, timeout = 120000, trackForCancel = false) {
     return new Promise((resolve, reject) => {
-      GM_xmlhttpRequest({
+      let xhr = null;
+      const clearTrackedRequest = () => {
+        if (trackForCancel && activeUploadRequest === xhr) activeUploadRequest = null;
+      };
+      xhr = GM_xmlhttpRequest({
         method: 'GET', url, responseType: 'blob', timeout,
         onload: response => {
+          clearTrackedRequest();
           if (response.status < 200 || response.status >= 300) {
-            reject(new Error(`Не удалось скачать результат конвертации (HTTP ${response.status}).`));
+            reject(new Error(`Не удалось скачать медиа по ссылке (HTTP ${response.status}).`));
             return;
           }
-          const blob = response.response instanceof Blob
+          const headerMime = String(response.responseHeaders?.match(/content-type:\s*([^;\\r\\n]+)/i)?.[1] || '').trim().toLowerCase();
+          const receivedBlob = response.response instanceof Blob
             ? response.response
-            : new Blob([response.response], { type: response.responseHeaders?.match(/content-type:\s*([^;\r\n]+)/i)?.[1] || 'application/octet-stream' });
+            : new Blob([response.response], { type: headerMime || 'application/octet-stream' });
+          const receivedMime = String(receivedBlob.type || '').trim().toLowerCase();
+          const mime = /^(image|video)\\//i.test(headerMime)
+            ? headerMime
+            : (receivedMime || headerMime || 'application/octet-stream');
+          const blob = receivedBlob.type === mime
+            ? receivedBlob
+            : new Blob([receivedBlob], { type: mime });
           resolve(blob);
         },
-        onerror: () => reject(new Error('Не удалось скачать файл после конвертации.')),
-        ontimeout: () => reject(new Error('Истекло время скачивания результата конвертации.'))
+        onerror: () => {
+          clearTrackedRequest();
+          reject(new Error('Не удалось скачать медиа по ссылке.'));
+        },
+        ontimeout: () => {
+          clearTrackedRequest();
+          reject(new Error('Истекло время скачивания медиа по ссылке.'));
+        },
+        onabort: () => {
+          clearTrackedRequest();
+          const error = new Error('Загрузка медиа по ссылке отменена.');
+          error.name = 'AbortError';
+          reject(error);
+        }
       });
+      if (trackForCancel) activeUploadRequest = xhr;
     });
   }
 
@@ -1454,29 +1484,141 @@
     }
   }
 
-  async function addUrl(rawUrl, customName = '') {
+  function is7TVUrl(url) {
+    return Boolean(url && /(^|\\.)7tv\\.(?:app|io)$/i.test(url.hostname));
+  }
+
+  function mediaTypeFromMime(mime) {
+    const normalized = String(mime || '').toLowerCase();
+    if (normalized.startsWith('video/')) return 'video';
+    if (normalized === 'image/gif') return 'gif';
+    return 'image';
+  }
+
+  function sourceNameFromUrl(rawUrl) {
+    try {
+      const parsed = new URL(rawUrl);
+      const lastSegment = parsed.pathname.split('/').filter(Boolean).pop() || parsed.hostname || 'media';
+      try { return decodeURIComponent(lastSegment).slice(0, 120); }
+      catch (_) { return lastSegment.slice(0, 120); }
+    } catch (_) {
+      return 'media';
+    }
+  }
+
+  function createLinkedMediaFile(rawUrl, blob, nameHint = '') {
+    const parsed = new URL(rawUrl);
+    const sourceName = sourceNameFromUrl(rawUrl);
+    const contentMime = String(blob.type || '').split(';')[0].trim().toLowerCase();
+    const pathMime = mimeFromFile({ name: sourceName, type: '' });
+    const mime = /^(image|video)\\//i.test(contentMime) ? contentMime : pathMime;
+    if (!mime || (!mime.startsWith('image/') && !mime.startsWith('video/'))) {
+      throw new Error('По ссылке не найден прямой файл изображения, GIF или видео. Нужна ссылка непосредственно на медиафайл, а не на страницу сайта.');
+    }
+
+    let name = String(nameHint || sourceName || parsed.hostname || 'media')
+      .trim()
+      .replace(/[<>:"/\\\\|?*\\u0000-\\u001f]+/g, '_')
+      .slice(0, 120) || 'media';
+    const extensionMatch = name.match(/\\.([a-z0-9]{1,8})$/i);
+    const nameMime = mimeFromFile({ name, type: '' });
+    const mimeExtension = getExtension(mime, '');
+    if (!extensionMatch) {
+      name += mimeExtension;
+    } else if (mimeExtension !== '.bin' && nameMime !== mime) {
+      name = name.replace(/\\.[^.]+$/, '') + mimeExtension;
+    }
+    return new File([blob], name, { type: mime, lastModified: Date.now() });
+  }
+
+  async function addUrl(rawUrl, customName = '', runId = null) {
     const text = String(rawUrl || '').trim().replace(/^<|>$/g, '');
     let parsed;
     try { parsed = new URL(text); }
     catch (_) { throw new Error('Вставь прямую ссылку на медиа или ссылку 7TV вида https://7tv.app/emotes/ID.'); }
     if (!['https:', 'http:'].includes(parsed.protocol)) throw new Error('Разрешены только HTTP- и HTTPS-ссылки.');
+    ensureProcessingRun(runId);
 
-    // Keep the user's original 7TV page URL as the item/link inserted into chat.
-    // Resolve a CDN URL only for the gallery preview.
     const originalUrl = parsed.toString();
-    const sevenTv = parse7TVEmoteId(parsed) ? await resolve7TVEmote(parsed) : null;
-    const previewUrl = sevenTv ? sevenTv.url : originalUrl;
-    const type = sevenTv ? sevenTv.type : mediaTypeFromUrl(originalUrl);
-    if (type !== 'video') await waitForImage(previewUrl);
-
-    let name = String(customName || '').trim();
-    if (!name && sevenTv) name = sevenTv.name;
-    if (!name) {
-      try { name = decodeURIComponent(new URL(originalUrl).pathname.split('/').filter(Boolean).pop() || new URL(originalUrl).hostname).slice(0, 120); }
-      catch (_) { name = 'Медиафайл'; }
+    const sourceKey = 'url:' + originalUrl;
+    const alreadyAdded = loadData().items.some(item =>
+      item.url === originalUrl || item.previewUrl === originalUrl || item.sourceKey === sourceKey
+    );
+    if (alreadyAdded) {
+      setStatus('Это медиа уже есть в галерее.', 'info');
+      return false;
     }
 
-    return addItem(originalUrl, name, type, '', previewUrl);
+    // 7TV page links remain the original chat link; all 7TV CDN links also bypass conversion.
+    const sevenTvHost = is7TVUrl(parsed);
+    const sevenTv = parse7TVEmoteId(parsed) ? await resolve7TVEmote(parsed) : null;
+    ensureProcessingRun(runId);
+    const hintedName = String(customName || '').trim() || (sevenTv && sevenTv.name) || sourceNameFromUrl(originalUrl);
+
+    if (sevenTvHost) {
+      const previewUrl = sevenTv ? sevenTv.url : originalUrl;
+      const type = sevenTv ? sevenTv.type : mediaTypeFromUrl(originalUrl);
+      if (type !== 'video') await waitForImage(previewUrl);
+      ensureProcessingRun(runId);
+      return addItem(originalUrl, hintedName, type, '', previewUrl);
+    }
+
+    // If the URL clearly identifies a type whose rule is "keep", keep the remote URL
+    // without downloading/re-uploading it. Unknown/extensionless URLs are inspected below.
+    const pathName = sourceNameFromUrl(originalUrl);
+    const pathMime = mimeFromFile({ name: pathName, type: '' });
+    if (pathMime) {
+      const pathCategory = mediaTypeFromMime(pathMime);
+      const config = loadConfig();
+      if ((config.conversionRules[pathCategory] || 'keep') === 'keep') {
+        const type = mediaTypeFromMime(pathMime);
+        if (type !== 'video') await waitForImage(originalUrl);
+        ensureProcessingRun(runId);
+        return addItem(originalUrl, hintedName, type, sourceKey, originalUrl);
+      }
+    }
+
+    setStatus('Скачиваю медиа по ссылке для обработки…', 'info', true);
+    setProgress(0, true);
+    const blob = await requestBlob(originalUrl, 180000, true);
+    ensureProcessingRun(runId);
+    if (!blob || !blob.size) throw new Error('Ссылка вернула пустой файл.');
+    if (blob.size > MAX_FILE_BYTES) throw new Error('Файл больше ' + formatBytes(MAX_FILE_BYTES) + '. Используй ссылку на файл меньшего размера.');
+
+    const file = createLinkedMediaFile(originalUrl, blob, hintedName);
+    const mime = mimeFromFile(file);
+    const category = mediaTypeFromMime(mime);
+    const type = mediaTypeFromMime(mime);
+    const config = loadConfig();
+    const target = config.conversionRules[category] || 'keep';
+
+    if (target === 'keep') {
+      if (type !== 'video') await waitForImage(originalUrl);
+      ensureProcessingRun(runId);
+      setProgress(100, true);
+      finishProgress(700);
+      return addItem(originalUrl, hintedName || file.name, type, sourceKey, originalUrl);
+    }
+
+    setStatus('Конвертирую медиа по ссылке: ' + file.name + '…', 'info', true);
+    setProgress(8, true);
+    const prepared = await prepareUpload(file, runId);
+    ensureProcessingRun(runId);
+    setProgress(65, true);
+    setStatus('Загружаю обработанное медиа на kappa.lol…', 'info', true);
+    setProgress(null, true);
+    const uploaded = await uploadToKappa(prepared, percent => {
+      setProgress(65 + Math.round(percent * 0.35), true);
+    }, runId);
+    ensureProcessingRun(runId);
+
+    const ext = fileExtension(prepared);
+    const outputType = ext === 'gif' ? 'gif'
+      : ['webm', 'mp4', 'mov', 'mkv', 'avi', 'ogv', 'mpg', 'mpeg'].includes(ext) ? 'video' : 'image';
+    const added = addItem(uploaded.url, prepared.name || hintedName || file.name, outputType, sourceKey, uploaded.url);
+    setProgress(100, true);
+    finishProgress(1000);
+    return added;
   }
 
   function fileFingerprint(file) {
@@ -1930,6 +2072,7 @@
       tileView: config.tileView,
       pageSize: config.pageSize,
       previewMaxSize: config.previewMaxSize,
+      previewTileBoost: config.previewTileBoost,
       conversionRules: { ...config.conversionRules },
       compression: { ...config.compression },
       debug: config.debug,
@@ -2013,9 +2156,13 @@
         gif: remote.conversionRules?.gif || 'keep',
         video: remote.conversionRules?.video || 'webp'
       };
-      if (!['keep', 'webp', 'png', 'jpg'].includes(migratedRules.image)) migratedRules.image = 'webp';
-      if (migratedRules.gif !== 'keep') migratedRules.gif = 'keep';
-      if (!['keep', 'webp'].includes(migratedRules.video)) migratedRules.video = 'webp';
+      // Only older schemas used the restricted conversion choices below.
+      // Schema 7 already supports all formats, so preserve those settings in v8.
+      if (remoteSchemaVersion < 7) {
+        if (!['keep', 'webp', 'png', 'jpg'].includes(migratedRules.image)) migratedRules.image = 'webp';
+        if (migratedRules.gif !== 'keep') migratedRules.gif = 'keep';
+        if (!['keep', 'webp'].includes(migratedRules.video)) migratedRules.video = 'webp';
+      }
 
       const migratedSettingsUpdatedAt = Date.now();
       saveConfig({
@@ -2569,35 +2716,52 @@
     const urlInput = body.querySelector('#twgif-url-input');
     const addButton = body.querySelector('#twgif-add-url');
     const addLink = async () => {
-      const links = urlInput.value.trim().split(/\s+/).filter(Boolean);
+      const links = urlInput.value.trim().split(/\\s+/).filter(Boolean);
       if (!links.length) { urlInput.focus(); return; }
+      if (activeProcessingRunId) {
+        setStatus('Уже выполняется обработка. Дождись завершения или отмени её значком стоп у кольца прогресса.', 'info', true);
+        return;
+      }
+
+      const runId = ++processingRunId;
+      activeProcessingRunId = runId;
+      setProgressCancelable(true);
       addButton.disabled = true;
       let added = 0;
       let skipped = 0;
       const failures = [];
       try {
         for (let i = 0; i < links.length; i++) {
+          if (!isProcessingRunCurrent(runId)) break;
           const link = links[i];
           setStatus(`Добавляю ссылки: ${i + 1} из ${links.length}…`, 'info', true);
           try {
-            if (await addUrl(link)) added++;
+            if (await addUrl(link, '', runId)) added++;
             else skipped++;
           } catch (error) {
+            if (error?.name === 'AbortError' || !isProcessingRunCurrent(runId)) break;
             failures.push(`${link}: ${error.message || error}`);
             logDebug('Bulk URL add failed', { link, error: error.message || error });
           }
         }
-        urlInput.value = '';
-        urlInput.focus();
-        const summary = `Добавлено: ${added}; уже есть: ${skipped}; ошибок: ${failures.length}.`;
-        setStatus(failures.length
-          ? summary + ' ' + failures.slice(0, 2).join(' | ')
-          : summary, failures.length ? 'error' : 'success', true);
+        if (isProcessingRunCurrent(runId)) {
+          urlInput.value = '';
+          urlInput.focus();
+          const summary = `Добавлено: ${added}; уже есть: ${skipped}; ошибок: ${failures.length}.`;
+          setStatus(failures.length
+            ? summary + ' ' + failures.slice(0, 2).join(' | ')
+            : summary, failures.length ? 'error' : 'success', true);
+        }
       } finally {
+        if (activeProcessingRunId === runId) {
+          activeProcessingRunId = 0;
+          setProgressCancelable(false);
+        }
         addButton.disabled = false;
       }
     };
     addButton.addEventListener('click', addLink);
+
     body.querySelectorAll('.twgif-gallery-tab').forEach(button => {
       button.addEventListener('click', () => {
         galleryTab = ['7tv', 'favorites'].includes(button.dataset.galleryTab) ? button.dataset.galleryTab : 'all';
@@ -2768,9 +2932,12 @@
   function positionHoldPreview(holder, card, media, config = loadConfig()) {
     if (!holder || !card || !media) return;
     const cardRect = card.getBoundingClientRect();
+    const tileMedia = card.querySelector('.twgif-media');
+    const tileRect = tileMedia ? tileMedia.getBoundingClientRect() : cardRect;
     const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
     const viewportHeight = Math.max(1, document.documentElement.clientHeight || innerHeight);
     const maxDimension = clampInt(config.previewMaxSize ?? 1920, 480, 4000, 1920);
+    const tileBoost = 1 + clampInt(config.previewTileBoost ?? 5, 0, 100, 5) / 100;
     const isVideo = media.tagName === 'VIDEO';
     const nativeWidth = Number(isVideo ? media.videoWidth : media.naturalWidth) || 0;
     const nativeHeight = Number(isVideo ? media.videoHeight : media.naturalHeight) || 0;
@@ -2778,15 +2945,24 @@
     let height;
 
     if (nativeWidth > 0 && nativeHeight > 0) {
-      const scale = Math.min(1, maxDimension / Math.max(nativeWidth, nativeHeight),
+      const maxScale = Math.min(maxDimension / Math.max(nativeWidth, nativeHeight),
         (viewportWidth - 16) / nativeWidth, (viewportHeight - 16) / nativeHeight);
+      const nativeScale = Math.min(1, maxScale);
+      // When the original is tiny, the gallery may upscale it to fit its tile.
+      // Match that on-screen size and add the configured extra percentage.
+      const tileScale = tileRect.width > 0 && tileRect.height > 0
+        ? Math.min(tileRect.width / nativeWidth, tileRect.height / nativeHeight)
+        : 0;
+      const minimumTileScale = tileScale > 0 ? tileScale * tileBoost : nativeScale;
+      const scale = Math.min(maxScale, Math.max(nativeScale, minimumTileScale));
       width = Math.max(1, Math.round(nativeWidth * scale));
       height = Math.max(1, Math.round(nativeHeight * scale));
     } else {
       const fallbackRatio = cardRect.width > 0 && cardRect.height > 0 ? cardRect.height / cardRect.width : 0.75;
       width = Math.min(maxDimension, viewportWidth - 16, Math.max(180, cardRect.width * 3));
       height = width * fallbackRatio;
-      const scale = Math.min(1, (viewportWidth - 16) / width, (viewportHeight - 16) / height);
+      const scale = Math.min(tileBoost, maxDimension / Math.max(width, height),
+        (viewportWidth - 16) / width, (viewportHeight - 16) / height);
       width = Math.max(1, Math.round(width * scale));
       height = Math.max(1, Math.round(height * scale));
     }
@@ -3105,7 +3281,9 @@
             <input id="twgif-page-size" class="twgif-input" type="number" min="10" max="500" step="10" value="${config.pageSize}">
             <label class="twgif-field-label" for="twgif-preview-max-size">Максимальный размер предпросмотра (px)</label>
             <input id="twgif-preview-max-size" class="twgif-input" type="number" min="480" max="4000" step="100" value="${config.previewMaxSize}">
-            <div class="twgif-help">Предпросмотр отображается в исходном разрешении. Если оригинал больше заданного максимума или экрана, он уменьшается без увеличения сверх оригинала.</div>
+            <label class="twgif-field-label" for="twgif-preview-tile-boost">Увеличение превью относительно плитки (%)</label>
+            <input id="twgif-preview-tile-boost" class="twgif-input" type="number" min="0" max="100" step="1" value="${config.previewTileBoost}">
+            <div class="twgif-help">Если исходник маленький, при зажатии кнопки превью будет минимум на указанный процент крупнее его изображения в плитке. Максимальный размер и границы экрана соблюдаются.</div>
             <div class="twgif-row" style="margin-top:8px">
               <button id="twgif-save-gallery-settings" class="twgif-small-btn twgif-primary" type="button">Применить</button>
               <button id="twgif-reset-defaults" class="twgif-small-btn" type="button">Настройки по умолчанию</button>
@@ -3202,7 +3380,8 @@
           mediaScale: $('#twgif-media-scale').value,
           tileView: $('#twgif-tile-view').value,
           pageSize: $('#twgif-page-size').value,
-          previewMaxSize: $('#twgif-preview-max-size').value
+          previewMaxSize: $('#twgif-preview-max-size').value,
+          previewTileBoost: $('#twgif-preview-tile-boost').value
         });
         galleryPage = 0;
         setStatus('Настройки галереи сохранены.', 'success');
@@ -3426,7 +3605,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.9.2 started', { href: location.href });
+    logDebug('Userscript v5.9.3 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
