@@ -3340,7 +3340,7 @@
             <label class="twgif-field-label" for="twgif-page-size">Медиа на странице (10–500)</label>
             <input id="twgif-page-size" class="twgif-input" type="number" min="10" max="500" step="10" value="${config.pageSize}">
             <label class="twgif-field-label" for="twgif-preview-max-size">Максимальный размер предпросмотра (px)</label>
-            <input id="twgif-preview-max-size" class="twgif-input" type="number" min="480" max="4000" step="100" value="${config.previewMaxSize}">
+            <input id="twgif-preview-max-size" class="twgif-input" type="number" min="10" max="4000" step="1" value="${config.previewMaxSize}">
             <label class="twgif-field-label" for="twgif-preview-tile-boost">Увеличение превью относительно плитки (%)</label>
             <input id="twgif-preview-tile-boost" class="twgif-input" type="number" min="0" max="100" step="1" value="${config.previewTileBoost}">
             <div class="twgif-help">Если исходник маленький, при зажатии кнопки превью будет минимум на указанный процент крупнее его изображения в плитке. Максимальный размер и границы экрана соблюдаются.</div>
