@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.4
+// @version      5.9.5
 // @description  Twitch media gallery with cached FFmpeg.wasm conversion for files and URLs, original 7TV links, tile-aware previews and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -2286,7 +2286,7 @@
     const style = document.createElement('style');
     style.id = 'twgif-style';
     style.textContent = `
-      #twgif-trigger{appearance:none!important;border:0!important;background:transparent!important;color:var(--color-text-base,#efeff1)!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important;margin:0 8px 0 2px!important;padding:0!important;align-self:center!important;vertical-align:middle!important;box-sizing:border-box!important;position:relative!important;top:0!important;transform:none!important;border-radius:var(--border-radius-medium,4px)!important;cursor:pointer!important;line-height:1!important}
+      #twgif-trigger{appearance:none!important;border:0!important;background:transparent!important;color:var(--color-text-base,#efeff1)!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important;margin:0!important;padding:0!important;align-self:center!important;vertical-align:middle!important;box-sizing:border-box!important;position:fixed!important;left:var(--twgif-trigger-left,0px)!important;top:var(--twgif-trigger-top,0px)!important;z-index:2147482500!important;transform:none!important;border-radius:var(--border-radius-medium,4px)!important;cursor:pointer!important;line-height:1!important}
       #twgif-trigger:hover,#twgif-trigger[aria-expanded=true]{background:var(--color-background-button-text-hover,#2b2b2f)!important;color:var(--color-text-link,#bf94ff)!important}
       #twgif-trigger svg{display:block;width:20px;height:20px;flex:0 0 20px;align-self:center;pointer-events:none}
       #twgif-panel{position:fixed!important;top:8px;left:8px;bottom:auto;z-index:2147483000!important;width:400px;max-width:calc(100vw - 16px);max-height:68vh;display:flex;flex-direction:column;overflow:hidden;color:#efeff1;background:#18181b;border:1px solid #34343b;border-radius:10px;box-shadow:0 10px 34px #0009;font:13px/1.4 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-sizing:border-box;pointer-events:auto}
@@ -2495,6 +2495,34 @@
     }
   }
 
+  function positionTriggerNearSettings(settingsButton, button = activeTrigger) {
+    if (!settingsButton || !button || !settingsButton.isConnected) return;
+    const rect = settingsButton.getBoundingClientRect();
+    const size = 32;
+    const gap = 8;
+    const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
+    const viewportHeight = Math.max(1, document.documentElement.clientHeight || innerHeight);
+    const left = Math.max(4, Math.min(viewportWidth - size - 4, rect.left - size - gap));
+    const top = Math.max(4, Math.min(viewportHeight - size - 4, rect.top + (rect.height - size) / 2));
+    button.style.setProperty('--twgif-trigger-left', Math.round(left) + 'px');
+    button.style.setProperty('--twgif-trigger-top', Math.round(top) + 'px');
+  }
+
+  function findChatSettingsButton(toolbar) {
+    return toolbar?.querySelector('[data-a-target="chat-settings-button"], [aria-label*="Chat settings" i], [aria-label*="Настройки чата" i]') || null;
+  }
+
+  function repositionTrigger() {
+    const button = document.getElementById('twgif-trigger');
+    if (!button) return;
+    const input = getChatInput();
+    const toolbar = input && getToolbar(input);
+    if (!toolbar) return;
+    hideDropsToolbarButtons(toolbar);
+    const settingsButton = findChatSettingsButton(toolbar);
+    if (settingsButton) positionTriggerNearSettings(settingsButton, button);
+  }
+
   function ensureTrigger() {
     const input = getChatInput();
     if (!input) return false;
@@ -2507,23 +2535,21 @@
     activeTrigger = button;
 
     hideDropsToolbarButtons(toolbar);
-    const settingsButton = toolbar.querySelector('[data-a-target="chat-settings-button"], [aria-label*="Chat settings" i], [aria-label*="Настройки чата" i]');
-    const settingsWrapper = settingsButton?.parentElement;
-    // Twitch places the "Настройки чата" tooltip inside the same wrapper as its button.
-    // Inserting our trigger into that wrapper widens its box, so Twitch centers the
-    // tooltip between our icon and the settings icon. Insert beside the whole wrapper instead.
-    const hasSettingsTooltip = Boolean(settingsWrapper?.querySelector('[data-a-target="tw-tooltip-label"], [role="tooltip"], .tw-tooltip'));
-    const settingsAnchor = hasSettingsTooltip ? settingsWrapper : settingsButton;
-    const rightGroup = settingsAnchor?.parentElement || toolbar.querySelector('[class*="buttons-right"]') || toolbar;
+    const settingsButton = findChatSettingsButton(toolbar);
 
-    if (settingsAnchor && settingsAnchor.parentElement === rightGroup) {
-      if (button.parentElement !== rightGroup || button.nextElementSibling !== settingsAnchor) {
-        rightGroup.insertBefore(button, settingsAnchor);
-        logDebug('Picker button mounted before chat settings tooltip wrapper', { toolbar: toolbar.className, group: rightGroup.className, tooltipWrapper: hasSettingsTooltip });
-      }
-    } else if (button.parentElement !== rightGroup) {
-      rightGroup.insertBefore(button, rightGroup.firstChild);
-      logDebug('Picker button mounted in chat toolbar', { toolbar: toolbar.className, group: rightGroup.className });
+    if (settingsButton) {
+      // Keep the extension visually left of the settings button but outside Twitch's
+      // flex layout. Its width can no longer shift Twitch's native tooltip anchor.
+      if (button.parentElement !== document.body) document.body.appendChild(button);
+      positionTriggerNearSettings(settingsButton, button);
+      logDebug('Picker button positioned independently of chat settings tooltip', {
+        toolbar: toolbar.className,
+        settingsButton: settingsButton.getAttribute('data-a-target') || settingsButton.getAttribute('aria-label') || settingsButton.className
+      });
+    } else {
+      // Fallback for Twitch layouts that do not expose a recognizable settings button.
+      const rightGroup = toolbar.querySelector('[class*="buttons-right"]') || toolbar;
+      if (button.parentElement !== rightGroup) rightGroup.insertBefore(button, rightGroup.firstChild);
     }
     return true;
   }
@@ -2533,12 +2559,23 @@
     ensureQueued = true;
     requestAnimationFrame(() => {
       ensureQueued = false;
-      if (!document.getElementById('twgif-trigger')?.isConnected) ensureTrigger();
-      else if (activeTrigger && activeTrigger.parentElement) {
-        const input = getChatInput();
-        const toolbar = input && getToolbar(input);
-        if (toolbar) hideDropsToolbarButtons(toolbar);
-        if (toolbar && !toolbar.contains(activeTrigger)) ensureTrigger();
+      const button = document.getElementById('twgif-trigger');
+      if (!button?.isConnected) {
+        ensureTrigger();
+        return;
+      }
+
+      const input = getChatInput();
+      const toolbar = input && getToolbar(input);
+      if (toolbar) {
+        hideDropsToolbarButtons(toolbar);
+        const settingsButton = findChatSettingsButton(toolbar);
+        if (settingsButton) {
+          if (button.parentElement !== document.body) document.body.appendChild(button);
+          positionTriggerNearSettings(settingsButton, button);
+        } else if (!toolbar.contains(button)) {
+          ensureTrigger();
+        }
       }
     });
   }
@@ -3591,6 +3628,7 @@
   });
 
   window.addEventListener('resize', () => {
+    repositionTrigger();
     repositionPanel();
     if (holdPreviewItem) {
       const holder = document.getElementById('twgif-hold-preview');
@@ -3599,7 +3637,8 @@
       }
     }
   }, { passive: true });
-  // Deliberately do not reposition on scroll: the popup stays fixed where it was opened.
+  window.addEventListener('scroll', repositionTrigger, { capture: true, passive: true });
+  // The popup stays fixed where it was opened; only the toolbar icon follows Twitch layout changes.
 
   function installObservers() {
     if (observer) observer.disconnect();
@@ -3628,7 +3667,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.9.4 started', { href: location.href });
+    logDebug('Userscript v5.9.5 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
