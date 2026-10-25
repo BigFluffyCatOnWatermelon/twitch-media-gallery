@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.7
+// @version      5.9.8
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with FFmpeg conversion, tile-aware previews and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -2530,10 +2530,22 @@
         input?.closest('[data-a-target="chat-input-container"]')?.parentElement?.parentElement ||
         input?.parentElement?.parentElement?.parentElement || document.body;
     }
+
+    // Prefer the full chat panel over inner composer/input containers, whose width
+    // can be much smaller than the actual chat column.
+    const panelSelectors = [
+      '[data-testid*="chat-panel" i]', '[data-testid*="chat-room" i]',
+      '[data-testid*="chat-container" i]', '[id*="chat-panel" i]',
+      '[id*="chat-room" i]', '[class*="chat-room" i]', '[class*="chatroom" i]',
+      '[class*="chat-panel" i]', '[class*="chat-container" i]',
+      '[class*="chat-sidebar" i]', '[class*="chat-window" i]'
+    ];
+    for (const selector of panelSelectors) {
+      const panel = input?.closest(selector);
+      if (panel && panel !== document.body) return panel;
+    }
     return input?.closest(
-      '[data-testid*="chat" i], [data-a-target*="chat" i], [id*="chat" i], ' +
-      '[class*="chat-room" i], [class*="chatroom" i], [class*="chat-panel" i], ' +
-      '[class*="chat-container" i], [class*="chat-sidebar" i], [class*="chat" i]'
+      '[data-testid*="chat" i], [data-a-target*="chat" i], [id*="chat" i], [class*="chat" i]'
     ) || input?.closest('form')?.parentElement?.parentElement ||
       input?.parentElement?.parentElement || document.body;
   }
@@ -2611,15 +2623,55 @@
     button.style.setProperty('--twgif-trigger-top', Math.round(top) + 'px');
   }
 
-  function findChatSettingsButton(toolbar) {
-    if (!toolbar) return null;
+  function findChatSettingsButton(input, toolbar) {
+    if (!input && !toolbar) return null;
     if (isTwitchSite()) {
-      return toolbar.querySelector('[data-a-target="chat-settings-button"], [aria-label*="Chat settings" i], [aria-label*="Настройки чата" i]');
+      return toolbar?.querySelector('[data-a-target="chat-settings-button"], [aria-label*="Chat settings" i], [aria-label*="Настройки чата" i]') || null;
     }
-    return toolbar.querySelector(
-      'button[data-testid*="settings" i], button[aria-label*="settings" i], button[title*="settings" i], ' +
-      'button[aria-label*="настрой" i], button[title*="настрой" i], [data-testid*="chat-settings" i]'
-    );
+
+    const host = String(location.hostname || '').toLowerCase();
+    const selectors = host.endsWith('w.tv')
+      ? ['button[data-testid="chat-options-button"]', 'button[aria-label="toggle settings" i]']
+      : [
+          'button[data-testid*="chat-settings" i]',
+          'button[data-testid*="settings" i]',
+          'button[aria-label*="chat settings" i]',
+          'button[aria-label*="settings" i]',
+          'button[title*="settings" i]',
+          'button[aria-label*="настрой" i]',
+          'button[title*="настрой" i]'
+        ];
+
+    const inputRect = input?.getBoundingClientRect();
+    const region = input ? getChatRegion(input) : null;
+    const roots = [toolbar, input?.closest('form'), region, document].filter(Boolean);
+    const seen = new Set();
+    const candidates = [];
+    for (const root of roots) {
+      for (const selector of selectors) {
+        for (const element of root.querySelectorAll(selector)) {
+          if (seen.has(element)) continue;
+          seen.add(element);
+          if (!element.isConnected || !element.getClientRects().length || element.closest('#twgif-panel')) continue;
+          candidates.push(element);
+        }
+      }
+      if (candidates.length && root === region) break;
+    }
+    if (!candidates.length) return null;
+    if (!inputRect) return candidates[0];
+
+    // Pick the settings/overflow control visually nearest to the chat composer.
+    // This avoids accidentally anchoring to player or site-wide settings buttons.
+    const score = element => {
+      const rect = element.getBoundingClientRect();
+      const centerY = rect.top + rect.height / 2;
+      const centerX = rect.left + rect.width / 2;
+      const inputY = inputRect.top + inputRect.height / 2;
+      return Math.abs(centerY - inputY) * 2 + Math.abs(centerX - inputRect.right);
+    };
+    candidates.sort((a, b) => score(a) - score(b));
+    return candidates[0] || null;
   }
 
   function findChatSendButton(input, toolbar) {
@@ -2633,7 +2685,7 @@
 
   function positionTriggerForSite(input, toolbar, button = activeTrigger) {
     if (!input || !button || !input.isConnected) return;
-    const anchor = findChatSettingsButton(toolbar) || findChatSendButton(input, toolbar);
+    const anchor = findChatSettingsButton(input, toolbar) || findChatSendButton(input, toolbar);
     if (anchor && anchor !== input && anchor !== button && anchor.isConnected) {
       positionTriggerNearSettings(anchor, button);
       return;
@@ -2727,7 +2779,7 @@
       : { left: 0, right: innerWidth, width: innerWidth };
     const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
     const viewportHeight = Math.max(1, document.documentElement.clientHeight || innerHeight);
-    const availableWidth = Math.max(1, Math.min(420, regionRect.width - 16, viewportWidth - 16));
+    const availableWidth = Math.max(1, Math.min(regionRect.width - 16, viewportWidth - 16));
     panel.style.position = 'fixed';
     panel.style.width = String(availableWidth) + 'px';
 
@@ -3800,7 +3852,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.9.7 started', { href: location.href });
+    logDebug('Userscript v5.9.8 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
