@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.11
+// @version      5.9.12
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with FFmpeg conversion, tile-aware previews and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -2395,6 +2395,12 @@
       .twgif-gallery-tab:hover{background:#303036;color:#fff}.twgif-gallery-tab[aria-selected=true]{border-color:#8b5bd4;background:#392653;color:#e8d7ff}
       .twgif-gallery-tab-count{font-size:9px;opacity:.75}
       .twgif-panel-body{padding:9px 10px 10px;overflow:auto;min-height:0;overscroll-behavior:contain}
+      /* Keep the gallery scrollbar consistent on Twitch regardless of the page's color scheme. */
+      #twgif-panel .twgif-panel-body{color-scheme:dark!important;scrollbar-width:thin!important;scrollbar-color:#45454f #18181b!important}
+      #twgif-panel .twgif-panel-body::-webkit-scrollbar{width:6px!important;height:6px!important}
+      #twgif-panel .twgif-panel-body::-webkit-scrollbar-track{background:#18181b!important;border-radius:6px!important}
+      #twgif-panel .twgif-panel-body::-webkit-scrollbar-thumb{background:#45454f!important;border:1px solid #18181b!important;border-radius:6px!important}
+      #twgif-panel .twgif-panel-body::-webkit-scrollbar-thumb:hover{background:#62626d!important}
       .twgif-toolbar{display:flex;align-items:center;gap:5px;margin-bottom:8px}
       .twgif-input{display:block;width:100%;min-width:0;background:#0e0e10;color:#efeff1;border:1px solid #3f3f46;border-radius:6px;padding:8px 9px;outline:none;font-family:inherit;font-size:12px;line-height:1.35}
       .twgif-input:focus{border-color:#a970ff;box-shadow:0 0 0 1px #9147ff40}.twgif-url-input{flex:1 1 120px;width:100%}
