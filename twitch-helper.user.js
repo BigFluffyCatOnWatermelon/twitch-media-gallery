@@ -1,12 +1,17 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.6
+// @version      5.9.7
 // @description  Twitch media gallery with cached FFmpeg.wasm conversion for files and URLs, original 7TV links, tile-aware previews and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @match        https://www.twitch.tv/*
 // @match        https://twitch.tv/*
+ // @match        https://w.tv/*
+ // @match        https://www.w.tv/*
+ // @match        https://kick.com/*
+ // @match        https://www.kick.com/*
+ // @match        https://live.vkvideo.ru/*
 // @run-at       document-idle
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -1769,10 +1774,53 @@
     setStatus('Удалено из галереи.', 'success');
   }
 
-  // ----- Twitch composer integration -----
+  // ----- Multi-platform chat composer integration -----
+
+  function isTwitchSite() {
+    return /(^|\.)twitch\.tv$/i.test(location.hostname);
+  }
+
+  function platformDisplayName() {
+    const host = String(location.hostname || '').toLowerCase();
+    if (/(^|\.)twitch\.tv$/.test(host)) return 'Twitch';
+    if (/(^|\.)kick\.com$/.test(host)) return 'Kick';
+    if (/(^|\.)w\.tv$/.test(host)) return 'w.tv';
+    if (host === 'live.vkvideo.ru') return 'VK Видео Live';
+    return 'сайте';
+  }
+
+  function looksLikeChatEditor(element) {
+    if (!element || !element.isConnected || !element.getClientRects().length || element.closest('#twgif-panel')) return false;
+    const type = String(element.getAttribute('type') || '').toLowerCase();
+    if (['search', 'password', 'email', 'checkbox', 'radio', 'button', 'submit'].includes(type)) return false;
+
+    const hint = [
+      element.getAttribute('aria-label'),
+      element.getAttribute('placeholder'),
+      element.getAttribute('data-placeholder'),
+      element.getAttribute('data-testid'),
+      element.getAttribute('data-a-target'),
+      element.id,
+      typeof element.className === 'string' ? element.className : ''
+    ].filter(Boolean).join(' ');
+
+    if (/(search|поиск)/i.test(hint) && !/(chat|message|сообщ|чат)/i.test(hint)) return false;
+    if (/(chat|message|сообщ|чат|комментар|напишите|написать)/i.test(hint)) return true;
+
+    const context = element.closest(
+      '[data-testid*="chat" i], [data-a-target*="chat" i], [id*="chat" i], ' +
+      '[class*="chat" i], [class*="message-input" i], [class*="composer" i], [class*="comment-input" i]'
+    );
+    if (context && !context.closest('#twgif-panel')) return true;
+
+    const form = element.closest('form');
+    return Boolean(form && form.querySelector(
+      'button[type="submit"], [data-testid*="send" i], [aria-label*="send" i], [aria-label*="отправ" i]'
+    ));
+  }
 
   function getChatInput() {
-    const selectors = [
+    const twitchSelectors = [
       '[data-a-target="chat-input"][contenteditable="true"]',
       '[data-a-target="chat-input"][role="textbox"]',
       '[data-a-target="chat-input"] textarea',
@@ -1780,9 +1828,42 @@
       '[contenteditable="true"][data-slate-editor="true"]',
       '[contenteditable="true"][role="textbox"][aria-label*="Send a message"]'
     ];
-    for (const selector of selectors) {
-      const element = document.querySelector(selector);
-      if (element && element.isConnected && element.getClientRects().length && !element.closest('#twgif-panel')) return element;
+    if (isTwitchSite()) {
+      for (const selector of twitchSelectors) {
+        const element = document.querySelector(selector);
+        if (element && element.isConnected && element.getClientRects().length && !element.closest('#twgif-panel')) return element;
+      }
+      return null;
+    }
+
+    const specificSelectors = [
+      '[data-testid*="chat-input" i] textarea',
+      '[data-testid*="chat-input" i] [contenteditable="true"]',
+      '[data-testid*="message-input" i] textarea',
+      '[data-testid*="message-input" i] [contenteditable="true"]',
+      '[data-a-target="chat-input"]',
+      '[contenteditable="true"][data-placeholder*="message" i]',
+      '[contenteditable="true"][data-placeholder*="сообщ" i]',
+      '[contenteditable="true"][aria-label*="message" i]',
+      '[contenteditable="true"][aria-label*="сообщ" i]',
+      '[contenteditable="true"][aria-label*="чат" i]',
+      'textarea[placeholder*="message" i]',
+      'textarea[placeholder*="сообщ" i]',
+      'textarea[placeholder*="чат" i]',
+      'input[placeholder*="message" i]',
+      'input[placeholder*="сообщ" i]',
+      'input[placeholder*="чат" i]',
+      '[contenteditable="true"][role="textbox"]'
+    ];
+    for (const selector of specificSelectors) {
+      for (const element of document.querySelectorAll(selector)) {
+        if (looksLikeChatEditor(element)) return element;
+      }
+    }
+
+    // Last resort: recognize unlabelled editors from their chat/composer ancestors.
+    for (const element of document.querySelectorAll('textarea, input[type="text"], [contenteditable="true"]')) {
+      if (looksLikeChatEditor(element)) return element;
     }
     return null;
   }
@@ -1947,7 +2028,7 @@
   async function insertLinkIntoChat(url) {
     const editor = getChatInput() || (activeComposer && activeComposer.isConnected ? activeComposer : null);
     if (!editor || !isEditor(editor)) {
-      setStatus('Не нашёл поле ввода чата Twitch. Открой чат и повтори.', 'error', true);
+      setStatus('Не нашёл поле ввода чата ' + platformDisplayName() + '. Открой чат и повтори.', 'error', true);
       return false;
     }
     activeComposer = editor;
@@ -2443,16 +2524,38 @@
   }
 
   function getChatRegion(input) {
-    return document.querySelector('[data-a-target="chat-room-component-layout"]') ||
-      input?.closest('.chat-room') || input?.closest('[class*="chat-room"]') ||
-      input?.closest('[data-a-target="chat-input-container"]')?.parentElement?.parentElement ||
-      input?.parentElement?.parentElement?.parentElement || document.body;
+    if (isTwitchSite()) {
+      return document.querySelector('[data-a-target="chat-room-component-layout"]') ||
+        input?.closest('.chat-room') || input?.closest('[class*="chat-room"]') ||
+        input?.closest('[data-a-target="chat-input-container"]')?.parentElement?.parentElement ||
+        input?.parentElement?.parentElement?.parentElement || document.body;
+    }
+    return input?.closest(
+      '[data-testid*="chat" i], [data-a-target*="chat" i], [id*="chat" i], ' +
+      '[class*="chat-room" i], [class*="chatroom" i], [class*="chat-panel" i], ' +
+      '[class*="chat-container" i], [class*="chat-sidebar" i], [class*="chat" i]'
+    ) || input?.closest('form')?.parentElement?.parentElement ||
+      input?.parentElement?.parentElement || document.body;
   }
 
   function getToolbar(input) {
-    return document.querySelector('.chat-input__buttons-container') ||
-      input?.closest('[data-a-target="chat-input-container"]')?.parentElement?.querySelector('[class*="buttons-container"]') ||
-      input?.closest('form')?.querySelector('[class*="buttons-container"]') || null;
+    if (!input) return null;
+    if (isTwitchSite()) {
+      return document.querySelector('.chat-input__buttons-container') ||
+        input.closest('[data-a-target="chat-input-container"]')?.parentElement?.querySelector('[class*="buttons-container"]') ||
+        input.closest('form')?.querySelector('[class*="buttons-container"]') || null;
+    }
+
+    const composer = input.closest(
+      '[data-testid*="chat-input" i], [data-testid*="composer" i], ' +
+      '[class*="chat-input" i], [class*="chat-composer" i], ' +
+      '[class*="message-input" i], [class*="composer" i]'
+    );
+    const form = input.closest('form');
+    const buttonRow = (composer || form)?.querySelector(
+      '[data-testid*="toolbar" i], [class*="toolbar" i], [class*="actions" i], [class*="buttons" i]'
+    );
+    return buttonRow || composer || form || input.parentElement || null;
   }
 
   function createTrigger() {
@@ -2477,7 +2580,7 @@
   }
 
   function hideDropsToolbarButtons(toolbar) {
-    if (!toolbar) return;
+    if (!toolbar || !isTwitchSite()) return;
     const candidates = toolbar.querySelectorAll('button, [role="button"]');
     for (const candidate of candidates) {
       if (candidate.id === 'twgif-trigger' || candidate.closest('#twgif-panel')) continue;
@@ -2509,18 +2612,62 @@
   }
 
   function findChatSettingsButton(toolbar) {
-    return toolbar?.querySelector('[data-a-target="chat-settings-button"], [aria-label*="Chat settings" i], [aria-label*="Настройки чата" i]') || null;
+    if (!toolbar) return null;
+    if (isTwitchSite()) {
+      return toolbar.querySelector('[data-a-target="chat-settings-button"], [aria-label*="Chat settings" i], [aria-label*="Настройки чата" i]');
+    }
+    return toolbar.querySelector(
+      'button[data-testid*="settings" i], button[aria-label*="settings" i], button[title*="settings" i], ' +
+      'button[aria-label*="настрой" i], button[title*="настрой" i], [data-testid*="chat-settings" i]'
+    );
+  }
+
+  function findChatSendButton(input, toolbar) {
+    const root = input?.closest('form') || toolbar?.parentElement || toolbar;
+    if (!root) return null;
+    return root.querySelector(
+      'button[type="submit"], button[data-testid*="send" i], button[aria-label*="send" i], ' +
+      'button[title*="send" i], button[aria-label*="отправ" i], button[title*="отправ" i]'
+    );
+  }
+
+  function positionTriggerForSite(input, toolbar, button = activeTrigger) {
+    if (!input || !button || !input.isConnected) return;
+    const anchor = findChatSettingsButton(toolbar) || findChatSendButton(input, toolbar);
+    if (anchor && anchor !== input && anchor !== button && anchor.isConnected) {
+      positionTriggerNearSettings(anchor, button);
+      return;
+    }
+
+    // Some chat UIs have only a bare message field without a labeled control row.
+    // Put the trigger just above the field, keeping it out of the text-entry area.
+    const rect = input.getBoundingClientRect();
+    const size = 32;
+    const gap = 6;
+    const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
+    const viewportHeight = Math.max(1, document.documentElement.clientHeight || innerHeight);
+    let left = rect.right - size;
+    let top = rect.top - size - gap;
+    if (top < 4) {
+      left = rect.left - size - gap;
+      top = rect.top + (rect.height - size) / 2;
+    }
+    left = Math.max(4, Math.min(viewportWidth - size - 4, left));
+    top = Math.max(4, Math.min(viewportHeight - size - 4, top));
+    button.style.setProperty('--twgif-trigger-left', Math.round(left) + 'px');
+    button.style.setProperty('--twgif-trigger-top', Math.round(top) + 'px');
   }
 
   function repositionTrigger() {
     const button = document.getElementById('twgif-trigger');
     if (!button) return;
     const input = getChatInput();
-    const toolbar = input && getToolbar(input);
+    if (!input) return;
+    const toolbar = getToolbar(input);
     if (!toolbar) return;
     hideDropsToolbarButtons(toolbar);
-    const settingsButton = findChatSettingsButton(toolbar);
-    if (settingsButton) positionTriggerNearSettings(settingsButton, button);
+    if (button.parentElement !== document.body) document.body.appendChild(button);
+    positionTriggerForSite(input, toolbar, button);
   }
 
   function ensureTrigger() {
@@ -2535,22 +2682,13 @@
     activeTrigger = button;
 
     hideDropsToolbarButtons(toolbar);
-    const settingsButton = findChatSettingsButton(toolbar);
-
-    if (settingsButton) {
-      // Keep the extension visually left of the settings button but outside Twitch's
-      // flex layout. Its width can no longer shift Twitch's native tooltip anchor.
-      if (button.parentElement !== document.body) document.body.appendChild(button);
-      positionTriggerNearSettings(settingsButton, button);
-      logDebug('Picker button positioned independently of chat settings tooltip', {
-        toolbar: toolbar.className,
-        settingsButton: settingsButton.getAttribute('data-a-target') || settingsButton.getAttribute('aria-label') || settingsButton.className
-      });
-    } else {
-      // Fallback for Twitch layouts that do not expose a recognizable settings button.
-      const rightGroup = toolbar.querySelector('[class*="buttons-right"]') || toolbar;
-      if (button.parentElement !== rightGroup) rightGroup.insertBefore(button, rightGroup.firstChild);
-    }
+    // Keep the button outside site-owned flex layouts on every supported platform.
+    if (button.parentElement !== document.body) document.body.appendChild(button);
+    positionTriggerForSite(input, toolbar, button);
+    logDebug('Picker button positioned beside chat controls', {
+      platform: platformDisplayName(),
+      toolbar: toolbar.className || toolbar.tagName
+    });
     return true;
   }
 
@@ -2566,17 +2704,12 @@
       }
 
       const input = getChatInput();
-      const toolbar = input && getToolbar(input);
-      if (toolbar) {
-        hideDropsToolbarButtons(toolbar);
-        const settingsButton = findChatSettingsButton(toolbar);
-        if (settingsButton) {
-          if (button.parentElement !== document.body) document.body.appendChild(button);
-          positionTriggerNearSettings(settingsButton, button);
-        } else if (!toolbar.contains(button)) {
-          ensureTrigger();
-        }
-      }
+      if (!input) return;
+      const toolbar = getToolbar(input);
+      if (!toolbar) return;
+      hideDropsToolbarButtons(toolbar);
+      if (button.parentElement !== document.body) document.body.appendChild(button);
+      positionTriggerForSite(input, toolbar, button);
     });
   }
 
@@ -3667,7 +3800,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.9.5 started', { href: location.href });
+    logDebug('Userscript v5.9.7 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
