@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.9
+// @version      5.9.10
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with FFmpeg conversion, tile-aware previews and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -2721,7 +2721,7 @@
     if (isKickSite()) {
       const footer = document.querySelector('#chatroom-footer');
       const settings = findChatSettingsButton(input, toolbar);
-      if (settings && footer?.contains(settings)) return settings;
+      if (settings) return settings;
       // If Kick's footer has no labelled settings button, stay in its real control row.
       return footer?.querySelector('#send-message-button, button[data-testid*="send" i], button[aria-label*="send" i]') ||
         footer?.querySelector('.ml-auto button') ||
@@ -2730,11 +2730,33 @@
     return null;
   }
 
+  function findInlineSlot(anchor) {
+    if (!anchor || !anchor.parentElement) return null;
+    let branch = anchor;
+    for (let parent = anchor.parentElement; parent && parent !== document.body && parent !== document.documentElement; parent = parent.parentElement) {
+      const branchRect = branch.getBoundingClientRect();
+      const parentRect = parent.getBoundingClientRect();
+      const siblings = Array.from(parent.children).filter(node => {
+        if (node === branch || !node.isConnected || !node.getClientRects().length || node.closest('#twgif-panel')) return false;
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 &&
+          Math.abs((rect.top + rect.height / 2) - (branchRect.top + branchRect.height / 2)) <= 18 &&
+          (rect.left < branchRect.left || rect.right > branchRect.right);
+      });
+      if (siblings.length && parentRect.height <= 120 && parentRect.width >= branchRect.width + 30) {
+        return { parent, before: branch };
+      }
+      branch = parent;
+    }
+    return { parent: anchor.parentElement, before: anchor };
+  }
+
   function mountInlineTrigger(button, anchor, platformClass) {
-    if (!button || !anchor || !anchor.isConnected || !anchor.parentElement) return false;
-    const parent = anchor.parentElement;
-    if (button.parentElement !== parent || button.nextElementSibling !== anchor) {
-      parent.insertBefore(button, anchor);
+    if (!button || !anchor || !anchor.isConnected) return false;
+    const slot = findInlineSlot(anchor);
+    if (!slot?.parent || !slot.before) return false;
+    if (button.parentElement !== slot.parent || button.nextElementSibling !== slot.before) {
+      slot.parent.insertBefore(button, slot.before);
     }
     button.classList.remove('twgif-inline-kick', 'twgif-inline-wtv');
     button.classList.add('twgif-inline-trigger', platformClass);
@@ -2758,12 +2780,12 @@
     if (button.parentElement !== document.body) document.body.appendChild(button);
     const anchor = findChatSettingsButton(input, toolbar) || findChatSendButton(input, toolbar);
     if (anchor && anchor !== input && anchor !== button && anchor.isConnected) {
-            positionTriggerNearSettings(anchor, button);
+      positionTriggerNearSettings(anchor, button);
       return;
     }
 
     // Fallback for layouts without a recognizable control button.
-        const rect = input.getBoundingClientRect();
+    const rect = input.getBoundingClientRect();
     const size = 32;
     const gap = 6;
     const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
@@ -2788,7 +2810,7 @@
     const toolbar = getToolbar(input);
     if (!toolbar) return;
     hideDropsToolbarButtons(toolbar);
-        positionTriggerForSite(input, toolbar, button);
+    positionTriggerForSite(input, toolbar, button);
   }
 
   function ensureTrigger() {
@@ -2804,7 +2826,7 @@
 
     hideDropsToolbarButtons(toolbar);
     // Placement is inline for Kick/w.tv and independent for Twitch/other sites.
-        positionTriggerForSite(input, toolbar, button);
+    positionTriggerForSite(input, toolbar, button);
     logDebug('Picker button positioned beside chat controls', {
       platform: platformDisplayName(),
       toolbar: toolbar.className || toolbar.tagName
@@ -2828,7 +2850,7 @@
       const toolbar = getToolbar(input);
       if (!toolbar) return;
       hideDropsToolbarButtons(toolbar);
-            positionTriggerForSite(input, toolbar, button);
+      positionTriggerForSite(input, toolbar, button);
     });
   }
 
@@ -3919,7 +3941,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.9.9 started', { href: location.href });
+    logDebug('Userscript v5.9.10 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
