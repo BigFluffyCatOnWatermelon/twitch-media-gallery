@@ -523,15 +523,15 @@
         onload: response => {
           clearTrackedRequest();
           if (response.status < 200 || response.status >= 300) {
-            reject(new Error(`Не удалось скачать медиа по ссылке (HTTP ${response.status}).`));
+            reject(new Error('Не удалось скачать медиа по ссылке (HTTP ' + response.status + ').'));
             return;
           }
-          const headerMime = String(response.responseHeaders?.match(/content-type:\s*([^;\\r\\n]+)/i)?.[1] || '').trim().toLowerCase();
+          const headerMime = String(response.responseHeaders?.match(/content-type:\s*([^;\r\n]+)/i)?.[1] || '').trim().toLowerCase();
           const receivedBlob = response.response instanceof Blob
             ? response.response
             : new Blob([response.response], { type: headerMime || 'application/octet-stream' });
           const receivedMime = String(receivedBlob.type || '').trim().toLowerCase();
-          const mime = /^(image|video)\\//i.test(headerMime)
+          const mime = /^(image|video)\//i.test(headerMime)
             ? headerMime
             : (receivedMime || headerMime || 'application/octet-stream');
           const blob = receivedBlob.type === mime
@@ -1485,7 +1485,7 @@
   }
 
   function is7TVUrl(url) {
-    return Boolean(url && /(^|\\.)7tv\\.(?:app|io)$/i.test(url.hostname));
+    return Boolean(url && /(^|\.)7tv\.(?:app|io)$/i.test(url.hostname));
   }
 
   function mediaTypeFromMime(mime) {
@@ -1511,27 +1511,45 @@
     const sourceName = sourceNameFromUrl(rawUrl);
     const contentMime = String(blob.type || '').split(';')[0].trim().toLowerCase();
     const pathMime = mimeFromFile({ name: sourceName, type: '' });
-    const mime = /^(image|video)\\//i.test(contentMime) ? contentMime : pathMime;
+    const mime = /^(image|video)\//i.test(contentMime) ? contentMime : pathMime;
     if (!mime || (!mime.startsWith('image/') && !mime.startsWith('video/'))) {
       throw new Error('По ссылке не найден прямой файл изображения, GIF или видео. Нужна ссылка непосредственно на медиафайл, а не на страницу сайта.');
     }
 
     let name = String(nameHint || sourceName || parsed.hostname || 'media')
       .trim()
-      .replace(/[<>:"/\\\\|?*\\u0000-\\u001f]+/g, '_')
+      .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, '_')
       .slice(0, 120) || 'media';
-    const extensionMatch = name.match(/\\.([a-z0-9]{1,8})$/i);
+    const extensionMatch = name.match(/\.([a-z0-9]{1,8})$/i);
     const nameMime = mimeFromFile({ name, type: '' });
     const mimeExtension = getExtension(mime, '');
     if (!extensionMatch) {
       name += mimeExtension;
     } else if (mimeExtension !== '.bin' && nameMime !== mime) {
-      name = name.replace(/\\.[^.]+$/, '') + mimeExtension;
+      name = name.replace(/\.[^.]+$/, '') + mimeExtension;
     }
     return new File([blob], name, { type: mime, lastModified: Date.now() });
   }
 
   async function addUrl(rawUrl, customName = '', runId = null) {
+    if (runId !== null && runId !== undefined) return addUrlCore(rawUrl, customName, runId);
+    if (activeProcessingRunId) {
+      throw new Error('Уже выполняется обработка. Дождись завершения или отмени её значком стоп у кольца прогресса.');
+    }
+    const ownedRunId = ++processingRunId;
+    activeProcessingRunId = ownedRunId;
+    setProgressCancelable(true);
+    try {
+      return await addUrlCore(rawUrl, customName, ownedRunId);
+    } finally {
+      if (activeProcessingRunId === ownedRunId) {
+        activeProcessingRunId = 0;
+        setProgressCancelable(false);
+      }
+    }
+  }
+
+  async function addUrlCore(rawUrl, customName = '', runId = null) {
     const text = String(rawUrl || '').trim().replace(/^<|>$/g, '');
     let parsed;
     try { parsed = new URL(text); }
@@ -2716,7 +2734,7 @@
     const urlInput = body.querySelector('#twgif-url-input');
     const addButton = body.querySelector('#twgif-add-url');
     const addLink = async () => {
-      const links = urlInput.value.trim().split(/\\s+/).filter(Boolean);
+      const links = urlInput.value.trim().split(/\s+/).filter(Boolean);
       if (!links.length) { urlInput.focus(); return; }
       if (activeProcessingRunId) {
         setStatus('Уже выполняется обработка. Дождись завершения или отмени её значком стоп у кольца прогресса.', 'info', true);
