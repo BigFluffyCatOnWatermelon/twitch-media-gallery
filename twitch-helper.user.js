@@ -2686,9 +2686,6 @@
           if (seen.has(element)) continue;
           seen.add(element);
           if (!element.isConnected || !element.getClientRects().length || element.closest('#twgif-panel')) continue;
-          const rect = element.getBoundingClientRect();
-          // Kick candidates have already been scoped to the chat footer, so don't
-          // accidentally reject controls just because the input and action row differ in height.
           candidates.push(element);
         }
       }
