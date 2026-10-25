@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.8
+// @version      5.9.9
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with FFmpeg conversion, tile-aware previews and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -1780,6 +1780,14 @@
     return /(^|\.)twitch\.tv$/i.test(location.hostname);
   }
 
+  function isWtvSite() {
+    return /(^|\.)w\.tv$/i.test(location.hostname);
+  }
+
+  function isKickSite() {
+    return /(^|\.)kick\.com$/i.test(location.hostname);
+  }
+
   function platformDisplayName() {
     const host = String(location.hostname || '').toLowerCase();
     if (/(^|\.)twitch\.tv$/.test(host)) return 'Twitch';
@@ -2368,6 +2376,9 @@
     style.id = 'twgif-style';
     style.textContent = `
       #twgif-trigger{appearance:none!important;border:0!important;background:transparent!important;color:var(--color-text-base,#efeff1)!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important;margin:0!important;padding:0!important;align-self:center!important;vertical-align:middle!important;box-sizing:border-box!important;position:fixed!important;left:var(--twgif-trigger-left,0px)!important;top:var(--twgif-trigger-top,0px)!important;z-index:2147482500!important;transform:none!important;border-radius:var(--border-radius-medium,4px)!important;cursor:pointer!important;line-height:1!important}
+      #twgif-trigger.twgif-inline-trigger{position:relative!important;left:auto!important;top:auto!important;z-index:2!important;transform:none!important;align-self:center!important;margin:0 3px!important}
+      #twgif-trigger.twgif-inline-wtv{flex:0 0 44px!important;width:44px!important;min-width:44px!important;height:44px!important}
+      #twgif-trigger.twgif-inline-kick{flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important}
       #twgif-trigger:hover,#twgif-trigger[aria-expanded=true]{background:var(--color-background-button-text-hover,#2b2b2f)!important;color:var(--color-text-link,#bf94ff)!important}
       #twgif-trigger svg{display:block;width:20px;height:20px;flex:0 0 20px;align-self:center;pointer-events:none}
       #twgif-panel{position:fixed!important;top:8px;left:8px;bottom:auto;z-index:2147483000!important;width:400px;max-width:calc(100vw - 16px);max-height:68vh;display:flex;flex-direction:column;overflow:hidden;color:#efeff1;background:#18181b;border:1px solid #34343b;border-radius:10px;box-shadow:0 10px 34px #0009;font:13px/1.4 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-sizing:border-box;pointer-events:auto}
@@ -2531,23 +2542,41 @@
         input?.parentElement?.parentElement?.parentElement || document.body;
     }
 
-    // Prefer the full chat panel over inner composer/input containers, whose width
-    // can be much smaller than the actual chat column.
-    const panelSelectors = [
-      '[data-testid*="chat-panel" i]', '[data-testid*="chat-room" i]',
-      '[data-testid*="chat-container" i]', '[id*="chat-panel" i]',
-      '[id*="chat-room" i]', '[class*="chat-room" i]', '[class*="chatroom" i]',
-      '[class*="chat-panel" i]', '[class*="chat-container" i]',
-      '[class*="chat-sidebar" i]', '[class*="chat-window" i]'
-    ];
-    for (const selector of panelSelectors) {
-      const panel = input?.closest(selector);
-      if (panel && panel !== document.body) return panel;
+    // Kick's stable root covers the whole chat column, unlike the small editor wrapper.
+    if (isKickSite()) {
+      return document.querySelector('#channel-chatroom') ||
+        document.querySelector('#chatroom-footer')?.closest('[id*="chatroom" i]') ||
+        document.querySelector('#chatroom-footer')?.parentElement?.parentElement ||
+        input?.closest('[id*="chatroom" i]') || input?.parentElement?.parentElement || document.body;
     }
-    return input?.closest(
-      '[data-testid*="chat" i], [data-a-target*="chat" i], [id*="chat" i], [class*="chat" i]'
-    ) || input?.closest('form')?.parentElement?.parentElement ||
-      input?.parentElement?.parentElement || document.body;
+
+    // On w.tv use the common ancestor of the editor and the exact three-dot button,
+    // then choose the widest visible ancestor that still looks like a chat column.
+    const anchor = isWtvSite()
+      ? (document.querySelector('button[data-testid="chat-options-button"]') ||
+         document.querySelector('button[aria-label="toggle settings" i]'))
+      : null;
+    let common = input;
+    if (anchor) {
+      while (common && common !== document.body && !common.contains(anchor)) common = common.parentElement;
+    }
+    const start = common || input;
+    const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
+    const maxColumnWidth = Math.min(1000, viewportWidth * 0.9);
+    let best = null;
+    let bestWidth = 0;
+    for (let node = start; node && node !== document.body && node !== document.documentElement; node = node.parentElement) {
+      if (!node.isConnected || node.closest('#twgif-panel')) continue;
+      const rect = node.getBoundingClientRect();
+      if (!rect.width || !rect.height || rect.width > maxColumnWidth || rect.width < 250) continue;
+      if (rect.width > bestWidth) {
+        best = node;
+        bestWidth = rect.width;
+      }
+    }
+    return best || common || input?.closest(
+      '[data-testid*="chat-panel" i], [data-testid*="chat-room" i], [class*="chat-panel" i], [class*="chat-room" i], [class*="chat-container" i]'
+    ) || input?.parentElement?.parentElement || document.body;
   }
 
   function getToolbar(input) {
@@ -2628,23 +2657,25 @@
     if (isTwitchSite()) {
       return toolbar?.querySelector('[data-a-target="chat-settings-button"], [aria-label*="Chat settings" i], [aria-label*="Настройки чата" i]') || null;
     }
+    if (isWtvSite()) {
+      return document.querySelector('button[data-testid="chat-options-button"]') ||
+        document.querySelector('button[aria-label="toggle settings" i]') || null;
+    }
 
-    const host = String(location.hostname || '').toLowerCase();
-    const selectors = host.endsWith('w.tv')
-      ? ['button[data-testid="chat-options-button"]', 'button[aria-label="toggle settings" i]']
-      : [
-          'button[data-testid*="chat-settings" i]',
-          'button[data-testid*="settings" i]',
-          'button[aria-label*="chat settings" i]',
-          'button[aria-label*="settings" i]',
-          'button[title*="settings" i]',
-          'button[aria-label*="настрой" i]',
-          'button[title*="настрой" i]'
-        ];
-
+    const region = isKickSite()
+      ? (document.querySelector('#channel-chatroom') || document.querySelector('#chatroom-footer'))
+      : (toolbar || input?.closest('form')?.parentElement);
     const inputRect = input?.getBoundingClientRect();
-    const region = input ? getChatRegion(input) : null;
-    const roots = [toolbar, input?.closest('form'), region, document].filter(Boolean);
+    const selectors = [
+      'button[data-testid*="chat-settings" i]',
+      'button[data-testid*="settings" i]',
+      'button[aria-label*="chat settings" i]',
+      'button[aria-label*="settings" i]',
+      'button[title*="settings" i]',
+      'button[aria-label*="настрой" i]',
+      'button[title*="настрой" i]'
+    ];
+    const roots = [region, toolbar, input?.closest('form')].filter(Boolean);
     const seen = new Set();
     const candidates = [];
     for (const root of roots) {
@@ -2653,22 +2684,20 @@
           if (seen.has(element)) continue;
           seen.add(element);
           if (!element.isConnected || !element.getClientRects().length || element.closest('#twgif-panel')) continue;
+          const rect = element.getBoundingClientRect();
+          // On Kick, ignore gear buttons in the chat header or site-wide page.
+          if (isKickSite() && inputRect &&
+              Math.abs((rect.top + rect.height / 2) - (inputRect.top + inputRect.height / 2)) > 150) continue;
           candidates.push(element);
         }
       }
-      if (candidates.length && root === region) break;
     }
     if (!candidates.length) return null;
     if (!inputRect) return candidates[0];
-
-    // Pick the settings/overflow control visually nearest to the chat composer.
-    // This avoids accidentally anchoring to player or site-wide settings buttons.
     const score = element => {
       const rect = element.getBoundingClientRect();
-      const centerY = rect.top + rect.height / 2;
-      const centerX = rect.left + rect.width / 2;
-      const inputY = inputRect.top + inputRect.height / 2;
-      return Math.abs(centerY - inputY) * 2 + Math.abs(centerX - inputRect.right);
+      return Math.abs((rect.top + rect.height / 2) - (inputRect.top + inputRect.height / 2)) * 3 +
+        Math.abs((rect.left + rect.width / 2) - inputRect.right);
     };
     candidates.sort((a, b) => score(a) - score(b));
     return candidates[0] || null;
@@ -2683,24 +2712,65 @@
     );
   }
 
+  function findInlineTriggerTarget(input, toolbar) {
+    if (isWtvSite()) {
+      return document.querySelector('button[data-testid="chat-options-button"]') ||
+        document.querySelector('button[aria-label="toggle settings" i]');
+    }
+
+    if (isKickSite()) {
+      const footer = document.querySelector('#chatroom-footer');
+      const settings = findChatSettingsButton(input, toolbar);
+      if (settings && footer?.contains(settings)) return settings;
+      // If Kick's footer has no labelled settings button, stay in its real control row.
+      return footer?.querySelector('#send-message-button, button[data-testid*="send" i], button[aria-label*="send" i]') ||
+        footer?.querySelector('.ml-auto button') ||
+        null;
+    }
+    return null;
+  }
+
+  function mountInlineTrigger(button, anchor, platformClass) {
+    if (!button || !anchor || !anchor.isConnected || !anchor.parentElement) return false;
+    const parent = anchor.parentElement;
+    if (button.parentElement !== parent || button.nextElementSibling !== anchor) {
+      parent.insertBefore(button, anchor);
+    }
+    button.classList.remove('twgif-inline-kick', 'twgif-inline-wtv');
+    button.classList.add('twgif-inline-trigger', platformClass);
+    button.style.removeProperty('--twgif-trigger-left');
+    button.style.removeProperty('--twgif-trigger-top');
+    return true;
+  }
+
   function positionTriggerForSite(input, toolbar, button = activeTrigger) {
     if (!input || !button || !input.isConnected) return;
+
+    // For Kick and w.tv, insert into the actual control row so flex layout reserves
+    // space for the icon and neighbouring buttons cannot overlap it.
+    if (isWtvSite()) {
+      if (mountInlineTrigger(button, findInlineTriggerTarget(input, toolbar), 'twgif-inline-wtv')) return;
+    } else if (isKickSite()) {
+      if (mountInlineTrigger(button, findInlineTriggerTarget(input, toolbar), 'twgif-inline-kick')) return;
+    }
+
+    button.classList.remove('twgif-inline-trigger', 'twgif-inline-kick', 'twgif-inline-wtv');
+    if (button.parentElement !== document.body) document.body.appendChild(button);
     const anchor = findChatSettingsButton(input, toolbar) || findChatSendButton(input, toolbar);
     if (anchor && anchor !== input && anchor !== button && anchor.isConnected) {
-      positionTriggerNearSettings(anchor, button);
+            positionTriggerNearSettings(anchor, button);
       return;
     }
 
-    // Some chat UIs have only a bare message field without a labeled control row.
-    // Put the trigger just above the field, keeping it out of the text-entry area.
-    const rect = input.getBoundingClientRect();
+    // Fallback for layouts without a recognizable control button.
+        const rect = input.getBoundingClientRect();
     const size = 32;
     const gap = 6;
     const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
     const viewportHeight = Math.max(1, document.documentElement.clientHeight || innerHeight);
     let left = rect.right - size;
-    let top = rect.top - size - gap;
-    if (top < 4) {
+    let top = rect.top + rect.height + gap;
+    if (top + size > viewportHeight - 4) {
       left = rect.left - size - gap;
       top = rect.top + (rect.height - size) / 2;
     }
@@ -2718,8 +2788,7 @@
     const toolbar = getToolbar(input);
     if (!toolbar) return;
     hideDropsToolbarButtons(toolbar);
-    if (button.parentElement !== document.body) document.body.appendChild(button);
-    positionTriggerForSite(input, toolbar, button);
+        positionTriggerForSite(input, toolbar, button);
   }
 
   function ensureTrigger() {
@@ -2734,9 +2803,8 @@
     activeTrigger = button;
 
     hideDropsToolbarButtons(toolbar);
-    // Keep the button outside site-owned flex layouts on every supported platform.
-    if (button.parentElement !== document.body) document.body.appendChild(button);
-    positionTriggerForSite(input, toolbar, button);
+    // Placement is inline for Kick/w.tv and independent for Twitch/other sites.
+        positionTriggerForSite(input, toolbar, button);
     logDebug('Picker button positioned beside chat controls', {
       platform: platformDisplayName(),
       toolbar: toolbar.className || toolbar.tagName
@@ -2760,8 +2828,7 @@
       const toolbar = getToolbar(input);
       if (!toolbar) return;
       hideDropsToolbarButtons(toolbar);
-      if (button.parentElement !== document.body) document.body.appendChild(button);
-      positionTriggerForSite(input, toolbar, button);
+            positionTriggerForSite(input, toolbar, button);
     });
   }
 
@@ -2779,7 +2846,8 @@
       : { left: 0, right: innerWidth, width: innerWidth };
     const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
     const viewportHeight = Math.max(1, document.documentElement.clientHeight || innerHeight);
-    const availableWidth = Math.max(1, Math.min(regionRect.width - 16, viewportWidth - 16));
+    const regionWidth = Number.isFinite(regionRect.width) && regionRect.width > 0 ? regionRect.width : viewportWidth - 16;
+    const availableWidth = Math.max(1, Math.min(regionWidth, viewportWidth - 16));
     panel.style.position = 'fixed';
     panel.style.width = String(availableWidth) + 'px';
 
@@ -2793,9 +2861,8 @@
 
     const minLeft = 8;
     const maxLeft = Math.max(minLeft, viewportWidth - availableWidth - 8);
-    const desiredLeft = inputRect.right - availableWidth;
-    const regionLeft = Number.isFinite(regionRect.left) ? regionRect.left + 8 : minLeft;
-    const left = Math.round(Math.max(minLeft, Math.min(maxLeft, Math.max(regionLeft, desiredLeft))));
+    const regionLeft = Number.isFinite(regionRect.left) ? regionRect.left : (inputRect.right - availableWidth);
+    const left = Math.round(Math.max(minLeft, Math.min(maxLeft, regionLeft)));
     const top = Math.max(0, Math.round(inputRect.top - panelHeight - 8));
     panel.style.left = String(left) + 'px';
     panel.style.top = String(top) + 'px';
@@ -3852,7 +3919,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.9.8 started', { href: location.href });
+    logDebug('Userscript v5.9.9 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
