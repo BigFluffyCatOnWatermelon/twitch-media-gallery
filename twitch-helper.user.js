@@ -2,16 +2,16 @@
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
 // @version      5.9.7
-// @description  Twitch media gallery with cached FFmpeg.wasm conversion for files and URLs, original 7TV links, tile-aware previews and Gist settings sync.
+// @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with FFmpeg conversion, tile-aware previews and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @match        https://www.twitch.tv/*
 // @match        https://twitch.tv/*
- // @match        https://w.tv/*
- // @match        https://www.w.tv/*
- // @match        https://kick.com/*
- // @match        https://www.kick.com/*
- // @match        https://live.vkvideo.ru/*
+// @match        https://w.tv/*
+// @match        https://www.w.tv/*
+// @match        https://kick.com/*
+// @match        https://www.kick.com/*
+// @match        https://live.vkvideo.ru/*
 // @run-at       document-idle
 // @grant        GM_getValue
 // @grant        GM_setValue
