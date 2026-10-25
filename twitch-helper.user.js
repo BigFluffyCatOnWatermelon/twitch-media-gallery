@@ -220,7 +220,7 @@
       mediaScale: clampFloat(raw.mediaScale ?? defaults.mediaScale, 0.5, 2, defaults.mediaScale),
       tileView: raw.tileView === 'grid' ? 'grid' : 'masonry',
       pageSize: clampInt(raw.pageSize ?? 100, 10, 500, 100),
-      previewMaxSize: clampInt(raw.previewMaxSize ?? defaults.previewMaxSize, 480, 4000, defaults.previewMaxSize),
+      previewMaxSize: clampInt(raw.previewMaxSize ?? defaults.previewMaxSize, 1, 4000, defaults.previewMaxSize),
       previewTileBoost: clampInt(raw.previewTileBoost ?? defaults.previewTileBoost, 0, 100, defaults.previewTileBoost),
       conversionRules: {
         image: cleanTarget('image', rules.image ?? defaults.conversionRules.image),
@@ -263,7 +263,7 @@
       mediaScale: clampFloat(next.mediaScale ?? current.mediaScale, 0.5, 2, defaults.mediaScale),
       tileView: (next.tileView ?? current.tileView) === 'grid' ? 'grid' : 'masonry',
       pageSize: clampInt(next.pageSize ?? current.pageSize, 10, 500, defaults.pageSize),
-      previewMaxSize: clampInt(next.previewMaxSize ?? current.previewMaxSize, 480, 4000, defaults.previewMaxSize),
+      previewMaxSize: clampInt(next.previewMaxSize ?? current.previewMaxSize, 1, 4000, defaults.previewMaxSize),
       previewTileBoost: clampInt(next.previewTileBoost ?? current.previewTileBoost, 0, 100, defaults.previewTileBoost),
       conversionRules: rules,
       compression,
@@ -2996,7 +2996,7 @@
     const tileRect = tileMedia ? tileMedia.getBoundingClientRect() : cardRect;
     const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
     const viewportHeight = Math.max(1, document.documentElement.clientHeight || innerHeight);
-    const maxDimension = clampInt(config.previewMaxSize ?? 1920, 480, 4000, 1920);
+    const maxDimension = clampInt(config.previewMaxSize ?? 1920, 1, 4000, 1920);
     const tileBoost = 1 + clampInt(config.previewTileBoost ?? 5, 0, 100, 5) / 100;
     const isVideo = media.tagName === 'VIDEO';
     const nativeWidth = Number(isVideo ? media.videoWidth : media.naturalWidth) || 0;
