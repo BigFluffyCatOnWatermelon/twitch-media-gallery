@@ -2422,7 +2422,6 @@
       .twgif-toolbar{display:flex;align-items:center;gap:5px;margin-bottom:8px}
       .twgif-input{display:block;width:100%;min-width:0;background:#0e0e10;color:#efeff1;border:1px solid #3f3f46;border-radius:6px;padding:8px 9px;outline:none;font-family:inherit;font-size:12px;line-height:1.35}
       .twgif-input:focus{border-color:#a970ff;box-shadow:0 0 0 1px #9147ff40}.twgif-url-input{flex:1 1 120px;width:100%}
-      .twgif-count{color:#adadb8;white-space:nowrap;font-size:11px}
       .twgif-small-btn{appearance:none;border:1px solid #42424a;background:#252529;color:#efeff1;padding:7px 9px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px;font-weight:500;line-height:1.2;white-space:nowrap}
       .twgif-small-btn:hover{background:#34343b;border-color:#65656e}.twgif-small-btn:disabled{opacity:.55;cursor:wait}
       .twgif-primary{background:#9147ff;border-color:#9147ff;color:#fff}.twgif-primary:hover{background:#772ce8;border-color:#772ce8}
@@ -3148,7 +3147,6 @@
       <div class="twgif-toolbar">
         <input id="twgif-url-input" class="twgif-input twgif-url-input" type="url" placeholder="Ссылка или несколько ссылок через пробел…" autocomplete="url" aria-label="Ссылка для добавления">
         <button id="twgif-add-url" class="twgif-small-btn twgif-primary twgif-toolbar-icon" type="button" title="Добавить ссылку" aria-label="Добавить ссылку">+</button>
-        <span id="twgif-count" class="twgif-count"></span>
       </div>
       <div class="twgif-gallery-tabs" role="tablist" aria-label="Тип медиа">
         <button class="twgif-gallery-tab" type="button" data-gallery-tab="all" role="tab" aria-selected="true">Все <span id="twgif-all-count" class="twgif-gallery-tab-count">0</span></button>
@@ -3577,12 +3575,11 @@
     if (!body || panelView !== 'gallery') return;
     const masonry = body.querySelector('#twgif-masonry');
     const empty = body.querySelector('#twgif-empty');
-    const count = body.querySelector('#twgif-count');
     const pagination = body.querySelector('#twgif-pagination');
     const pageLabel = body.querySelector('#twgif-page-label');
     const prev = body.querySelector('#twgif-page-prev');
     const next = body.querySelector('#twgif-page-next');
-    if (!masonry || !empty || !count || !pagination) return;
+    if (!masonry || !empty || !pagination) return;
 
     const config = loadConfig();
     const scale = config.mediaScale;
@@ -3684,7 +3681,6 @@
     }
 
     masonry.hidden = visible.length === 0;
-    count.textContent = String(items.length);
     empty.hidden = visible.length > 0;
     empty.textContent = galleryTab === '7tv'
       ? 'В коллекции пока нет ссылок 7TV.'
@@ -3736,6 +3732,10 @@
               <button id="twgif-save-gallery-settings" class="twgif-small-btn twgif-primary" type="button">Применить</button>
               <button id="twgif-reset-defaults" class="twgif-small-btn" type="button">Настройки по умолчанию</button>
             </div>
+          </div>
+          <div class="twgif-section">
+            <div class="twgif-section-title">О приложении</div>
+            <div class="twgif-help">Версия приложения: <strong>${APP_VERSION}</strong></div>
           </div>
         </div>`;
     } else if (settingsTab === 'convert') {
