@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.13
+// @version      5.9.14
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with FFmpeg conversion, tile-aware previews and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -4009,6 +4009,20 @@
     }
   }, { passive: true });
   window.addEventListener('scroll', repositionTrigger, { capture: true, passive: true });
+  window.addEventListener('popstate', () => {
+    if (isTwitchSite()) setTimeout(scheduleEnsure, 150);
+  });
+  document.addEventListener('click', event => {
+    if (!isTwitchSite()) return;
+    const link = event.target?.closest?.('a[href]');
+    if (!link) return;
+    let targetHost = '';
+    try { targetHost = new URL(link.href, location.href).hostname; } catch (_) {}
+    if (/(^|\\.)twitch\\.tv$/i.test(targetHost)) {
+      // Twitch navigation is SPA-based; re-check once the route's React tree updates.
+      setTimeout(scheduleEnsure, 500);
+    }
+  }, true);
   // The popup stays fixed where it was opened; only the toolbar icon follows Twitch layout changes.
 
   function installObservers() {
@@ -4019,7 +4033,32 @@
       const localRoot = toolbar?.parentElement || toolbar || target.parentElement;
       if (localRoot) {
         observer = new MutationObserver(() => scheduleEnsure());
-        observer.observe(localRoot, { childList: true, subtree: true });
+        const visibilityAttributes = {
+          attributes: true,
+          attributeFilter: ['class', 'style', 'hidden', 'aria-hidden']
+        };
+        observer.observe(localRoot, {
+          childList: true,
+          subtree: true,
+          ...visibilityAttributes
+        });
+        if (isTwitchSite()) {
+          // Watch the chat/composer ancestors for collapse/hidden-state changes.
+          // Observe only attributes on those specific ancestors, not the whole
+          // Twitch document subtree, to avoid work for every incoming chat message.
+          const watched = new Set([localRoot]);
+          for (const startNode of [target, toolbar]) {
+            let node = startNode;
+            let depth = 0;
+            while (node && node !== document.body && depth++ < 12) {
+              if (!watched.has(node)) {
+                observer.observe(node, visibilityAttributes);
+                watched.add(node);
+              }
+              node = node.parentElement;
+            }
+          }
+        }
         installChatMediaObserver();
         return;
       }
@@ -4038,7 +4077,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.9.13 started', { href: location.href });
+    logDebug('Userscript v5.9.14 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
