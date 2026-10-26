@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.14
+// @version      5.9.15
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with FFmpeg conversion, tile-aware previews and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -4018,7 +4018,7 @@
     if (!link) return;
     let targetHost = '';
     try { targetHost = new URL(link.href, location.href).hostname; } catch (_) {}
-    if (/(^|\\.)twitch\\.tv$/i.test(targetHost)) {
+    if (/(^|\.)twitch\.tv$/i.test(targetHost)) {
       // Twitch navigation is SPA-based; re-check once the route's React tree updates.
       setTimeout(scheduleEnsure, 500);
     }
@@ -4077,7 +4077,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.9.14 started', { href: location.href });
+    logDebug('Userscript v5.9.15 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
