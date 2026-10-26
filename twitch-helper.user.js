@@ -3780,8 +3780,11 @@
           '<select id="twgif-scale-filter" class="twgif-input">' + targetOptions(compression.scaleFilter, [['fast_bilinear','Самый быстрый'],['bilinear','Сбалансированный'],['bicubic','Более чёткий'],['lanczos','Лучшее качество, медленнее']]) + '</select>' +
           '<label class="twgif-field-label" for="twgif-webp-effort">Усилие сжатия WebP (0–6; меньше = быстрее)</label>' +
           '<input id="twgif-webp-effort" class="twgif-input" type="number" min="0" max="6" step="1" value="' + compression.webpCompressionLevel + '">' +
-          '<div class="twgif-help">Битрейт 0 включает режим качества CRF. Уменьшение разрешения/FPS и выбор «Максимальная скорость» обычно ускоряют конвертацию. Эта сборка FFmpeg.wasm однопоточная.</div>' +
-          '<button id="twgif-save-convert" class="twgif-small-btn twgif-primary" type="button" style="margin-top:8px">Сохранить настройки сжатия</button>' +
+          '<div class="twgif-help">Битрейт задаёт целевой размер видео; CRF регулирует качество в режиме CRF. Эта сборка FFmpeg.wasm однопоточная.</div>' +
+          '<div class="twgif-row" style="margin-top:8px">' +
+            '<button id="twgif-save-convert" class="twgif-small-btn twgif-primary" type="button">Сохранить настройки сжатия</button>' +
+            '<button id="twgif-reset-convert-defaults" class="twgif-small-btn" type="button">Сбросить по умолчанию</button>' +
+          '</div>' +
         '</div></div>';
 
     } else if (settingsTab === 'sync') {
@@ -3872,6 +3875,16 @@
           }
         });
         setStatus('Правила форматов и сжатия сохранены; при настроенном Gist синхронизируются автоматически.', 'success', true);
+      });
+      $('#twgif-reset-convert-defaults').addEventListener('click', () => {
+        const defaults = DEFAULT_CONFIG();
+        saveConfig({
+          maxWidth: defaults.maxWidth,
+          conversionRules: { ...defaults.conversionRules },
+          compression: { ...defaults.compression }
+        });
+        renderSettings();
+        setStatus('Настройки конвертации сброшены к значениям по умолчанию.', 'success', true);
       });
     }
 
