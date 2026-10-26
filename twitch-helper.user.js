@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.12
+// @version      5.9.13
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with FFmpeg conversion, tile-aware previews and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -1780,6 +1780,15 @@
     return /(^|\.)twitch\.tv$/i.test(location.hostname);
   }
 
+  function isTwitchRecordingPage() {
+    if (!isTwitchSite()) return false;
+    const path = String(location.pathname || '/');
+    return /^\/videos?(?:\/|$)/i.test(path) ||
+      /^\/[^/]+\/video\/\d+(?:\/|$)/i.test(path) ||
+      /^\/clip(?:\/|$)/i.test(path) ||
+      /^\/[^/]+\/clips?(?:\/|$)/i.test(path);
+  }
+
   function isWtvSite() {
     return /(^|\.)w\.tv$/i.test(location.hostname);
   }
@@ -2375,11 +2384,12 @@
     const style = document.createElement('style');
     style.id = 'twgif-style';
     style.textContent = `
-      #twgif-trigger{appearance:none!important;border:0!important;background:transparent!important;color:var(--color-text-base,#efeff1)!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important;margin:0!important;padding:0!important;align-self:center!important;vertical-align:middle!important;box-sizing:border-box!important;position:fixed!important;left:var(--twgif-trigger-left,0px)!important;top:var(--twgif-trigger-top,0px)!important;z-index:2147482500!important;transform:none!important;border-radius:var(--border-radius-medium,4px)!important;cursor:pointer!important;line-height:1!important}
-      #twgif-trigger.twgif-inline-trigger{position:relative!important;left:auto!important;top:auto!important;z-index:2!important;transform:none!important;align-self:center!important;margin:0 3px!important}
+      #twgif-trigger{appearance:none!important;border:0!important;background:transparent!important;color:var(--color-text-base,#efeff1)!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important;margin:0!important;padding:0!important;align-self:center!important;vertical-align:middle!important;box-sizing:border-box!important;position:fixed!important;left:var(--twgif-trigger-left,0px)!important;top:var(--twgif-trigger-top,0px)!important;z-index:2147482500!important;transform:none!important;border-radius:50%!important;overflow:hidden!important;cursor:pointer!important;line-height:1!important}
+      #twgif-trigger.twgif-inline-trigger{position:relative!important;left:auto!important;top:auto!important;z-index:2!important;transform:none!important;align-self:center!important;margin:0 3px!important;border-radius:50%!important}
+      #twgif-trigger.twgif-inline-twitch{flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important}
       #twgif-trigger.twgif-inline-wtv{flex:0 0 44px!important;width:44px!important;min-width:44px!important;height:44px!important}
       #twgif-trigger.twgif-inline-kick{flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important}
-      #twgif-trigger:hover,#twgif-trigger[aria-expanded=true]{background:var(--color-background-button-text-hover,#2b2b2f)!important;color:var(--color-text-link,#bf94ff)!important}
+      #twgif-trigger:hover,#twgif-trigger[aria-expanded=true]{background:var(--color-background-button-text-hover,#2b2b2f)!important;color:var(--color-text-link,#bf94ff)!important;border-radius:50%!important}
       #twgif-trigger svg{display:block;width:20px;height:20px;flex:0 0 20px;align-self:center;pointer-events:none}
       #twgif-panel{position:fixed!important;top:8px;left:8px;bottom:auto;z-index:2147483000!important;width:400px;max-width:calc(100vw - 16px);max-height:68vh;display:flex;flex-direction:column;overflow:hidden;color:#efeff1;background:#18181b;border:1px solid #34343b;border-radius:10px;box-shadow:0 10px 34px #0009;font:13px/1.4 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-sizing:border-box;pointer-events:auto}
       #twgif-panel[hidden]{display:none!important}#twgif-panel *{box-sizing:border-box}
@@ -2588,9 +2598,13 @@
   function getToolbar(input) {
     if (!input) return null;
     if (isTwitchSite()) {
-      return document.querySelector('.chat-input__buttons-container') ||
+      // Prefer the toolbar belonging to this exact editor. A global lookup could
+      // otherwise bind the icon to a stale/hidden chat or a replay page.
+      return input.closest('[data-a-target="chat-input-container"]')?.parentElement?.querySelector('.chat-input__buttons-container') ||
+        input.closest('form')?.querySelector('.chat-input__buttons-container') ||
         input.closest('[data-a-target="chat-input-container"]')?.parentElement?.querySelector('[class*="buttons-container"]') ||
-        input.closest('form')?.querySelector('[class*="buttons-container"]') || null;
+        input.closest('form')?.querySelector('[class*="buttons-container"]') ||
+        document.querySelector('.chat-input__buttons-container') || null;
     }
 
     const composer = input.closest(
@@ -2603,6 +2617,75 @@
       '[data-testid*="toolbar" i], [class*="toolbar" i], [class*="actions" i], [class*="buttons" i]'
     );
     return buttonRow || composer || form || input.parentElement || null;
+  }
+
+  function isTwitchChatComposerVisible(input, toolbar) {
+    if (!isTwitchSite() || isTwitchRecordingPage() || !input?.isConnected || !toolbar?.isConnected) return false;
+    if (!input.getClientRects().length || !toolbar.getClientRects().length) return false;
+
+    for (const element of [input, toolbar]) {
+      for (let node = element; node && node !== document.documentElement; node = node.parentElement) {
+        if (node.hidden || node.getAttribute('aria-hidden') === 'true') return false;
+        const style = getComputedStyle(node);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+      }
+    }
+
+    const inputRect = input.getBoundingClientRect();
+    const toolbarRect = toolbar.getBoundingClientRect();
+    const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
+    const viewportHeight = Math.max(1, document.documentElement.clientHeight || innerHeight);
+    // Hidden/collapsed chat often leaves its React nodes mounted but shrinks or
+    // moves the composer off-screen. Do not keep a floating extension button there.
+    if (inputRect.width < 100 || inputRect.height < 12 || toolbarRect.width < 32 || toolbarRect.height < 10) return false;
+    const intersectsViewport = rect =>
+      rect.right > 0 && rect.left < viewportWidth && rect.bottom > 0 && rect.top < viewportHeight;
+    return intersectsViewport(inputRect) && intersectsViewport(toolbarRect);
+  }
+
+  function clearUnavailableTwitchTrigger() {
+    if (!isTwitchSite()) return false;
+    const input = isTwitchRecordingPage() ? null : getChatInput();
+    const toolbar = input ? getToolbar(input) : null;
+    if (isTwitchChatComposerVisible(input, toolbar)) return false;
+
+    if (isPanelOpen()) closePanel();
+    document.getElementById('twgif-trigger')?.remove();
+    activeTrigger = null;
+    activeComposer = null;
+    return true;
+  }
+
+  function mountTwitchTrigger(button, input, toolbar) {
+    if (!button || !isTwitchChatComposerVisible(input, toolbar)) return false;
+
+    const settings = findChatSettingsButton(input, toolbar);
+    let slot = settings ? findInlineSlot(settings) : null;
+    // The settings control can be wrapped in a child container. Constrain the
+    // placement to the live chat's own toolbar, never to document.body.
+    if (!slot?.parent || !toolbar.contains(slot.parent)) {
+      if (settings && toolbar.contains(settings)) {
+        let branch = settings;
+        while (branch.parentElement && branch.parentElement !== toolbar) branch = branch.parentElement;
+        if (branch.parentElement === toolbar) slot = { parent: toolbar, before: branch };
+      }
+    }
+    if (!slot?.parent || !toolbar.contains(slot.parent)) {
+      const firstControl = Array.from(toolbar.children).find(node =>
+        node !== button && node.isConnected && node.getClientRects().length
+      ) || null;
+      slot = { parent: toolbar, before: firstControl };
+    }
+
+    if (button.parentElement !== slot.parent || (slot.before && button.nextElementSibling !== slot.before)) {
+      if (slot.before && slot.before !== button) slot.parent.insertBefore(button, slot.before);
+      else slot.parent.appendChild(button);
+    }
+    button.classList.remove('twgif-inline-kick', 'twgif-inline-wtv');
+    button.classList.add('twgif-inline-trigger', 'twgif-inline-twitch');
+    button.style.removeProperty('--twgif-trigger-left');
+    button.style.removeProperty('--twgif-trigger-top');
+    return true;
   }
 
   function createTrigger() {
@@ -2772,6 +2855,13 @@
   function positionTriggerForSite(input, toolbar, button = activeTrigger) {
     if (!input || !button || !input.isConnected) return;
 
+    // Twitch must use its real live-chat action row. This keeps the icon aligned
+    // with channel points and settings and makes it disappear with the chat itself.
+    if (isTwitchSite()) {
+      if (!mountTwitchTrigger(button, input, toolbar)) button.remove();
+      return;
+    }
+
     // For Kick and w.tv, insert into the actual control row so flex layout reserves
     // space for the icon and neighbouring buttons cannot overlap it.
     if (isWtvSite()) {
@@ -2807,6 +2897,7 @@
   }
 
   function repositionTrigger() {
+    if (isTwitchSite() && clearUnavailableTwitchTrigger()) return;
     const button = document.getElementById('twgif-trigger');
     if (!button) return;
     const input = getChatInput();
@@ -2818,6 +2909,7 @@
   }
 
   function ensureTrigger() {
+    if (isTwitchSite() && clearUnavailableTwitchTrigger()) return false;
     const input = getChatInput();
     if (!input) return false;
     activeComposer = input;
@@ -2843,6 +2935,7 @@
     ensureQueued = true;
     requestAnimationFrame(() => {
       ensureQueued = false;
+      if (isTwitchSite() && clearUnavailableTwitchTrigger()) return;
       const button = document.getElementById('twgif-trigger');
       if (!button?.isConnected) {
         ensureTrigger();
@@ -3945,7 +4038,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.9.11 started', { href: location.href });
+    logDebug('Userscript v5.9.13 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
