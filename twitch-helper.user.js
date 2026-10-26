@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.16
+// @version      5.9.17
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with FFmpeg conversion, tile-aware previews and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -85,6 +85,7 @@
   let settingsSyncRunning = false;
   let settingsSyncAgain = false;
   let observer = null;
+  let twitchLifecycleObserver = null;
   let ensureQueued = false;
   let lastObservedInput = null;
   const debugLogs = [];
@@ -2966,9 +2967,11 @@
     requestAnimationFrame(() => {
       ensureQueued = false;
       if (isTwitchSite() && clearUnavailableTwitchTrigger()) return;
+      const previousComposer = activeComposer;
       const button = document.getElementById('twgif-trigger');
       if (!button?.isConnected) {
-        ensureTrigger();
+        const mounted = ensureTrigger();
+        if (isTwitchSite() && mounted && activeComposer !== previousComposer) installObservers();
         return;
       }
 
@@ -2978,6 +2981,7 @@
       if (!toolbar) return;
       hideDropsToolbarButtons(toolbar);
       positionTriggerForSite(input, toolbar, button);
+      if (isTwitchSite() && input !== previousComposer) installObservers();
     });
   }
 
@@ -4081,6 +4085,48 @@
   function installObservers() {
     if (observer) observer.disconnect();
     const target = getChatInput();
+
+    if (isTwitchSite()) {
+      // Keep one lightweight document-level observer for Twitch SPA stream changes.
+      // Twitch replaces the chat composer itself when switching channels, which
+      // would disconnect a local-only observer forever.
+      if (!twitchLifecycleObserver) {
+        twitchLifecycleObserver = new MutationObserver(records => {
+          if (isTwitchRecordingPage()) return;
+          const currentComposer = activeComposer;
+          const currentTrigger = document.getElementById('twgif-trigger');
+          const relevantSelector =
+            '[data-a-target="chat-input"], [data-a-target="chat-input-container"], ' +
+            '[data-a-target="chat-room-component-layout"], .chat-input__buttons-container';
+
+          const containsRelevantChatNode = node => {
+            if (!node || node.nodeType !== 1) return false;
+            if (node.id === 'twgif-trigger' ||
+                node === currentComposer || (currentComposer && node.contains(currentComposer)) ||
+                node === currentTrigger || (currentTrigger && node.contains(currentTrigger))) return true;
+            if (node.matches(relevantSelector)) return true;
+            // Avoid walking Twitch's frequently-mutated message list.
+            if (node.matches('[data-a-target="chat-scrollable-area__message-container"], [data-a-target^="chat-line"], [class*="chat-line__message"]')) return false;
+            return Boolean(node.querySelector(relevantSelector));
+          };
+
+          for (const record of records) {
+            if (record.type !== 'childList') continue;
+            // A removed composer or toolbar means Twitch is replacing the chat UI.
+            if (Array.from(record.removedNodes || []).some(containsRelevantChatNode) ||
+                Array.from(record.addedNodes || []).some(containsRelevantChatNode)) {
+              scheduleEnsure();
+              return;
+            }
+          }
+        });
+        twitchLifecycleObserver.observe(document.body || document.documentElement, {
+          childList: true,
+          subtree: true
+        });
+      }
+    }
+
     if (target) {
       const toolbar = getToolbar(target);
       const localRoot = toolbar?.parentElement || toolbar || target.parentElement;
@@ -4096,9 +4142,7 @@
           ...visibilityAttributes
         });
         if (isTwitchSite()) {
-          // Watch the chat/composer ancestors for collapse/hidden-state changes.
-          // Observe only attributes on those specific ancestors, not the whole
-          // Twitch document subtree, to avoid work for every incoming chat message.
+          // Observe current chat ancestors so collapse/expand style changes are detected.
           const watched = new Set([localRoot]);
           for (const startNode of [target, toolbar]) {
             let node = startNode;
@@ -4130,7 +4174,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.9.16 started', { href: location.href });
+    logDebug('Userscript v5.9.17 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
