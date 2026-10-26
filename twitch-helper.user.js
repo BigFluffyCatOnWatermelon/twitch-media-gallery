@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.15
+// @version      5.9.16
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with FFmpeg conversion, tile-aware previews and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -30,8 +30,9 @@
 (() => {
   'use strict';
 
+  const APP_VERSION = '5.9.16';
   const VERSION = 5;
-  const DEFAULT_MAX_WIDTH = 1500;
+  const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
   const CONFIG_KEY = 'twgif_gallery_config_v2';
@@ -44,7 +45,7 @@
   const FFMPEG_CORE_BASE_URL = `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/umd`;
   const FFMPEG_CACHE_DB = 'twgif-ffmpeg-assets-v1';
   const SETTINGS_FILENAME = 'twitch-gif-gallery-settings.json';
-  const SETTINGS_SCHEMA_VERSION = 8;
+  const SETTINGS_SCHEMA_VERSION = 9;
 
   let panelView = 'gallery';
   let settingsTab = 'general';
@@ -104,19 +105,19 @@
     pageSize: 100,
     previewMaxSize: 1920,
     previewTileBoost: 5,
-    conversionRules: { image: 'webp', gif: 'keep', video: 'webp' },
+    conversionRules: { image: 'webp', gif: 'webp', video: 'webp' },
     compression: {
       imageQuality: 82,
       animationQuality: 68,
-      videoMaxWidth: 1280,
+      videoMaxWidth: 500,
       videoFps: 24,
       animationFps: 10,
-      videoBitrateKbps: 0,
+      videoBitrateKbps: 1500,
       audioBitrateKbps: 96,
       videoCrf: 28,
-      speedPreset: 'ultrafast',
+      speedPreset: 'fast',
       scaleFilter: 'fast_bilinear',
-      webpCompressionLevel: 0
+      webpCompressionLevel: 5
     },
     settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
     gistToken: '',
@@ -240,9 +241,17 @@
       settingsSchemaVersion: SETTINGS_SCHEMA_VERSION
     };
     if (previousSchemaVersion < SETTINGS_SCHEMA_VERSION) {
-      if (!allowedTargets.image.includes(config.conversionRules.image)) config.conversionRules.image = defaults.conversionRules.image;
-      if (!allowedTargets.gif.includes(config.conversionRules.gif)) config.conversionRules.gif = defaults.conversionRules.gif;
-      if (!allowedTargets.video.includes(config.conversionRules.video)) config.conversionRules.video = defaults.conversionRules.video;
+      // Schema 9: migrate existing users to the new conversion defaults once.
+      // Keep gallery layout and sync credentials unchanged.
+      if (previousSchemaVersion < 9) {
+        config.maxWidth = defaults.maxWidth;
+        config.conversionRules = { ...defaults.conversionRules };
+        config.compression = { ...defaults.compression };
+      } else {
+        if (!allowedTargets.image.includes(config.conversionRules.image)) config.conversionRules.image = defaults.conversionRules.image;
+        if (!allowedTargets.gif.includes(config.conversionRules.gif)) config.conversionRules.gif = defaults.conversionRules.gif;
+        if (!allowedTargets.video.includes(config.conversionRules.video)) config.conversionRules.video = defaults.conversionRules.video;
+      }
       config.settingsUpdatedAt = Date.now();
       GM_setValue(CONFIG_KEY, config);
     }
@@ -2267,22 +2276,20 @@
         return;
       }
 
-      const migratedRules = {
-        image: remote.conversionRules?.image || 'webp',
-        gif: remote.conversionRules?.gif || 'keep',
-        video: remote.conversionRules?.video || 'webp'
-      };
-      // Only older schemas used the restricted conversion choices below.
-      // Schema 7 already supports all formats, so preserve those settings in v8.
-      if (remoteSchemaVersion < 7) {
-        if (!['keep', 'webp', 'png', 'jpg'].includes(migratedRules.image)) migratedRules.image = 'webp';
-        if (migratedRules.gif !== 'keep') migratedRules.gif = 'keep';
-        if (!['keep', 'webp'].includes(migratedRules.video)) migratedRules.video = 'webp';
-      }
+      const defaults = DEFAULT_CONFIG();
+      const resetConversionDefaults = remoteSchemaVersion < 9;
+      const migratedRules = resetConversionDefaults
+        ? { ...defaults.conversionRules }
+        : {
+            image: remote.conversionRules?.image || defaults.conversionRules.image,
+            gif: remote.conversionRules?.gif || defaults.conversionRules.gif,
+            video: remote.conversionRules?.video || defaults.conversionRules.video
+          };
 
       const migratedSettingsUpdatedAt = Date.now();
       saveConfig({
         ...remote,
+        ...(resetConversionDefaults ? { maxWidth: defaults.maxWidth, compression: { ...defaults.compression } } : {}),
         conversionRules: migratedRules,
         gistToken: config.gistToken,
         gistId: config.gistId,
