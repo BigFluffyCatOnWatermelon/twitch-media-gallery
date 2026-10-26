@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.17
+// @version      5.9.18
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with FFmpeg conversion, tile-aware previews and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -2633,7 +2633,9 @@
 
     for (const element of [input, toolbar]) {
       for (let node = element; node && node !== document.documentElement; node = node.parentElement) {
-        if (node.hidden || node.getAttribute('aria-hidden') === 'true') return false;
+        // Use visual CSS state only. aria-hidden is also changed by player/chat
+        // enhancements and does not necessarily mean the controls are invisible.
+        if (node.hidden) return false;
         const style = getComputedStyle(node);
         if (style.display === 'none' || style.visibility === 'hidden') return false;
       }
@@ -2641,21 +2643,21 @@
 
     const inputRect = input.getBoundingClientRect();
     const toolbarRect = toolbar.getBoundingClientRect();
-    const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
-    const viewportHeight = Math.max(1, document.documentElement.clientHeight || innerHeight);
-    // Hidden/collapsed chat often leaves its React nodes mounted but shrinks or
-    // moves the composer off-screen. Do not keep a floating extension button there.
-    if (inputRect.width < 100 || inputRect.height < 12 || toolbarRect.width < 32 || toolbarRect.height < 10) return false;
-    const intersectsViewport = rect =>
-      rect.right > 0 && rect.left < viewportWidth && rect.bottom > 0 && rect.top < viewportHeight;
-    return intersectsViewport(inputRect) && intersectsViewport(toolbarRect);
+    // Do not reject a live chat just because an extension animates/moves it outside
+    // the viewport while the player is collapsed. The trigger is mounted inline,
+    // so it naturally follows the chat's actual position and visibility.
+    return inputRect.width >= 100 && inputRect.height >= 12 &&
+      toolbarRect.width >= 32 && toolbarRect.height >= 10;
   }
 
   function clearUnavailableTwitchTrigger() {
     if (!isTwitchSite()) return false;
-    const input = isTwitchRecordingPage() ? null : getChatInput();
-    const toolbar = input ? getToolbar(input) : null;
-    if (isTwitchChatComposerVisible(input, toolbar)) return false;
+
+    // Only remove it for routes where the chat composer must never be shown (VODs/clips).
+    // During live stream switches the editor can temporarily disappear or be hidden;
+    // leave the button in its toolbar so it returns with the chat, and let the
+    // persistent lifecycle observer mount it into the replacement toolbar.
+    if (!isTwitchRecordingPage()) return false;
 
     if (isPanelOpen()) closePanel();
     document.getElementById('twgif-trigger')?.remove();
@@ -2889,7 +2891,10 @@
     // Twitch must use its real live-chat action row. This keeps the icon aligned
     // with channel points and settings and makes it disappear with the chat itself.
     if (isTwitchSite()) {
-      if (!mountTwitchTrigger(button, input, toolbar)) button.remove();
+      // Never delete the trigger because Twitch/RTE temporarily hides or replaces
+      // the composer. If it is already inside a hidden toolbar it will follow that
+      // toolbar naturally; if detached, the observers retry mounting it later.
+      mountTwitchTrigger(button, input, toolbar);
       return;
     }
 
@@ -4174,7 +4179,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.9.17 started', { href: location.href });
+    logDebug('Userscript v5.9.18 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
