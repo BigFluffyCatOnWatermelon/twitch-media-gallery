@@ -2663,6 +2663,28 @@
     return true;
   }
 
+  function hideTwitchSettingsSpacer(toolbar, trigger, settingsButton) {
+    if (!toolbar || !trigger || !settingsButton ||
+        !toolbar.contains(trigger) || !toolbar.contains(settingsButton)) return;
+
+    const follows = Node.DOCUMENT_POSITION_FOLLOWING;
+    for (const spacer of toolbar.querySelectorAll('div[class*="Layout-sc-1xcs6mc-0"]')) {
+      if (spacer.contains(trigger) || spacer.contains(settingsButton)) continue;
+      const child = spacer.children.length === 1 ? spacer.firstElementChild : null;
+      if (!child || child.tagName !== 'P' ||
+          !String(child.className || '').includes('CoreText-sc-1txzju1-0') ||
+          spacer.textContent.trim() !== '') continue;
+
+      const iconIsBefore = Boolean(trigger.compareDocumentPosition(spacer) & follows);
+      const spacerIsBeforeSettings = Boolean(spacer.compareDocumentPosition(settingsButton) & follows);
+      if (!iconIsBefore || !spacerIsBeforeSettings) continue;
+
+      // Twitch owns this empty spacer element; hide it instead of detaching a React node.
+      spacer.style.setProperty('display', 'none', 'important');
+      spacer.setAttribute('data-twgif-hidden-settings-spacer', 'true');
+    }
+  }
+
   function mountTwitchTrigger(button, input, toolbar) {
     if (!button || !isTwitchChatComposerVisible(input, toolbar)) return false;
 
@@ -2690,6 +2712,7 @@
     }
     button.classList.remove('twgif-inline-kick', 'twgif-inline-wtv');
     button.classList.add('twgif-inline-trigger', 'twgif-inline-twitch');
+    hideTwitchSettingsSpacer(toolbar, button, settings);
     button.style.removeProperty('--twgif-trigger-left');
     button.style.removeProperty('--twgif-trigger-top');
     return true;
