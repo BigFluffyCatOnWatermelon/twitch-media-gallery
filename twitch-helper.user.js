@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.19
-// @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with FFmpeg conversion, tile-aware previews and Gist settings sync.
+// @version      5.9.20
+// @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, FFmpeg conversion, tile-aware previews and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @match        https://www.twitch.tv/*
@@ -24,13 +24,18 @@
 // @connect      7tv.app
 // @connect      cdn.7tv.app
 // @connect      cdn.jsdelivr.net
+// @connect      t.me
+// @connect      telegram.me
+// @connect      telesco.pe
+// @connect      cdn-telegram.org
+// @connect      telegram-cdn.org
 // @connect      *
 // ==/UserScript==
 
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.16';
+  const APP_VERSION = '5.9.20';
   const VERSION = 5;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -1500,6 +1505,191 @@
     }
   }
 
+
+  function parseTelegramPostUrl(url) {
+    if (!url || !['http:', 'https:'].includes(url.protocol)) return null;
+    const host = String(url.hostname || '').toLowerCase().replace(/^www\./, '');
+    if (!['t.me', 'telegram.me'].includes(host)) return null;
+
+    let parts = String(url.pathname || '').split('/').filter(Boolean);
+    try { parts = parts.map(part => decodeURIComponent(part)); } catch (_) {}
+    if (parts[0] && parts[0].toLowerCase() === 's') parts.shift();
+    if (parts.length !== 2) return null;
+
+    const channel = String(parts[0] || '').toLowerCase();
+    const postId = String(parts[1] || '');
+    if (!/^[a-z0-9_]+$/i.test(channel) || !/^\d+$/.test(postId)) return null;
+    if (!Number.isSafeInteger(Number(postId)) || Number(postId) <= 0) return null;
+
+    return {
+      channel,
+      postId,
+      canonicalUrl: 'https://t.me/' + channel + '/' + postId,
+      embedUrl: 'https://t.me/' + channel + '/' + postId + '?embed=1&mode=tme',
+      previewUrl: 'https://t.me/s/' + channel + '?before=' + (Number(postId) + 1)
+    };
+  }
+
+  function normalizeTelegramMediaUrl(rawUrl) {
+    const value = String(rawUrl || '').trim().replace(/&amp;/gi, '&');
+    if (!value || /^(?:blob:|data:|javascript:)/i.test(value)) return '';
+    let parsed;
+    try { parsed = new URL(value, 'https://t.me/'); } catch (_) { return ''; }
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return '';
+
+    const host = String(parsed.hostname || '').toLowerCase();
+    const allowedHost = host === 'telesco.pe'
+      || host.endsWith('.telesco.pe')
+      || host === 'telegram.org'
+      || host.endsWith('.telegram.org')
+      || host === 'telegram-cdn.org'
+      || host.endsWith('.telegram-cdn.org')
+      || host === 'cdn-telegram.org'
+      || host.endsWith('.cdn-telegram.org');
+    if (!allowedHost) return '';
+
+    const path = String(parsed.pathname || '');
+    const hasMediaExtension = /\.(?:jpe?g|png|gif|webp|bmp|mp4|webm|mov|m4v|mkv|avi|ogv|mpg|mpeg)(?:$)/i.test(path);
+    if (!/\/file\//i.test(path) && !hasMediaExtension) return '';
+    parsed.hash = '';
+    return parsed.href;
+  }
+
+  function telegramCssBackgroundUrl(element) {
+    const style = String(element?.getAttribute?.('style') || '');
+    const match = /background-image\s*:[^;]*url\(\s*(?:"([^"]+)"|'([^']+)'|([^)\s]+))\s*\)/i.exec(style);
+    return match ? String(match[1] || match[2] || match[3] || '').trim() : '';
+  }
+
+  function extractTelegramPostMedia(html, target, allowSingleMessage = false) {
+    let doc;
+    try {
+      doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+    } catch (_) {
+      return [];
+    }
+
+    const messages = Array.from(doc.querySelectorAll('.tgme_widget_message'));
+    if (!messages.length) return [];
+    const expected = (target.channel + '/' + target.postId).toLowerCase();
+    const getDataPost = element => {
+      let current = element;
+      while (current && current.nodeType === 1) {
+        const value = String(current.getAttribute('data-post') || '').trim();
+        if (value) return value.toLowerCase();
+        current = current.parentElement;
+      }
+      return '';
+    };
+    const message = messages.find(element => {
+      const value = getDataPost(element);
+      return value === expected || value.endsWith('/' + expected);
+    }) || (allowSingleMessage && messages.length === 1 && !getDataPost(messages[0]) ? messages[0] : null);
+    if (!message) return [];
+
+    const candidates = [];
+    const seen = new Set();
+    const addCandidate = (rawUrl, type, element, posterOnly = false) => {
+      const url = normalizeTelegramMediaUrl(rawUrl);
+      if (!url || seen.has(url)) return;
+      seen.add(url);
+      let resolvedType = type || 'image';
+      const pathname = (() => { try { return new URL(url).pathname; } catch (_) { return ''; } })();
+      if (/\.(?:mp4|webm|mov|m4v|mkv|avi|ogv|mpg|mpeg)$/i.test(pathname)) resolvedType = 'video';
+      else if (/\.gif$/i.test(pathname)) resolvedType = 'gif';
+      candidates.push({ url, type: resolvedType, posterOnly: Boolean(posterOnly), element });
+    };
+
+    // Prefer the photo anchor URL over its CSS thumbnail when Telegram exposes both.
+    for (const photo of Array.from(message.querySelectorAll('.tgme_widget_message_photo_wrap, .tgme_widget_message_photo'))) {
+      const href = normalizeTelegramMediaUrl(photo.getAttribute('href') || '');
+      if (href) addCandidate(href, 'image', photo, false);
+      else addCandidate(telegramCssBackgroundUrl(photo), 'image', photo, false);
+    }
+
+    // Telegram sometimes renders downloadable media as a video/source element.
+    for (const video of Array.from(message.querySelectorAll('video'))) {
+      const videoSources = [video, ...Array.from(video.querySelectorAll('source'))];
+      for (const source of videoSources) {
+        const src = source.getAttribute('src') || source.getAttribute('data-src') || '';
+        addCandidate(src, 'video', video, false);
+      }
+    }
+
+    // Handle image tags when the post uses an img rather than a photo-wrap background.
+    for (const image of Array.from(message.querySelectorAll('img'))) {
+      if (image.closest('.tgme_widget_message_user_photo, .tgme_widget_message_author, .tgme_widget_message_photo_wrap, .tgme_widget_message_video_thumb, .tgme_widget_message_sticker, .tgme_widget_message_poll')) continue;
+      const src = image.getAttribute('src') || image.getAttribute('data-src') || '';
+      if (/\/file\//i.test((() => { try { return new URL(src, 'https://t.me/').pathname; } catch (_) { return ''; } })())) {
+        addCandidate(src, 'image', image, false);
+      }
+    }
+
+    // Some public previews expose a downloadable video link without a <video> tag.
+    for (const anchor of Array.from(message.querySelectorAll('a[href]'))) {
+      const raw = anchor.getAttribute('href') || '';
+      const path = (() => { try { return new URL(raw, 'https://t.me/').pathname; } catch (_) { return ''; } })();
+      if (/\.(?:mp4|webm|mov|m4v|mkv|avi|ogv|mpg|mpeg)(?:$)/i.test(path)) {
+        addCandidate(raw, 'video', anchor, false);
+      }
+    }
+
+    if (candidates.length) {
+      candidates.sort((a, b) => {
+        if (!a.element || !b.element || a.element === b.element || !a.element.compareDocumentPosition) return 0;
+        const order = a.element.compareDocumentPosition(b.element);
+        if (order & 4) return -1;
+        if (order & 2) return 1;
+        return 0;
+      });
+      return candidates.map(({ url, type, posterOnly }) => ({ url, type, posterOnly }));
+    }
+
+    // For large videos Telegram may expose only the poster. Keep it as a fallback,
+    // and explicitly report that it is a preview rather than the original video.
+    for (const thumb of Array.from(message.querySelectorAll('.tgme_widget_message_video_thumb, video[poster]'))) {
+      const raw = thumb.tagName && thumb.tagName.toLowerCase() === 'video'
+        ? thumb.getAttribute('poster')
+        : telegramCssBackgroundUrl(thumb);
+      addCandidate(raw, 'image', thumb, true);
+    }
+    return candidates.map(({ url, type, posterOnly }) => ({ url, type, posterOnly }));
+  }
+
+  async function resolveTelegramPostMedia(target, runId) {
+    const attempts = [
+      { url: target.embedUrl, allowSingleMessage: true },
+      { url: target.previewUrl, allowSingleMessage: false }
+    ];
+    let lastError = null;
+
+    for (const attempt of attempts) {
+      ensureProcessingRun(runId);
+      try {
+        const response = await request({
+          method: 'GET',
+          url: attempt.url,
+          responseType: 'text',
+          timeout: 30000,
+          trackForCancel: true,
+          headers: { Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8' }
+        });
+        ensureProcessingRun(runId);
+        const html = String(response.responseText || (typeof response.response === 'string' ? response.response : ''));
+        if (!html) continue;
+        const media = extractTelegramPostMedia(html, target, attempt.allowSingleMessage);
+        if (media.length) return media;
+      } catch (error) {
+        if (error?.name === 'AbortError' || !isProcessingRunCurrent(runId)) throw error;
+        lastError = error;
+        logDebug('Telegram post resolver request failed', { url: attempt.url, error: error.message || String(error) });
+      }
+    }
+
+    if (lastError) logDebug('Telegram post did not expose downloadable media', { post: target.canonicalUrl });
+    throw new Error('Не удалось получить медиа из Telegram-поста. Проверь, что канал публичный, пост не удалён и содержит фото или доступное для скачивания видео. Иногда Telegram показывает только превью большого видео.');
+  }
+
   function is7TVUrl(url) {
     return Boolean(url && /(^|\.)7tv\.(?:app|io)$/i.test(url.hostname));
   }
@@ -1565,7 +1755,7 @@
     }
   }
 
-  async function addUrlCore(rawUrl, customName = '', runId = null) {
+  async function addUrlCore(rawUrl, customName = '', runId = null, sourceKeyOverride = '') {
     const text = String(rawUrl || '').trim().replace(/^<|>$/g, '');
     let parsed;
     try { parsed = new URL(text); }
@@ -1574,13 +1764,55 @@
     ensureProcessingRun(runId);
 
     const originalUrl = parsed.toString();
-    const sourceKey = 'url:' + originalUrl;
+    const sourceKey = String(sourceKeyOverride || ('url:' + originalUrl));
     const alreadyAdded = loadData().items.some(item =>
       item.url === originalUrl || item.previewUrl === originalUrl || item.sourceKey === sourceKey
     );
     if (alreadyAdded) {
       setStatus('Это медиа уже есть в галерее.', 'info');
       return false;
+    }
+
+    const telegramPost = parseTelegramPostUrl(parsed);
+    if (telegramPost) {
+      setStatus('Получаю медиа из Telegram-поста…', 'info', true);
+      const telegramMedia = await resolveTelegramPostMedia(telegramPost, runId);
+      ensureProcessingRun(runId);
+
+      let imported = 0;
+      let skipped = 0;
+      const mediaErrors = [];
+      for (let index = 0; index < telegramMedia.length; index++) {
+        ensureProcessingRun(runId);
+        const media = telegramMedia[index];
+        const mediaSourceKey = 'telegram-post:' + telegramPost.canonicalUrl + '#' + encodeURIComponent(media.url);
+        try {
+          const added = await addUrlCore(media.url, '', runId, mediaSourceKey);
+          if (added) imported++;
+          else skipped++;
+        } catch (error) {
+          if (error?.name === 'AbortError' || !isProcessingRunCurrent(runId)) throw error;
+          mediaErrors.push(error.message || String(error));
+          logDebug('Telegram media import failed', { post: telegramPost.canonicalUrl, mediaUrl: media.url, error: error.message || String(error) });
+        }
+      }
+
+      if (imported > 0) {
+        const hasPosterOnly = telegramMedia.some(media => media.posterOnly);
+        if (hasPosterOnly) {
+          setStatus('Добавлено превью видео из Telegram; сам ролик недоступен через публичную страницу.', 'info', true);
+        } else if (mediaErrors.length) {
+          setStatus('Из Telegram добавлено: ' + imported + '; ошибок: ' + mediaErrors.length + '.', 'success', true);
+        } else {
+          setStatus('Из Telegram-поста добавлено медиа: ' + imported + '.', 'success', true);
+        }
+        return true;
+      }
+      if (skipped === telegramMedia.length && mediaErrors.length === 0) {
+        setStatus('Медиа из этого Telegram-поста уже есть в галерее.', 'info');
+        return false;
+      }
+      throw new Error('Не удалось импортировать медиа из Telegram-поста: ' + (mediaErrors[0] || 'не удалось скачать вложение.'));
     }
 
     // 7TV page links remain the original chat link; all 7TV CDN links also bypass conversion.
