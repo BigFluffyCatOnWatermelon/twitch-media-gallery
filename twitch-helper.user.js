@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.18
+// @version      5.9.19
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with FFmpeg conversion, tile-aware previews and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -86,6 +86,7 @@
   let settingsSyncAgain = false;
   let observer = null;
   let twitchLifecycleObserver = null;
+  let twitchRecoveryTimer = 0;
   let ensureQueued = false;
   let lastObservedInput = null;
   const debugLogs = [];
@@ -4179,7 +4180,17 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
-    logDebug('Userscript v5.9.18 started', { href: location.href });
+
+    // Reyohoho and Twitch can reparent/rebuild the live-chat action row without
+    // producing a stable route event. A lightweight Twitch-only recovery check
+    // remounts the trigger once the live composer is available again.
+    if (isTwitchSite() && !twitchRecoveryTimer) {
+      twitchRecoveryTimer = window.setInterval(() => {
+        if (!isTwitchRecordingPage()) scheduleEnsure();
+      }, 1200);
+    }
+
+    logDebug('Userscript v5.9.19 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
