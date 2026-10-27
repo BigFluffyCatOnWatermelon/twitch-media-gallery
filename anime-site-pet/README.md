@@ -15,7 +15,7 @@ A small self-contained anime-style site mascot for Twitch and most ordinary webs
 - `Alt` + `Shift` + `P`: settings.
 - `Alt` + `Shift` + `H`: show/hide the character.
 
-## Features in v0.1.0
+## Features in v0.1.1
 
 - Random autonomous actions: walk, run, hop, sit, sleep, dance, look around, blink, stumble, and recover.
 - Pointer curiosity and occasional playful chases.
