@@ -53,6 +53,8 @@
   const MEDIA_CACHE_STORE = 'assets';
   const MEDIA_CACHE_MAX_BYTES = 200 * 1024 * 1024;
   const MEDIA_CACHE_MAX_ENTRY_BYTES = 24 * 1024 * 1024;
+  const MEDIA_CACHE_MAX_REMOTE_BYTES = 8 * 1024 * 1024;
+  const MEDIA_CACHE_MAX_REMOTE_VIDEO_BYTES = 5 * 1024 * 1024;
   const SETTINGS_FILENAME = 'twitch-gif-gallery-settings.json';
   const SETTINGS_SCHEMA_VERSION = 9;
 
@@ -694,11 +696,6 @@
             if (total <= MEDIA_CACHE_MAX_BYTES) break;
             store.delete(record.url);
             total -= Number(record.size) || Number(record.blob && record.blob.size) || 0;
-            const objectUrl = cachedMediaObjectUrls.get(record.url);
-            if (objectUrl) {
-              try { URL.revokeObjectURL(objectUrl); } catch (_) {}
-              cachedMediaObjectUrls.delete(record.url);
-            }
           }
         };
         allRequest.onerror = () => {};
@@ -727,8 +724,8 @@
       if (head.status < 200 || head.status >= 300) return;
       const match = String(head.responseHeaders || '').match(/content-length:\s*(\d+)/i);
       const size = match ? Number(match[1]) : 0;
-      if (!Number.isFinite(size) || size <= 0 || size > MEDIA_CACHE_MAX_ENTRY_BYTES) return;
-      if (isVideo && size > MEDIA_CACHE_MAX_ENTRY_BYTES) return;
+      if (!Number.isFinite(size) || size <= 0 || size > MEDIA_CACHE_MAX_REMOTE_BYTES) return;
+      if (isVideo && size > MEDIA_CACHE_MAX_REMOTE_VIDEO_BYTES) return;
       const blob = await requestBlob(key, 60000, false);
       if (blob.size > 0 && blob.size <= MEDIA_CACHE_MAX_ENTRY_BYTES) await cacheMediaBlob(key, blob);
     } catch (_) {
