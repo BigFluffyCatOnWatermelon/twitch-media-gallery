@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.22
+// @version      5.9.23
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, FFmpeg conversion, tile-aware previews and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.22';
+  const APP_VERSION = '5.9.23';
   const VERSION = 5;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -75,6 +75,7 @@
   let chatMediaScanQueued = false;
   let holdPreviewTimer = 0;
   let holdPreviewItem = null;
+  let holdPreviewRestore = null;
   let holdPointerId = null;
   let holdPointerActive = false;
   let holdPreviewStarted = false;
@@ -3889,10 +3890,29 @@
     return card;
   }
 
+  function restoreHoldPreviewMedia() {
+    const saved = holdPreviewRestore;
+    if (!saved) return;
+    holdPreviewRestore = null;
+    const { media, parent, placeholder, nextSibling, styleAttribute } = saved;
+    try {
+      if (parent) {
+        if (placeholder && placeholder.parentNode === parent) parent.replaceChild(media, placeholder);
+        else if (!parent.contains(media)) parent.insertBefore(media, nextSibling && nextSibling.parentNode === parent ? nextSibling : null);
+      }
+    } catch (error) {
+      logDebug('Could not restore gallery media after preview', error);
+    }
+    if (styleAttribute === null) media.removeAttribute('style');
+    else if (styleAttribute !== undefined) media.setAttribute('style', styleAttribute);
+    if (media.tagName === 'VIDEO') { try { media.pause(); } catch (_) {} }
+  }
+
   function positionHoldPreview(holder, card, media, config = loadConfig()) {
     if (!holder || !card || !media) return;
     const cardRect = card.getBoundingClientRect();
-    const tileMedia = card.querySelector('.twgif-media');
+    const tileMedia = card.querySelector('.twgif-media') ||
+      (holdPreviewRestore && holdPreviewRestore.card === card ? holdPreviewRestore.placeholder : null);
     const tileRect = tileMedia ? tileMedia.getBoundingClientRect() : cardRect;
     const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
     const viewportHeight = Math.max(1, document.documentElement.clientHeight || innerHeight);
@@ -3949,38 +3969,77 @@
     let parsedPath = '';
     try { parsedPath = new URL(url, location.href).pathname.toLowerCase(); } catch (_) {}
     const isVideo = item.type === 'video' || ['.webm', '.mp4', '.mov', '.mkv', '.avi', '.ogv'].some(ext => parsedPath.endsWith(ext));
-    const current = holder.firstElementChild;
-    const currentType = current && current.tagName === 'VIDEO' ? 'video' : 'image';
-    const wantedType = isVideo ? 'video' : 'image';
+    const wantedTag = isVideo ? 'VIDEO' : 'IMG';
     const config = loadConfig();
-    let el = current;
+    let el = null;
 
-    if (!el || holder.dataset.currentUrl !== url || currentType !== wantedType) {
-      holder.replaceChildren();
-      el = document.createElement(isVideo ? 'video' : 'img');
-      if (isVideo) {
-        el.muted = true; el.loop = true; el.autoplay = true; el.playsInline = true; el.preload = 'metadata';
+    // If the same tile is already in the preview holder, keep using that exact node.
+    if (holdPreviewRestore && holdPreviewRestore.card === card && holdPreviewRestore.url === url &&
+        holdPreviewRestore.media.tagName === wantedTag) {
+      el = holdPreviewRestore.media;
+    } else {
+      if (holdPreviewRestore) restoreHoldPreviewMedia();
+
+      // Move the already-loaded tile media into the popup instead of creating a second
+      // IMG/VIDEO pointed at the remote URL. This avoids repeat fetches and re-decodes.
+      const tileMedia = card.querySelector('.twgif-media');
+      if (tileMedia && tileMedia.dataset.src === url && tileMedia.tagName === wantedTag &&
+          tileMedia.dataset.loadState !== 'error' && tileMedia.parentNode) {
+        const parent = tileMedia.parentNode;
+        const rect = tileMedia.getBoundingClientRect();
+        const placeholder = document.createElement('span');
+        placeholder.className = 'twgif-media-placeholder';
+        placeholder.style.cssText = `display:block;width:${Math.max(0, rect.width)}px;height:${Math.max(0, rect.height)}px;flex:0 0 auto;`;
+        const saved = {
+          media: tileMedia, parent, placeholder, nextSibling: tileMedia.nextSibling,
+          styleAttribute: tileMedia.getAttribute('style'), card, url
+        };
+        parent.replaceChild(placeholder, tileMedia);
+        holder.replaceChildren(tileMedia);
+        holdPreviewRestore = saved;
+        el = tileMedia;
+        const updateSize = () => {
+          if (holdPreviewItem && holdPreviewItem.id === item.id && holder.firstElementChild === el) {
+            positionHoldPreview(holder, card, el, config);
+          }
+        };
+        el.addEventListener(isVideo ? 'loadedmetadata' : 'load', updateSize, { once: true });
       } else {
-        el.alt = '';
-        el.decoding = 'async';
+        // Fallback for missing/failed tile nodes; normal cards use the borrowed node above.
+        const current = holder.firstElementChild;
+        const currentType = current && current.tagName === 'VIDEO' ? 'video' : 'image';
+        const wantedType = isVideo ? 'video' : 'image';
+        if (!current || holder.dataset.currentUrl !== url || currentType !== wantedType) {
+          holder.replaceChildren();
+          el = document.createElement(isVideo ? 'video' : 'img');
+          if (isVideo) {
+            el.muted = true; el.loop = true; el.autoplay = true; el.playsInline = true; el.preload = 'metadata';
+          } else {
+            el.alt = '';
+            el.decoding = 'async';
+          }
+          const updateSize = () => {
+            if (holdPreviewItem && holdPreviewItem.id === item.id && holder.firstElementChild === el) {
+              positionHoldPreview(holder, card, el, config);
+            }
+          };
+          el.addEventListener(isVideo ? 'loadedmetadata' : 'load', updateSize);
+          el.addEventListener('error', () => {
+            if (holder.firstElementChild === el) {
+              holder.style.width = 'min(320px, calc(100vw - 16px))';
+              holder.style.height = 'auto';
+            }
+          }, { once: true });
+          holder.dataset.currentUrl = url;
+          holder.appendChild(el);
+          el.src = url;
+        } else {
+          el = current;
+        }
       }
-      const updateSize = () => {
-        if (holdPreviewItem && holdPreviewItem.id === item.id && holder.firstElementChild === el) {
-          positionHoldPreview(holder, card, el, config);
-        }
-      };
-      el.addEventListener(isVideo ? 'loadedmetadata' : 'load', updateSize);
-      el.addEventListener('error', () => {
-        if (holder.firstElementChild === el) {
-          holder.style.width = 'min(320px, calc(100vw - 16px))';
-          holder.style.height = 'auto';
-        }
-      }, { once: true });
-      holder.dataset.currentUrl = url;
-      holder.appendChild(el);
-      el.src = url;
     }
 
+    holder.dataset.currentUrl = url;
     positionHoldPreview(holder, card, el, config);
     if (isVideo && typeof el.play === 'function') el.play().catch(() => {});
     requestAnimationFrame(() => {
@@ -3988,7 +4047,6 @@
       holder.classList.add('twgif-preview-visible');
     });
   }
-
   function hideHoldPreview() {
     const holder = document.getElementById('twgif-hold-preview');
     if (!holder) return;
@@ -3996,7 +4054,9 @@
     holdPreviewItem = null;
     const media = holder.firstElementChild;
     if (media && media.tagName === 'VIDEO') { try { media.pause(); } catch (_) {} }
-    // Keep the last single preview element and URL attached; do not clear its src.
+    // Return the exact media element to its tile, retaining its decoded image/video buffer.
+    if (holdPreviewRestore) restoreHoldPreviewMedia();
+    // Fallback previews remain attached so they can be reused without refetching.
   }
 
   function cardUnderPointer(x, y) {
@@ -4695,7 +4755,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.22 started', { href: location.href });
+    logDebug('Userscript v5.9.23 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
