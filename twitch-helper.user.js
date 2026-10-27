@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.20
+// @version      5.9.21
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, FFmpeg conversion, tile-aware previews and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -35,7 +35,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.20';
+  const APP_VERSION = '5.9.21';
   const VERSION = 5;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -49,6 +49,10 @@
   const FFMPEG_CORE_VERSION = '0.12.10';
   const FFMPEG_CORE_BASE_URL = `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/umd`;
   const FFMPEG_CACHE_DB = 'twgif-ffmpeg-assets-v1';
+  const MEDIA_CACHE_DB = 'twgif-gallery-media-v1';
+  const MEDIA_CACHE_STORE = 'assets';
+  const MEDIA_CACHE_MAX_BYTES = 200 * 1024 * 1024;
+  const MEDIA_CACHE_MAX_ENTRY_BYTES = 24 * 1024 * 1024;
   const SETTINGS_FILENAME = 'twitch-gif-gallery-settings.json';
   const SETTINGS_SCHEMA_VERSION = 9;
 
@@ -70,6 +74,9 @@
   let suppressMediaClickUntil = 0;
   const mediaCardCache = new Map();
   const loadedMediaUrls = new Set();
+  const cachedMediaObjectUrls = new Map();
+  const mediaCachePendingUrls = new Set();
+  let mediaCacheDbPromise = null;
   let galleryResizeObserver = null;
   let activeTrigger = null;
   let activeComposer = null;
@@ -623,6 +630,113 @@
     return map[ext] || '';
   }
 
+  function openMediaCacheDb() {
+    if (mediaCacheDbPromise) return mediaCacheDbPromise;
+    if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+    mediaCacheDbPromise = new Promise(resolve => {
+      let request;
+      try { request = indexedDB.open(MEDIA_CACHE_DB, 1); }
+      catch (_) { mediaCacheDbPromise = null; resolve(null); return; }
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(MEDIA_CACHE_STORE)) {
+          db.createObjectStore(MEDIA_CACHE_STORE, { keyPath: 'url' });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => { mediaCacheDbPromise = null; resolve(null); };
+      request.onblocked = () => { mediaCacheDbPromise = null; resolve(null); };
+    });
+    return mediaCacheDbPromise;
+  }
+
+  function getCachedMediaBlob(url) {
+    return openMediaCacheDb().then(db => {
+      if (!db) return null;
+      return new Promise(resolve => {
+        let transaction;
+        try { transaction = db.transaction(MEDIA_CACHE_STORE, 'readwrite'); }
+        catch (_) { resolve(null); return; }
+        const store = transaction.objectStore(MEDIA_CACHE_STORE);
+        const request = store.get(String(url));
+        request.onsuccess = () => {
+          const record = request.result;
+          if (!record || !record.blob || typeof record.blob.size !== 'number') { resolve(null); return; }
+          record.lastUsedAt = Date.now();
+          store.put(record);
+          resolve(record.blob);
+        };
+        request.onerror = () => resolve(null);
+        transaction.onabort = () => resolve(null);
+      });
+    }).catch(() => null);
+  }
+
+  function cacheMediaBlob(url, blob) {
+    const key = String(url || '').trim();
+    if (!key || !(blob instanceof Blob) || !blob.size || blob.size > MEDIA_CACHE_MAX_ENTRY_BYTES) {
+      return Promise.resolve(false);
+    }
+    return openMediaCacheDb().then(db => {
+      if (!db) return false;
+      return new Promise(resolve => {
+        let transaction;
+        try { transaction = db.transaction(MEDIA_CACHE_STORE, 'readwrite'); }
+        catch (_) { resolve(false); return; }
+        const store = transaction.objectStore(MEDIA_CACHE_STORE);
+        store.put({ url: key, blob, size: blob.size, mime: blob.type || '', lastUsedAt: Date.now() });
+        const allRequest = store.getAll();
+        allRequest.onsuccess = () => {
+          const records = Array.isArray(allRequest.result) ? allRequest.result.slice() : [];
+          let total = records.reduce((sum, record) => sum + (Number(record.size) || Number(record.blob && record.blob.size) || 0), 0);
+          records.sort((a, b) => (Number(a.lastUsedAt) || 0) - (Number(b.lastUsedAt) || 0));
+          for (const record of records) {
+            if (total <= MEDIA_CACHE_MAX_BYTES) break;
+            store.delete(record.url);
+            total -= Number(record.size) || Number(record.blob && record.blob.size) || 0;
+            const objectUrl = cachedMediaObjectUrls.get(record.url);
+            if (objectUrl) {
+              try { URL.revokeObjectURL(objectUrl); } catch (_) {}
+              cachedMediaObjectUrls.delete(record.url);
+            }
+          }
+        };
+        allRequest.onerror = () => {};
+        transaction.oncomplete = () => resolve(true);
+        transaction.onerror = () => resolve(false);
+        transaction.onabort = () => resolve(false);
+      });
+    }).catch(() => false);
+  }
+
+  function cachedObjectUrlFor(url, blob) {
+    const key = String(url || '');
+    if (cachedMediaObjectUrls.has(key)) return cachedMediaObjectUrls.get(key);
+    const objectUrl = URL.createObjectURL(blob);
+    cachedMediaObjectUrls.set(key, objectUrl);
+    return objectUrl;
+  }
+
+  async function cacheRemoteMedia(url, isVideo = false) {
+    const key = String(url || '').trim();
+    if (!key || mediaCachePendingUrls.has(key) || cachedMediaObjectUrls.has(key)) return;
+    mediaCachePendingUrls.add(key);
+    try {
+      // HEAD prevents large videos from being downloaded a second time just for caching.
+      const head = await request({ method: 'HEAD', url: key, timeout: 12000, acceptHttpErrors: true });
+      if (head.status < 200 || head.status >= 300) return;
+      const match = String(head.responseHeaders || '').match(/content-length:\s*(\d+)/i);
+      const size = match ? Number(match[1]) : 0;
+      if (!Number.isFinite(size) || size <= 0 || size > MEDIA_CACHE_MAX_ENTRY_BYTES) return;
+      if (isVideo && size > MEDIA_CACHE_MAX_ENTRY_BYTES) return;
+      const blob = await requestBlob(key, 60000, false);
+      if (blob.size > 0 && blob.size <= MEDIA_CACHE_MAX_ENTRY_BYTES) await cacheMediaBlob(key, blob);
+    } catch (_) {
+      // The remote URL remains usable; caching is an optional offline/reload optimization.
+    } finally {
+      mediaCachePendingUrls.delete(key);
+    }
+  }
   function mediaTypeFromUrl(rawUrl, responseType = '') {
     let pathname = '';
     try { pathname = new URL(rawUrl).pathname.toLowerCase(); } catch (_) {}
@@ -1351,7 +1465,7 @@
 
 
 
-  function addItem(url, name, type, sourceKey = '', previewUrl = '') {
+  function addItem(url, name, type, sourceKey = '', previewUrl = '', mediaBlob = null) {
     const data = loadData();
     const normalizedUrl = String(url || '').trim();
     const normalizedPreview = String(previewUrl || normalizedUrl).trim();
@@ -1379,6 +1493,7 @@
     });
     galleryPage = 0;
     persistData(data);
+    if (mediaBlob instanceof Blob) cacheMediaBlob(normalizedPreview || normalizedUrl, mediaBlob);
     setStatus('Добавлено в коллекцию.', 'success');
     return true;
   }
@@ -1881,7 +1996,7 @@
     const ext = fileExtension(prepared);
     const outputType = ext === 'gif' ? 'gif'
       : ['webm', 'mp4', 'mov', 'mkv', 'avi', 'ogv', 'mpg', 'mpeg'].includes(ext) ? 'video' : 'image';
-    const added = addItem(uploaded.url, prepared.name || hintedName || file.name, outputType, sourceKey, uploaded.url);
+    const added = addItem(uploaded.url, prepared.name || hintedName || file.name, outputType, sourceKey, uploaded.url, prepared);
     setProgress(100, true);
     finishProgress(1000);
     return added;
@@ -1912,7 +2027,7 @@
       const ext = fileExtension(prepared);
       const type = ext === 'gif' ? 'gif'
         : ['webm', 'mp4', 'mov', 'mkv', 'avi'].includes(ext) ? 'video' : 'image';
-      addItem(uploaded.url, prepared.name || file.name || 'Медиафайл', type, sourceKey, uploaded.url);
+      addItem(uploaded.url, prepared.name || file.name || 'Медиафайл', type, sourceKey, uploaded.url, prepared);
       setProgress(100, true);
       setStatus('Готово: ' + (prepared.name || file.name) + ' загружен на kappa.lol.', 'success');
       finishProgress(1200);
@@ -3547,8 +3662,12 @@
     media.className = 'twgif-media';
     media.draggable = false;
     media.dataset.src = previewUrl;
-    media.dataset.loadState = loadedMediaUrls.has(previewUrl) ? 'loaded' : 'pending';
-    if (loadedMediaUrls.has(previewUrl)) {
+    const cachedObjectUrl = cachedMediaObjectUrls.get(previewUrl);
+    media.dataset.loadState = cachedObjectUrl || loadedMediaUrls.has(previewUrl) ? 'loaded' : 'pending';
+    if (cachedObjectUrl) {
+      media.src = cachedObjectUrl;
+      media.dataset.loadState = 'loaded';
+    } else if (loadedMediaUrls.has(previewUrl)) {
       media.src = previewUrl;
       media.dataset.loadState = 'loaded';
     }
@@ -3791,6 +3910,9 @@
     if (!url) return;
     media.dataset.loadState = 'loading';
     const video = media.tagName === 'VIDEO';
+    const cachedBlob = await getCachedMediaBlob(url);
+    if (token !== mediaLoadRun) return;
+    const sourceUrl = cachedBlob ? cachedObjectUrlFor(url, cachedBlob) : url;
     const promise = new Promise(resolve => {
       let settled = false;
       const done = () => { if (!settled) { settled = true; resolve(); } };
@@ -3798,13 +3920,14 @@
       media.addEventListener('error', done, { once: true });
       setTimeout(done, video ? 1800 : 12000);
     });
-    media.src = url;
+    media.src = sourceUrl;
     if (video) media.load();
     await promise;
     if (token !== mediaLoadRun) return;
     if (media.naturalWidth > 0 || media.videoWidth > 0) {
       media.dataset.loadState = 'loaded';
       loadedMediaUrls.add(url);
+      if (!cachedBlob) cacheRemoteMedia(url, video);
     }
   }
 
@@ -3903,8 +4026,10 @@
         const newPreview = item.previewUrl || item.url;
         if (media && media.dataset.src !== newPreview) {
           media.dataset.src = newPreview;
-          media.dataset.loadState = loadedMediaUrls.has(newPreview) ? 'loaded' : 'pending';
-          if (loadedMediaUrls.has(newPreview)) media.src = newPreview;
+          const cachedObjectUrl = cachedMediaObjectUrls.get(newPreview);
+          media.dataset.loadState = cachedObjectUrl || loadedMediaUrls.has(newPreview) ? 'loaded' : 'pending';
+          if (cachedObjectUrl) media.src = cachedObjectUrl;
+          else if (loadedMediaUrls.has(newPreview)) media.src = newPreview;
           else { media.removeAttribute('src'); }
         }
         if (oldItem.url !== item.url) card.setAttribute('aria-label', 'Вставить ссылку на медиа в чат');
@@ -4422,7 +4547,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.19 started', { href: location.href });
+    logDebug('Userscript v5.9.21 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
