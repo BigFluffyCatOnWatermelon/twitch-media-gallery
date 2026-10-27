@@ -803,13 +803,22 @@
     catch (_) { return false; }
     if (!encoded || encoded.length > SHARED_MEDIA_CACHE_MAX_BYTES) return false;
 
+    // Re-read after the async encoding step so two tabs caching different files
+    // at once are less likely to overwrite each other's index entries.
+    const latestEntries = readSharedMediaIndex();
+    const latestExisting = latestEntries.find(item => item.url === key);
+    if (latestExisting) {
+      latestExisting.lastUsedAt = Date.now();
+      writeSharedMediaIndex(latestEntries);
+      return true;
+    }
     let storageKey = sharedMediaEntryKey(key);
-    const collision = entries.find(item => item.key === storageKey && item.url !== key);
-    if (collision) storageKey += ':' + encodeURIComponent(key).slice(0, 48);
+    const collision = latestEntries.find(item => item.key === storageKey && item.url !== key);
+    if (collision) storageKey += ':' + sharedMediaHash(key + '|collision');
     try { GM_setValue(storageKey, encoded); }
     catch (error) { logDebug('Shared media blob write failed', { url: key, size: blob.size, error: error.message || error }); return false; }
 
-    const next = entries.filter(item => item.url !== key);
+    const next = latestEntries.filter(item => item.url !== key);
     next.push({ url: key, key: storageKey, size: blob.size, storedSize: encoded.length, mime: blob.type || '', lastUsedAt: Date.now() });
     let total = next.reduce((sum, item) => sum + (Number(item.storedSize) || 0), 0);
     next.sort((a, b) => (Number(a.lastUsedAt) || 0) - (Number(b.lastUsedAt) || 0));
