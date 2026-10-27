@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.21
+// @version      5.9.22
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, FFmpeg conversion, tile-aware previews and Gist settings sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -15,6 +15,8 @@
 // @run-at       document-idle
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_deleteValue
+// @grant        GM_addValueChangeListener
 // @grant        GM_xmlhttpRequest
 // @connect      kappa.lol
 // @connect      segs.lol
@@ -35,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.21';
+  const APP_VERSION = '5.9.22';
   const VERSION = 5;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -55,6 +57,12 @@
   const MEDIA_CACHE_MAX_ENTRY_BYTES = 24 * 1024 * 1024;
   const MEDIA_CACHE_MAX_REMOTE_BYTES = 8 * 1024 * 1024;
   const MEDIA_CACHE_MAX_REMOTE_VIDEO_BYTES = 5 * 1024 * 1024;
+  // GM storage is shared by this userscript across matched sites. Keep its base64
+  // cache bounded; the larger per-site IndexedDB cache remains available as a fallback.
+  const SHARED_MEDIA_INDEX_KEY = 'twgif_gallery_shared_media_index_v1';
+  const SHARED_MEDIA_ENTRY_PREFIX = 'twgif_gallery_shared_media_v1:';
+  const SHARED_MEDIA_CACHE_MAX_BYTES = 24 * 1024 * 1024;
+  const SHARED_MEDIA_CACHE_MAX_ENTRY_BYTES = 6 * 1024 * 1024;
   const SETTINGS_FILENAME = 'twitch-gif-gallery-settings.json';
   const SETTINGS_SCHEMA_VERSION = 9;
 
@@ -706,6 +714,116 @@
     }).catch(() => false);
   }
 
+  function sharedMediaHash(value) {
+    const text = String(value || '');
+    let first = 0x811c9dc5;
+    let second = 0x9e3779b9;
+    for (let i = 0; i < text.length; i++) {
+      const code = text.charCodeAt(i);
+      first = Math.imul(first ^ code, 0x01000193);
+      second = Math.imul(second ^ (code + i), 0x85ebca6b);
+    }
+    return (first >>> 0).toString(36) + (second >>> 0).toString(36);
+  }
+
+  function sharedMediaEntryKey(url) {
+    return SHARED_MEDIA_ENTRY_PREFIX + sharedMediaHash(url);
+  }
+
+  function readSharedMediaIndex() {
+    try {
+      const raw = GM_getValue(SHARED_MEDIA_INDEX_KEY, []);
+      const value = parseJson(raw, []);
+      if (!Array.isArray(value)) return [];
+      return value.filter(item => item && typeof item.url === 'string' &&
+        typeof item.key === 'string' && Number(item.storedSize) > 0);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function writeSharedMediaIndex(entries) {
+    try { GM_setValue(SHARED_MEDIA_INDEX_KEY, entries); return true; }
+    catch (error) { logDebug('Shared media index write failed', error); return false; }
+  }
+
+  async function blobToBase64(blob) {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length)));
+    }
+    return btoa(binary);
+  }
+
+  function sharedBase64ToBlob(base64, mime = 'application/octet-stream') {
+    try {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return new Blob([bytes], { type: mime || 'application/octet-stream' });
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function getSharedMediaBlob(url) {
+    const key = String(url || '').trim();
+    if (!key) return null;
+    const entries = readSharedMediaIndex();
+    const entry = entries.find(item => item.url === key);
+    if (!entry) return null;
+    try {
+      const encoded = GM_getValue(entry.key, '');
+      if (typeof encoded !== 'string' || !encoded || encoded.length !== Number(entry.storedSize)) {
+        writeSharedMediaIndex(entries.filter(item => item.url !== key));
+        return null;
+      }
+      entry.lastUsedAt = Date.now();
+      writeSharedMediaIndex(entries);
+      return sharedBase64ToBlob(encoded, entry.mime);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function cacheSharedMediaBlob(url, blob) {
+    const key = String(url || '').trim();
+    if (!key || !(blob instanceof Blob) || !blob.size || blob.size > SHARED_MEDIA_CACHE_MAX_ENTRY_BYTES) return false;
+    const entries = readSharedMediaIndex();
+    const existing = entries.find(item => item.url === key);
+    if (existing) {
+      existing.lastUsedAt = Date.now();
+      writeSharedMediaIndex(entries);
+      return true;
+    }
+    let encoded;
+    try { encoded = await blobToBase64(blob); }
+    catch (_) { return false; }
+    if (!encoded || encoded.length > SHARED_MEDIA_CACHE_MAX_BYTES) return false;
+
+    let storageKey = sharedMediaEntryKey(key);
+    const collision = entries.find(item => item.key === storageKey && item.url !== key);
+    if (collision) storageKey += ':' + encodeURIComponent(key).slice(0, 48);
+    try { GM_setValue(storageKey, encoded); }
+    catch (error) { logDebug('Shared media blob write failed', { url: key, size: blob.size, error: error.message || error }); return false; }
+
+    const next = entries.filter(item => item.url !== key);
+    next.push({ url: key, key: storageKey, size: blob.size, storedSize: encoded.length, mime: blob.type || '', lastUsedAt: Date.now() });
+    let total = next.reduce((sum, item) => sum + (Number(item.storedSize) || 0), 0);
+    next.sort((a, b) => (Number(a.lastUsedAt) || 0) - (Number(b.lastUsedAt) || 0));
+    while (total > SHARED_MEDIA_CACHE_MAX_BYTES && next.length) {
+      const removed = next.shift();
+      total -= Number(removed.storedSize) || 0;
+      try { GM_deleteValue(removed.key); } catch (_) {}
+    }
+    if (!writeSharedMediaIndex(next)) {
+      try { GM_deleteValue(storageKey); } catch (_) {}
+      return false;
+    }
+    return next.some(item => item.url === key);
+  }
   function cachedObjectUrlFor(url, blob) {
     const key = String(url || '');
     if (cachedMediaObjectUrls.has(key)) return cachedMediaObjectUrls.get(key);
@@ -727,7 +845,9 @@
       if (!Number.isFinite(size) || size <= 0 || size > MEDIA_CACHE_MAX_REMOTE_BYTES) return;
       if (isVideo && size > MEDIA_CACHE_MAX_REMOTE_VIDEO_BYTES) return;
       const blob = await requestBlob(key, 60000, false);
-      if (blob.size > 0 && blob.size <= MEDIA_CACHE_MAX_ENTRY_BYTES) await cacheMediaBlob(key, blob);
+      if (blob.size > 0 && blob.size <= MEDIA_CACHE_MAX_ENTRY_BYTES) {
+        await Promise.all([cacheMediaBlob(key, blob), cacheSharedMediaBlob(key, blob)]);
+      }
     } catch (_) {
       // The remote URL remains usable; caching is an optional offline/reload optimization.
     } finally {
@@ -1490,7 +1610,11 @@
     });
     galleryPage = 0;
     persistData(data);
-    if (mediaBlob instanceof Blob) cacheMediaBlob(normalizedPreview || normalizedUrl, mediaBlob);
+    if (mediaBlob instanceof Blob) {
+      const cacheUrl = normalizedPreview || normalizedUrl;
+      cacheMediaBlob(cacheUrl, mediaBlob);
+      cacheSharedMediaBlob(cacheUrl, mediaBlob);
+    }
     setStatus('Добавлено в коллекцию.', 'success');
     return true;
   }
@@ -3907,7 +4031,11 @@
     if (!url) return;
     media.dataset.loadState = 'loading';
     const video = media.tagName === 'VIDEO';
-    const cachedBlob = await getCachedMediaBlob(url);
+    let cachedBlob = await getCachedMediaBlob(url);
+    if (!cachedBlob) {
+      cachedBlob = await getSharedMediaBlob(url);
+      if (cachedBlob) cacheMediaBlob(url, cachedBlob);
+    }
     if (token !== mediaLoadRun) return;
     const sourceUrl = cachedBlob ? cachedObjectUrlFor(url, cachedBlob) : url;
     const promise = new Promise(resolve => {
@@ -3925,6 +4053,7 @@
       media.dataset.loadState = 'loaded';
       loadedMediaUrls.add(url);
       if (!cachedBlob) cacheRemoteMedia(url, video);
+      else cacheSharedMediaBlob(url, cachedBlob);
     }
   }
 
@@ -4535,6 +4664,19 @@
     installObservers();
     installChatMediaObserver();
 
+    // GM storage is script-scoped rather than page-origin-scoped, so this keeps
+    // already-open Twitch, Kick and w.tv gallery panels in sync across tabs.
+    if (typeof GM_addValueChangeListener === 'function') {
+      try {
+        GM_addValueChangeListener(DATA_KEY, (_name, _oldValue, _newValue, remote) => {
+          if (!remote || !isPanelOpen() || panelView !== 'gallery') return;
+          renderGalleryItems();
+        });
+      } catch (error) {
+        logDebug('Cross-tab gallery listener unavailable', error);
+      }
+    }
+
     // Reyohoho and Twitch can reparent/rebuild the live-chat action row without
     // producing a stable route event. A lightweight Twitch-only recovery check
     // remounts the trigger once the live composer is available again.
@@ -4544,7 +4686,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.21 started', { href: location.href });
+    logDebug('Userscript v5.9.22 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
