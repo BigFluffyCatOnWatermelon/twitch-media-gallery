@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.45
+// @version      5.9.46
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.45';
+  const APP_VERSION = '5.9.46';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -263,7 +263,7 @@
     const config = {
       maxWidth: clampInt(raw.maxWidth ?? defaults.maxWidth, 100, 4000, defaults.maxWidth),
       // Migrate the briefly introduced rowsPerPage setting to the intended column count.
-      columns: clampInt(raw.columns ?? raw.rowsPerPage ?? defaults.columns, 2, 8, defaults.columns),
+      columns: clampInt(raw.columns ?? raw.rowsPerPage ?? defaults.columns, 1, 5, defaults.columns),
       pageSize: clampInt(raw.pageSize ?? defaults.pageSize, 10, 500, defaults.pageSize),
       tileView: raw.tileView === 'grid' ? 'grid' : 'masonry',
       previewMaxSize: clampInt(raw.previewMaxSize ?? defaults.previewMaxSize, 1, 4000, defaults.previewMaxSize),
@@ -312,7 +312,7 @@
     }, defaults.compression);
     const config = {
       maxWidth: clampInt(next.maxWidth ?? current.maxWidth, 100, 4000, defaults.maxWidth),
-      columns: clampInt(next.columns ?? current.columns, 2, 8, defaults.columns),
+      columns: clampInt(next.columns ?? current.columns, 1, 5, defaults.columns),
       pageSize: clampInt(next.pageSize ?? current.pageSize, 10, 500, defaults.pageSize),
       tileView: (next.tileView ?? current.tileView) === 'grid' ? 'grid' : 'masonry',
       previewMaxSize: clampInt(next.previewMaxSize ?? current.previewMaxSize, 1, 4000, defaults.previewMaxSize),
@@ -5121,7 +5121,7 @@
             <div class="twgif-section-title">Галерея</div>
             <label class="twgif-field-label" for="twgif-columns">Количество столбцов</label>
             <select id="twgif-columns" class="twgif-input">
-              ${targetOptions(String(config.columns), [['2','2 столбца'],['3','3 столбца'],['4','4 столбца'],['5','5 столбцов'],['6','6 столбцов'],['7','7 столбцов'],['8','8 столбцов']])}
+              ${targetOptions(String(config.columns), [['1','1 столбец'],['2','2 столбца'],['3','3 столбца'],['4','4 столбца'],['5','5 столбцов']])}
             </select>
             <div class="twgif-help">Определяет, сколько медиа располагается по горизонтали.</div>
             <label class="twgif-field-label" for="twgif-tile-view">Вид плиток</label>
