@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.40
+// @version      5.9.41
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.40';
+  const APP_VERSION = '5.9.41';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -3399,11 +3399,13 @@
       @keyframes twgif-success-icon-glow{0%,100%{opacity:.55;filter:drop-shadow(0 0 1px #28c45c) drop-shadow(0 0 2px #28c45c)}50%{opacity:1;filter:drop-shadow(0 0 3px #28c45c) drop-shadow(0 0 10px #28c45c)}}
       @keyframes twgif-error-icon-glow{0%,100%{opacity:.55;filter:drop-shadow(0 0 1px #ff4055) drop-shadow(0 0 2px #ff4055)}50%{opacity:1;filter:drop-shadow(0 0 3px #ff4055) drop-shadow(0 0 10px #ff4055)}}
       @keyframes twgif-duplicate-icon-glow{0%,100%{opacity:.55;filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 2px #fff)}50%{opacity:1;filter:drop-shadow(0 0 3px #fff) drop-shadow(0 0 10px #fff)}}
-      #twgif-panel{position:fixed!important;top:8px;left:8px;bottom:auto;z-index:2147483000!important;width:400px;height:var(--twgif-panel-height,auto);max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);min-height:220px;display:flex;flex-direction:column;overflow:hidden;color:#efeff1;background:#18181b;border:1px solid #34343b;border-radius:10px;box-shadow:0 10px 34px #0009;font:13px/1.4 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-sizing:border-box;pointer-events:auto}
+      #twgif-panel{position:fixed!important;top:8px;left:8px;bottom:auto;z-index:2147483000!important;width:400px;height:var(--twgif-panel-height,auto);max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);min-height:220px;display:flex;flex-direction:column;overflow:hidden;resize:none!important;color:#efeff1;background:#18181b;border:1px solid #34343b;border-radius:10px;box-shadow:0 10px 34px #0009;font:13px/1.4 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-sizing:border-box;pointer-events:auto}
       #twgif-panel[hidden]{display:none!important}#twgif-panel *{box-sizing:border-box}
-      #twgif-resize-top{position:absolute;top:0;left:50%;transform:translateX(-50%);width:64px;height:8px;z-index:8;display:flex;justify-content:center;align-items:flex-start;cursor:n-resize;touch-action:none;user-select:none}
-      #twgif-resize-top:after{content:"";display:block;width:30px;height:3px;margin-top:2px;border-radius:3px;background:#65656f;opacity:.75;transition:background .12s,opacity .12s}
-      #twgif-resize-top:hover:after{background:#b7b7c2;opacity:1}
+      #twgif-resize-top{position:absolute;top:0;left:0;width:100%;height:14px;z-index:2147483001;display:block;cursor:ns-resize;touch-action:none;user-select:none;pointer-events:auto}
+      #twgif-resize-top:after{content:"";position:absolute;top:3px;left:50%;transform:translateX(-50%);display:block;width:38px;height:4px;border-radius:4px;background:#777783;opacity:.9;transition:background .12s,opacity .12s}
+      #twgif-resize-top:hover:after{background:#d0d0da;opacity:1}
+      #twgif-panel.twgif-resizing{cursor:ns-resize!important;user-select:none!important}
+      #twgif-panel.twgif-resizing *{user-select:none!important;cursor:ns-resize!important}
       .twgif-head{display:flex;align-items:center;gap:5px;padding:6px 8px;min-height:42px;border-bottom:1px solid #34343b;flex-shrink:0}
       .twgif-heading{font-size:13px;font-weight:700;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .twgif-head-btn{appearance:none;border:0;background:transparent;color:#c4c4cc;width:29px;height:29px;display:inline-flex;align-items:center;justify-content:center;padding:0;border-radius:6px;cursor:pointer;flex-shrink:0}
@@ -4262,46 +4264,60 @@
     panel.__twgifTopResizeInstalled = true;
 
     let drag = null;
-    const finishResize = () => {
+    const finishResize = event => {
       if (!drag) return;
-      window.removeEventListener('pointermove', moveResize, true);
-      window.removeEventListener('pointerup', finishResize, true);
-      window.removeEventListener('pointercancel', finishResize, true);
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      try {
+        if (handle.hasPointerCapture && handle.hasPointerCapture(drag.pointerId)) {
+          handle.releasePointerCapture(drag.pointerId);
+        }
+      } catch (_) {}
+      handle.removeEventListener('pointermove', moveResize);
+      handle.removeEventListener('pointerup', finishResize);
+      handle.removeEventListener('pointercancel', finishResize);
+      panel.classList.remove('twgif-resizing');
       drag = null;
       savePanelSize(panel);
     };
     const moveResize = event => {
-      if (!drag) return;
+      if (!drag || event.pointerId !== drag.pointerId) return;
       event.preventDefault();
+      event.stopPropagation();
+      // Moving the pointer UP increases height; the bottom edge is held at its initial Y.
       const minHeight = Math.min(window.innerWidth <= 500 ? 180 : 220, drag.maxHeight);
-      const desiredTop = drag.startTop + (event.clientY - drag.startY);
-      const minTop = Math.max(0, drag.bottom - drag.maxHeight);
-      const maxTop = Math.max(minTop, drag.bottom - minHeight);
-      const nextTop = Math.max(minTop, Math.min(maxTop, desiredTop));
-      const nextHeight = Math.max(minHeight, Math.min(drag.maxHeight, Math.round(drag.bottom - nextTop)));
-      panel.style.top = Math.round(drag.bottom - nextHeight) + 'px';
+      const deltaUp = drag.startY - event.clientY;
+      const nextHeight = Math.max(minHeight, Math.min(drag.maxHeight, Math.round(drag.startHeight + deltaUp)));
+      panel.style.bottom = 'auto';
       panel.style.height = nextHeight + 'px';
+      panel.style.top = Math.round(drag.bottom - nextHeight) + 'px';
     };
 
     handle.addEventListener('pointerdown', event => {
-      if (event.button !== 0 || panel.hidden) return;
+      if (event.button !== 0 || panel.hidden || drag) return;
       event.preventDefault();
       event.stopPropagation();
       const rect = panel.getBoundingClientRect();
       const availableAbove = Math.max(1, Math.floor(rect.bottom - 8));
+      const minHeight = Math.min(window.innerWidth <= 500 ? 180 : 220, availableAbove);
       const maxHeight = Math.max(
-        Math.min(window.innerWidth <= 500 ? 180 : 220, availableAbove),
+        minHeight,
         Math.min(520, Math.floor(window.innerHeight * 0.85), availableAbove)
       );
       drag = {
+        pointerId: event.pointerId,
         startY: event.clientY,
-        startTop: rect.top,
+        startHeight: rect.height,
         bottom: rect.bottom,
         maxHeight
       };
-      window.addEventListener('pointermove', moveResize, true);
-      window.addEventListener('pointerup', finishResize, true);
-      window.addEventListener('pointercancel', finishResize, true);
+      panel.classList.add('twgif-resizing');
+      handle.addEventListener('pointermove', moveResize);
+      handle.addEventListener('pointerup', finishResize);
+      handle.addEventListener('pointercancel', finishResize);
+      try { handle.setPointerCapture(event.pointerId); } catch (_) {}
     });
   }
 
@@ -5561,7 +5577,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.40 started', { href: location.href });
+    logDebug('Userscript v5.9.41 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
