@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.37
+// @version      5.9.38
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.37';
+  const APP_VERSION = '5.9.38';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -98,7 +98,8 @@
   let savedComposerOffset = null;
   let lastStatus = '';
   let lastStatusType = 'info';
-  let statusTimer = 0;
+  let progressActive = false;
+  let progressPercent = null;
   let progressHideTimer = 0;
   let progressGeneration = 0;
   let processingRunId = 0;
@@ -113,6 +114,9 @@
   let ensureQueued = false;
   let lastObservedInput = null;
   const debugLogs = [];
+  const debugLogEntries = [];
+  let lastLogSignature = '';
+  let lastLogTimestamp = 0;
   const processingFiles = new Map();
   const recentFileFingerprints = new Map();
   const mediaSizeCache = new Map();
@@ -377,65 +381,101 @@
     return sortData({ version: VERSION, items, deleted });
   }
 
+  function renderDebugLog(target = document.getElementById('twgif-debug-log')) {
+    if (!target) return;
+    const fragment = document.createDocumentFragment();
+    for (const entry of debugLogEntries) {
+      const row = document.createElement('div');
+      row.className = 'twgif-log-entry';
+      row.dataset.type = entry.type;
+      const time = document.createElement('span');
+      time.className = 'twgif-log-time';
+      time.textContent = entry.time + '  ';
+      const message = document.createElement('span');
+      message.className = 'twgif-log-message';
+      message.textContent = entry.message;
+      row.append(time, message);
+      fragment.appendChild(row);
+    }
+    target.replaceChildren(fragment);
+    target.scrollTop = target.scrollHeight;
+  }
+
+  function appendLogEntry(message, type = 'info') {
+    const clean = String(message || '').trim();
+    if (!clean) return;
+    const dedupeText = clean
+      .replace(/\b\d{1,3}%\b/g, '{percent}')
+      .replace(/кадр\s+\d+\s+из\s+\d+/ig, 'кадр {n} из {n}')
+      .replace(/\b\d+\s+из\s+\d+\b/g, '{n} из {n}');
+    const signature = type + ':' + dedupeText;
+    const now = Date.now();
+    // Avoid flooding the log with near-identical repeated status/progress updates.
+    if (signature === lastLogSignature && now - lastLogTimestamp < 1800) return;
+    lastLogSignature = signature;
+    lastLogTimestamp = now;
+    const time = new Date(now).toLocaleTimeString();
+    const line = time + '  ' + clean;
+    debugLogs.push(line);
+    debugLogEntries.push({ time, message: clean, type, timestamp: now });
+    if (debugLogs.length > 100) debugLogs.shift();
+    if (debugLogEntries.length > 100) debugLogEntries.shift();
+    renderDebugLog();
+  }
+
+  function inferLogType(text) {
+    const value = String(text || '');
+    if (/\b(error|failed|failure|exception)\b|ошибк|не удалось|отказ|HTTP\s*[45]\d\d/i.test(value)) return 'error';
+    if (/\b(warn|warning|fallback)\b|предупреж|не поддерживается|недоступен/i.test(value)) return 'warning';
+    if (/\b(success|succeeded)\b|успеш|добавлено|добавлен|готово|завершен|синхронизирован/i.test(value)) return 'success';
+    if (/\b(progress|loading)\b|загружа|сжима|конвертир|обработк|подготавливаю|скачиваю|кадр\s+\d+\s+из\s+\d+/i.test(value)) return 'progress';
+    return 'info';
+  }
+
   function logDebug(...parts) {
     const text = parts.map(part => {
-      if (part instanceof Error) return `${part.name}: ${part.message}`;
+      if (part instanceof Error) return part.name + ': ' + part.message;
       if (typeof part === 'string') return part;
       try { return JSON.stringify(part); } catch (_) { return String(part); }
     }).join(' ');
-    debugLogs.push(`${new Date().toLocaleTimeString()}  ${text}`);
-    if (debugLogs.length > 80) debugLogs.shift();
+    const statusMatch = text.match(/^status:(success|error|warning|progress|info)\s*(.*)$/is);
+    if (statusMatch) appendLogEntry(statusMatch[2], statusMatch[1].toLowerCase());
+    else appendLogEntry(text, inferLogType(text));
     if (loadConfig().debug) console.debug('[Twitch GIF Gallery]', ...parts);
-    const logView = document.getElementById('twgif-debug-log');
-    if (logView) logView.value = debugLogs.join('\n');
   }
 
-  function setStatus(message, type = 'info', _sticky = false) {
+  function updateStatusIndicator() {
+    const button = document.getElementById('twgif-status-indicator');
+    if (!button) return;
+    const type = progressActive ? 'progress' : lastStatusType;
+    const message = lastStatus || (progressActive ? 'Идёт обработка…' : 'Нет новых сообщений');
+    button.dataset.type = ['success', 'error', 'warning', 'progress'].includes(type) ? type : 'info';
+    button.title = message;
+    button.setAttribute('aria-label', 'Статус: ' + message + '. Нажми, чтобы открыть журнал.');
+  }
+
+  function setStatus(message, type = 'info', sticky = false) {
     lastStatus = String(message || '');
-    lastStatusType = type;
-    const element = document.getElementById('twgif-status');
-    if (element) {
-      const messageElement = element.querySelector('#twgif-status-message');
-      if (messageElement) messageElement.textContent = lastStatus;
-      element.dataset.type = lastStatusType;
-      element.dataset.empty = lastStatus ? 'false' : 'true';
+    lastStatusType = type || 'info';
+    updateStatusIndicator();
+    if (message) {
+      const logType = lastStatusType === 'info' && sticky ? 'progress' : lastStatusType;
+      logDebug('status:' + logType, message);
     }
-    if (statusTimer) clearTimeout(statusTimer);
-    statusTimer = 0;
-    if (lastStatus) {
-      const messageAtSet = lastStatus;
-      statusTimer = setTimeout(() => {
-        if (lastStatus === messageAtSet) {
-          lastStatus = '';
-          statusTimer = 0;
-          const current = document.getElementById('twgif-status');
-          const messageElement = current && current.querySelector('#twgif-status-message');
-          if (messageElement) messageElement.textContent = '';
-          if (current) current.dataset.empty = 'true';
-        }
-      }, 3000);
-    }
-    if (message) logDebug('status:' + type, message);
   }
 
-  function setProgress(percent, active = true) {
+  function syncProgressIndicatorView() {
     const indicator = document.getElementById('twgif-progress');
     if (!indicator) return;
-    if (progressHideTimer) clearTimeout(progressHideTimer);
-    progressHideTimer = 0;
-    if (!active) {
-      progressGeneration++;
+    indicator.hidden = !progressActive;
+    if (!progressActive) {
       indicator.dataset.cancelable = 'false';
-      indicator.hidden = true;
       return;
     }
-
-    progressGeneration++;
-    indicator.hidden = false;
     const label = indicator.querySelector('#twgif-progress-label');
-    const isDeterminate = percent !== null && percent !== '' && Number.isFinite(Number(percent));
+    const isDeterminate = progressPercent !== null && progressPercent !== '' && Number.isFinite(Number(progressPercent));
     if (isDeterminate) {
-      const value = Math.max(0, Math.min(100, Math.round(Number(percent))));
+      const value = Math.max(0, Math.min(100, Math.round(Number(progressPercent))));
       indicator.dataset.indeterminate = 'false';
       indicator.style.setProperty('--twgif-progress', String(value));
       if (label) label.textContent = value + '%';
@@ -446,6 +486,16 @@
       if (label) label.textContent = '…';
       indicator.setAttribute('aria-label', 'Идёт обработка');
     }
+  }
+
+  function setProgress(percent, active = true) {
+    if (progressHideTimer) clearTimeout(progressHideTimer);
+    progressHideTimer = 0;
+    progressGeneration++;
+    progressActive = Boolean(active);
+    progressPercent = active ? percent : null;
+    syncProgressIndicatorView();
+    updateStatusIndicator();
   }
 
   function finishProgress(delayMs = 900) {
@@ -3402,8 +3452,16 @@
       .twgif-favorite[aria-pressed=true] svg{fill:currentColor}
       .twgif-pagination{display:flex;align-items:center;justify-content:center;gap:10px;padding:9px 0 0}.twgif-pagination[hidden]{display:none!important}.twgif-page-label{font-size:10px;color:#b7b7c1;min-width:54px;text-align:center}
       .twgif-empty{padding:22px 8px;text-align:center;color:#a8a8b3;font-size:12px}.twgif-empty[hidden]{display:none}
-      #twgif-status{display:flex;align-items:center;gap:10px;padding:6px 10px 7px;border-top:1px solid #34343b;font-size:10px;color:#aaaab5;overflow-wrap:anywhere;flex-shrink:0;min-height:29px}#twgif-status[data-empty=true]{display:none}#twgif-status-message{flex:1;min-width:0;overflow-wrap:anywhere}#twgif-status[data-type=success]{color:#55d995}#twgif-status[data-type=error]{color:#ff8585}
-       #twgif-progress{--twgif-progress:0;display:inline-flex;align-items:center;gap:4px;flex:0 0 auto;color:#e1c9ff;font-size:10px;font-variant-numeric:tabular-nums;line-height:1}#twgif-progress[hidden]{display:none!important}
+      #twgif-progress{--twgif-progress:0;display:inline-flex;align-items:center;gap:4px;flex:0 0 auto;color:#e1c9ff;font-size:10px;font-variant-numeric:tabular-nums;line-height:1}#twgif-progress[hidden]{display:none!important}
+      #twgif-status-indicator{appearance:none;position:relative;display:inline-flex;align-items:center;justify-content:center;flex:0 0 25px;width:25px;height:29px;padding:0;border:0;border-radius:6px;background:transparent;color:#aaaab5;cursor:pointer}
+      #twgif-status-indicator:hover{background:#303036}
+      .twgif-status-dot{display:block;width:8px;height:8px;border-radius:50%;background:#85858f;box-shadow:0 0 0 2px #85858f18;transition:background .18s ease,box-shadow .18s ease,transform .18s ease}
+      #twgif-status-indicator[data-type=info] .twgif-status-dot{background:#9b9ba7;box-shadow:0 0 0 2px #9b9ba71c}
+      #twgif-status-indicator[data-type=success] .twgif-status-dot{background:#45d483;box-shadow:0 0 0 2px #45d48324,0 0 7px #45d48370}
+      #twgif-status-indicator[data-type=error] .twgif-status-dot{background:#ff596b;box-shadow:0 0 0 2px #ff596b24,0 0 7px #ff596b70}
+      #twgif-status-indicator[data-type=warning] .twgif-status-dot{background:#f4be55;box-shadow:0 0 0 2px #f4be5524,0 0 7px #f4be5570}
+      #twgif-status-indicator[data-type=progress] .twgif-status-dot{background:#b78cff;box-shadow:0 0 0 2px #b78cff20,0 0 8px #b78cff80;animation:twgif-status-pulse 1.4s ease-in-out infinite}
+      @keyframes twgif-status-pulse{0%,100%{opacity:.7;transform:scale(.88)}50%{opacity:1;transform:scale(1.12)}}
        #twgif-progress-ring{position:relative;display:block;flex:0 0 18px;width:18px;height:18px}
        #twgif-progress-ring>svg{display:block;width:18px;height:18px;overflow:visible}
        #twgif-progress circle{fill:none;stroke-width:3.5}#twgif-progress .twgif-progress-track{stroke:#45414e}#twgif-progress .twgif-progress-value{stroke:#b78cff;stroke-linecap:round;stroke-dasharray:100;stroke-dashoffset:calc(100 - var(--twgif-progress));transform:rotate(-90deg);transform-origin:50% 50%;transition:stroke-dashoffset .12s linear}
@@ -3414,7 +3472,14 @@
        #twgif-progress-cancel:hover{background:#c9364d;border-color:#ff9aa7}
        @keyframes twgif-progress-spin{to{transform:rotate(360deg)}}
       .twgif-settings{display:flex;flex-direction:column;gap:7px}.twgif-section{border:1px solid #33333a;border-radius:7px;padding:8px}.twgif-section-title{margin:0 0 7px;font-size:11px;font-weight:700;color:#dddde5}.twgif-help{color:#a8a8b3;font-size:10px;line-height:1.45;margin:5px 0 0}.twgif-help a{color:#bf94ff;text-decoration:none}.twgif-help a:hover{text-decoration:underline}.twgif-field-label{display:block;margin:6px 0 4px;font-size:10px;color:#c8c8d0}.twgif-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.twgif-row>.twgif-input{flex:1 1 145px}.twgif-check-row{display:flex;align-items:center;gap:7px;font-size:11px;color:#dbdbe2;margin:3px 0}.twgif-check-row input{accent-color:#9147ff}
-      .twgif-debug-log{display:block;width:100%;min-height:78px;max-height:125px;resize:vertical;background:#0c0c0e;color:#bfc0cb;border:1px solid #36363d;border-radius:5px;padding:6px;font:10px/1.35 ui-monospace,Consolas,monospace}
+      .twgif-debug-log{display:block;width:100%;height:240px;max-height:38vh;min-height:100px;overflow:auto;resize:vertical;background:#0c0c0e;border:1px solid #36363d;border-radius:5px;padding:6px;font:10px/1.45 ui-monospace,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;scrollbar-width:thin;scrollbar-color:#45454f #0c0c0e}
+      .twgif-log-entry{display:block;margin:0;padding:1px 0;white-space:pre-wrap;overflow-wrap:anywhere}
+      .twgif-log-time{color:#777b88}
+      .twgif-log-entry[data-type=info]{color:#c0c2cd}
+      .twgif-log-entry[data-type=success]{color:#66dfa0}
+      .twgif-log-entry[data-type=error]{color:#ff818b}
+      .twgif-log-entry[data-type=warning]{color:#f4c66e}
+      .twgif-log-entry[data-type=progress]{color:#c7a5ff}
       .twgif-chat-add{appearance:none!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;vertical-align:middle!important;width:16px!important;height:16px!important;margin:0 0 0 4px!important;padding:0!important;border:1px solid #9147ff70!important;border-radius:4px!important;color:#d7b8ff!important;background:#18181bcc!important;font:700 12px/1 system-ui!important;cursor:pointer!important;opacity:.35;transition:opacity .12s,background .12s!important}.twgif-chat-add:hover{opacity:1!important;background:#9147ff!important;color:#fff!important}
       #twgif-hold-preview{position:fixed;z-index:2147483100;pointer-events:none;display:flex;align-items:center;justify-content:center;opacity:0;overflow:hidden;transform:scale(.92);transform-origin:center center;transition:transform .18s ease,opacity .18s ease;filter:drop-shadow(0 12px 30px #000b);max-width:calc(100vw - 16px);max-height:calc(100vh - 16px)}
       #twgif-hold-preview.twgif-preview-visible{opacity:1;transform:scale(1)}#twgif-hold-preview img,#twgif-hold-preview video{display:block;width:100%;height:100%;max-width:100%;max-height:100%;object-fit:contain;border:1px solid #ffffff33;border-radius:8px;background:#111}
@@ -3444,26 +3509,33 @@
           <button class="twgif-tab" type="button" data-tab="general" title="Вид и общие" aria-label="Общие настройки" aria-selected="false">◫</button>
           <button class="twgif-tab" type="button" data-tab="convert" title="Конвертация" aria-label="Настройки конвертации" aria-selected="false">⇄</button>
           <button class="twgif-tab" type="button" data-tab="sync" title="Синхронизация" aria-label="Синхронизация" aria-selected="false">☁</button>
-          <button class="twgif-tab" type="button" data-tab="debug" title="Отладка" aria-label="Отладка" aria-selected="false">⌘</button>
+          <button class="twgif-tab" type="button" data-tab="debug" title="Журнал" aria-label="Журнал" aria-selected="false">≡</button>
         </div>
+        <span id="twgif-progress" hidden data-indeterminate="true" data-cancelable="false" aria-label="Идёт обработка">
+          <span id="twgif-progress-ring">
+            <svg viewBox="0 0 36 36" aria-hidden="true"><circle class="twgif-progress-track" cx="18" cy="18" r="15.5"></circle><circle class="twgif-progress-value" cx="18" cy="18" r="15.5"></circle></svg>
+            <button id="twgif-progress-cancel" type="button" title="Отменить обработку" aria-label="Отменить обработку"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"></rect></svg></button>
+          </span>
+          <span id="twgif-progress-label">…</span>
+        </span>
+        <button id="twgif-status-indicator" class="twgif-status-indicator" type="button" data-type="info" title="Нет новых сообщений" aria-label="Открыть журнал">
+          <span class="twgif-status-dot" aria-hidden="true"></span>
+        </button>
         <button id="twgif-settings-open" class="twgif-head-btn" type="button" title="Настройки" aria-label="Настройки">${SVG_SETTINGS}</button>
         <button id="twgif-close" class="twgif-head-btn" type="button" title="Закрыть" aria-label="Закрыть">${SVG_CLOSE}</button>
       </div>
       <div id="twgif-panel-body" class="twgif-panel-body"></div>
-      <div id="twgif-status" data-empty="true" role="status" aria-live="polite">
-      <span id="twgif-status-message"></span>
-      <span id="twgif-progress" hidden data-indeterminate="true" data-cancelable="false" aria-label="Идёт обработка">
-        <span id="twgif-progress-ring">
-          <svg viewBox="0 0 36 36" aria-hidden="true"><circle class="twgif-progress-track" cx="18" cy="18" r="15.5"></circle><circle class="twgif-progress-value" cx="18" cy="18" r="15.5"></circle></svg>
-          <button id="twgif-progress-cancel" type="button" title="Отменить обработку" aria-label="Отменить обработку"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"></rect></svg></button>
-        </span>
-        <span id="twgif-progress-label">…</span>
-      </span>
-    </div>
     `;
     document.documentElement.appendChild(panel);
+    updateStatusIndicator();
+    syncProgressIndicatorView();
 
     panel.querySelector('#twgif-close').addEventListener('click', closePanel);
+    panel.querySelector('#twgif-status-indicator').addEventListener('click', () => {
+      settingsTab = 'debug';
+      panelView = 'settings';
+      renderPanelView();
+    });
     panel.querySelector('#twgif-progress-cancel').addEventListener('click', event => {
       event.preventDefault();
       event.stopPropagation();
@@ -4199,13 +4271,8 @@
       }
     }
 
-    const status = document.getElementById('twgif-status');
-    if (status) {
-      const message = status.querySelector('#twgif-status-message');
-      if (message) message.textContent = lastStatus;
-      status.dataset.type = lastStatusType;
-      status.dataset.empty = lastStatus ? 'false' : 'true';
-    }
+    updateStatusIndicator();
+    syncProgressIndicatorView();
   }
 
   function renderGallery() {
@@ -5020,10 +5087,10 @@
       content = `
         <div class="twgif-settings">
           <div class="twgif-section">
-            <div class="twgif-section-title">Отладка и резервная копия</div>
+            <div class="twgif-section-title">Журнал и резервная копия</div>
             <label class="twgif-check-row"><input id="twgif-debug-toggle" type="checkbox" ${config.debug ? 'checked' : ''}> Подробные записи в консоль и журнал</label>
             <div class="twgif-row" style="margin:7px 0"><button id="twgif-copy-debug" class="twgif-small-btn" type="button">Копировать журнал</button><button id="twgif-clear-debug" class="twgif-small-btn" type="button">Очистить журнал</button><button id="twgif-export" class="twgif-small-btn" type="button">Экспорт JSON</button><button id="twgif-import" class="twgif-small-btn" type="button">Импорт JSON</button><input id="twgif-import-file" type="file" accept="application/json,.json" hidden></div>
-            <textarea id="twgif-debug-log" class="twgif-debug-log" readonly spellcheck="false" aria-label="Журнал отладки"></textarea>
+            <div id="twgif-debug-log" class="twgif-debug-log" role="log" aria-live="off" aria-label="Журнал событий"></div>
             <div class="twgif-help">Токены не записываются в журнал. Экспорт JSON включает коллекцию, но не API-токены.</div>
           </div>
         </div>`;
@@ -5124,7 +5191,7 @@
     }
 
     if (settingsTab === 'debug') {
-      $('#twgif-debug-log').value = debugLogs.join('\n');
+      renderDebugLog($('#twgif-debug-log'));
       $('#twgif-debug-toggle').addEventListener('change', event => {
         saveConfig({ debug: event.currentTarget.checked });
         logDebug(`Debug mode ${event.currentTarget.checked ? 'enabled' : 'disabled'}`);
@@ -5133,11 +5200,24 @@
       $('#twgif-copy-debug').addEventListener('click', async () => {
         const text = debugLogs.join('\n') || 'Журнал пуст.';
         try { await navigator.clipboard.writeText(text); setStatus('Журнал скопирован.', 'success'); }
-        catch (_) { $('#twgif-debug-log').focus(); $('#twgif-debug-log').select(); setStatus('Нажми Ctrl+C, чтобы скопировать выделенный журнал.', 'info'); }
+        catch (_) {
+          const fallback = document.createElement('textarea');
+          fallback.className = 'twgif-input';
+          fallback.rows = 5;
+          fallback.value = text;
+          fallback.setAttribute('aria-label', 'Текст журнала для ручного копирования');
+          $('#twgif-debug-log').after(fallback);
+          fallback.focus();
+          fallback.select();
+          setStatus('Автокопирование недоступно. Журнал выделен — нажми Ctrl+C.', 'info');
+        }
       });
       $('#twgif-clear-debug').addEventListener('click', () => {
         debugLogs.length = 0;
-        $('#twgif-debug-log').value = '';
+        $('#twgif-debug-log').replaceChildren();
+        debugLogEntries.length = 0;
+        lastLogSignature = '';
+        lastLogTimestamp = 0;
         setStatus('Журнал очищен.', 'success');
       });
       $('#twgif-export').addEventListener('click', exportBackup);
@@ -5378,7 +5458,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.37 started', { href: location.href });
+    logDebug('Userscript v5.9.38 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
