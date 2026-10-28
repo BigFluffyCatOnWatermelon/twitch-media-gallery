@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.26
+// @version      5.9.27
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.25';
+  const APP_VERSION = '5.9.27';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -2721,6 +2721,19 @@
       #twgif-trigger.twgif-inline-kick{flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important}
       #twgif-trigger:hover,#twgif-trigger[aria-expanded=true]{background:var(--color-background-button-text-hover,#2b2b2f)!important;color:var(--color-text-link,#bf94ff)!important;border-radius:50%!important}
       #twgif-trigger svg{display:block;width:20px;height:20px;flex:0 0 20px;align-self:center;pointer-events:none}
+      #twgif-trigger.twgif-portal-active,#twgif-trigger.twgif-portal-closing{overflow:visible!important;isolation:isolate!important;z-index:2147483500!important;transform:scale(1.08)!important;}
+      #twgif-trigger.twgif-portal-active{background:radial-gradient(circle,#26123f 0,#13091f 72%)!important;box-shadow:0 0 0 1px #dabaff66,0 0 18px #a65cffb8,0 0 32px #7437c799!important;color:#f1dfff!important;}
+      #twgif-trigger.twgif-portal-active::before,#twgif-trigger.twgif-portal-closing::before{content:"";position:absolute;z-index:0;inset:-7px;border-radius:50%;pointer-events:none;background:conic-gradient(from 0deg,#3b176b,#e2c5ff,#7b35d5,#1b0d35,#bf8dff,#55219a,#3b176b);filter:drop-shadow(0 0 4px #ad72ffb3);}
+      #twgif-trigger.twgif-portal-active::before{animation:twgif-portal-spin .85s linear infinite;}
+      #twgif-trigger.twgif-portal-active::after,#twgif-trigger.twgif-portal-closing::after{content:"";position:absolute;z-index:1;inset:2px;border-radius:50%;pointer-events:none;border:1px solid #e4ccffad;background:radial-gradient(circle at 50% 48%,#07030d 0 25%,#170a29 39%,transparent 59%),conic-gradient(from 0deg,#12071f,#a86aff,#291142,#e5c7ff,#32134d,#8d43ed,#12071f);box-shadow:inset 0 0 7px #030007,0 0 8px #a45cff99;}
+      #twgif-trigger.twgif-portal-active::after{animation:twgif-portal-vortex 1.45s linear infinite,twgif-portal-breathe .8s ease-in-out infinite alternate;}
+      #twgif-trigger.twgif-portal-active svg{position:relative;z-index:2;opacity:.18;transform:scale(.78);filter:drop-shadow(0 0 3px #fff);}
+      #twgif-trigger.twgif-portal-closing::before{animation:twgif-portal-close .26s ease-in forwards;}
+      #twgif-trigger.twgif-portal-closing::after{animation:twgif-portal-close .22s ease-in forwards;}
+      @keyframes twgif-portal-spin{to{transform:rotate(360deg)}}
+      @keyframes twgif-portal-vortex{to{transform:rotate(-360deg)}}
+      @keyframes twgif-portal-breathe{from{filter:brightness(.85);transform:scale(.94)}to{filter:brightness(1.3);transform:scale(1.04)}}
+      @keyframes twgif-portal-close{to{opacity:0;transform:scale(.12) rotate(180deg)}}
       #twgif-panel{position:fixed!important;top:8px;left:8px;bottom:auto;z-index:2147483000!important;width:400px;max-width:calc(100vw - 16px);max-height:68vh;display:flex;flex-direction:column;overflow:hidden;color:#efeff1;background:#18181b;border:1px solid #34343b;border-radius:10px;box-shadow:0 10px 34px #0009;font:13px/1.4 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-sizing:border-box;pointer-events:auto}
       #twgif-panel[hidden]{display:none!important}#twgif-panel *{box-sizing:border-box}
       .twgif-head{display:flex;align-items:center;gap:5px;padding:6px 8px;min-height:42px;border-bottom:1px solid #34343b;flex-shrink:0}
@@ -3055,6 +3068,75 @@
     button.setAttribute('aria-haspopup', 'dialog');
     button.setAttribute('aria-expanded', 'false');
     button.innerHTML = SVG_GALLERY;
+
+    // Treat the toolbar icon as a small drop target. A file hovering over it
+    // opens an animated portal; releasing the file closes the portal and starts
+    // the same import pipeline used by the gallery's normal drop area.
+    let portalCloseTimer = 0;
+    const hasFilePayload = event => {
+      const transfer = event?.dataTransfer;
+      if (!transfer) return false;
+      const types = Array.from(transfer.types || []).map(type => String(type).toLowerCase());
+      return types.includes('files') || Array.from(transfer.items || []).some(item => item?.kind === 'file');
+    };
+    const clearPortalCloseTimer = () => {
+      if (portalCloseTimer) {
+        window.clearTimeout(portalCloseTimer);
+        portalCloseTimer = 0;
+      }
+    };
+    const showPortal = () => {
+      clearPortalCloseTimer();
+      button.classList.remove('twgif-portal-closing');
+      button.classList.add('twgif-portal-active');
+      button.setAttribute('aria-label', 'Отпусти файл, чтобы импортировать его в галерею');
+    };
+    const closePortal = animate => {
+      clearPortalCloseTimer();
+      button.classList.remove('twgif-portal-active');
+      button.setAttribute('aria-label', 'Открыть коллекцию GIF и изображений');
+      if (animate) {
+        button.classList.add('twgif-portal-closing');
+        portalCloseTimer = window.setTimeout(() => {
+          button.classList.remove('twgif-portal-closing');
+          portalCloseTimer = 0;
+        }, 280);
+      } else {
+        button.classList.remove('twgif-portal-closing');
+      }
+    };
+    button.addEventListener('dragenter', event => {
+      if (!hasFilePayload(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      showPortal();
+    });
+    button.addEventListener('dragover', event => {
+      if (!hasFilePayload(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+      if (!button.classList.contains('twgif-portal-active')) showPortal();
+    });
+    button.addEventListener('dragleave', event => {
+      if (!hasFilePayload(event)) return;
+      event.stopPropagation();
+      if (event.relatedTarget && button.contains(event.relatedTarget)) return;
+      closePortal(true);
+    });
+    button.addEventListener('drop', async event => {
+      const transfer = event.dataTransfer;
+      if (!transfer || !hasFilePayload(event)) {
+        closePortal(true);
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+      const files = Array.from(transfer.files || []);
+      closePortal(true);
+      if (files.length) await processFiles(files);
+    });
     button.addEventListener('pointerdown', captureComposerSelection, true);
     button.addEventListener('mousedown', captureComposerSelection, true);
     button.addEventListener('click', event => {
@@ -4612,7 +4694,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.25 started', { href: location.href });
+    logDebug('Userscript v5.9.27 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
