@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.23
-// @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, FFmpeg conversion, tile-aware previews and Gist settings sync.
+// @version      5.9.24
+// @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @match        https://www.twitch.tv/*
@@ -37,8 +37,8 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.23';
-  const VERSION = 5;
+  const APP_VERSION = '5.9.24';
+  const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
@@ -63,8 +63,8 @@
   const SHARED_MEDIA_ENTRY_PREFIX = 'twgif_gallery_shared_media_v1:';
   const SHARED_MEDIA_CACHE_MAX_BYTES = 24 * 1024 * 1024;
   const SHARED_MEDIA_CACHE_MAX_ENTRY_BYTES = 6 * 1024 * 1024;
-  const SETTINGS_FILENAME = 'twitch-gif-gallery-settings.json';
   const SETTINGS_SCHEMA_VERSION = 9;
+  const COMPRESS_ENABLED_KEY = 'twgif_compress_enabled_v1';
 
   let panelView = 'gallery';
   let settingsTab = 'general';
@@ -104,9 +104,6 @@
   let syncTimer = 0;
   let syncRunning = false;
   let syncAgain = false;
-  let settingsSyncTimer = 0;
-  let settingsSyncRunning = false;
-  let settingsSyncAgain = false;
   let observer = null;
   let twitchLifecycleObserver = null;
   let twitchRecoveryTimer = 0;
@@ -123,6 +120,11 @@
   const localFfmpegPending = new Map();
 
   const EMPTY_DATA = () => ({ version: VERSION, items: [], deleted: {} });
+  function isCompressionEnabled() {
+    try { return GM_getValue(COMPRESS_ENABLED_KEY, true) !== false; }
+    catch (_) { return true; }
+  }
+
   const DEFAULT_CONFIG = () => ({
     maxWidth: DEFAULT_MAX_WIDTH,
     mediaScale: 1,
@@ -147,8 +149,7 @@
     settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
     gistToken: '',
     gistId: '',
-    debug: false,
-    settingsUpdatedAt: 0
+    debug: false
   });
 
   function normalizeCompressionSettings(value = {}, fallback = DEFAULT_CONFIG().compression) {
@@ -207,6 +208,7 @@
           type: String(item.type || 'image'),
           sourceKey: String(item.sourceKey || ''),
           favorite: Boolean(item.favorite),
+          hd: Boolean(item.hd),
           addedAt,
           updatedAt
         };
@@ -262,7 +264,6 @@
       gistToken: String(raw.gistToken || legacy.token || '').trim(),
       gistId: String(raw.gistId || legacy.gistId || '').trim(),
       debug: Boolean(raw.debug),
-      settingsUpdatedAt: Number(raw.settingsUpdatedAt) || 0,
       settingsSchemaVersion: SETTINGS_SCHEMA_VERSION
     };
     if (previousSchemaVersion < SETTINGS_SCHEMA_VERSION) {
@@ -277,7 +278,6 @@
         if (!allowedTargets.gif.includes(config.conversionRules.gif)) config.conversionRules.gif = defaults.conversionRules.gif;
         if (!allowedTargets.video.includes(config.conversionRules.video)) config.conversionRules.video = defaults.conversionRules.video;
       }
-      config.settingsUpdatedAt = Date.now();
       GM_setValue(CONFIG_KEY, config);
     }
     return config;
@@ -309,15 +309,9 @@
       gistToken: String(next.gistToken ?? current.gistToken).trim(),
       gistId: String(next.gistId ?? current.gistId).trim(),
       debug: Boolean(next.debug ?? current.debug),
-      // Saving credentials alone must not mark stale local settings as newer than the Gist.
-      settingsUpdatedAt: Number.isFinite(Number(next.settingsUpdatedAt)) ? Number(next.settingsUpdatedAt) : current.settingsUpdatedAt,
       settingsSchemaVersion: SETTINGS_SCHEMA_VERSION
     };
-    const settingsChanged = settingsContentSignature(current) !== settingsContentSignature(config);
-    const hasExplicitTimestamp = next.settingsUpdatedAt !== undefined && Number.isFinite(Number(next.settingsUpdatedAt));
-    if (!hasExplicitTimestamp && settingsChanged) config.settingsUpdatedAt = Math.max(Date.now(), (Number(current.settingsUpdatedAt) || 0) + 1);
     GM_setValue(CONFIG_KEY, config);
-    if (!hasExplicitTimestamp && settingsChanged) queueSettingsSync();
     return config;
   }
 
@@ -350,13 +344,6 @@
 
   function dataSignature(data) {
     return JSON.stringify(sortData(data));
-  }
-
-  function settingsContentSignature(config) {
-    const snapshot = syncableSettings(config);
-    delete snapshot.settingsUpdatedAt;
-    delete snapshot.settingsSchemaVersion;
-    return JSON.stringify(snapshot);
   }
 
   function mergeData(leftValue, rightValue) {
@@ -395,7 +382,7 @@
     if (logView) logView.value = debugLogs.join('\n');
   }
 
-  function setStatus(message, type = 'info', sticky = false) {
+  function setStatus(message, type = 'info', _sticky = false) {
     lastStatus = String(message || '');
     lastStatusType = type;
     const element = document.getElementById('twgif-status');
@@ -406,11 +393,13 @@
       element.dataset.empty = lastStatus ? 'false' : 'true';
     }
     if (statusTimer) clearTimeout(statusTimer);
-    if (!sticky && lastStatus) {
+    statusTimer = 0;
+    if (lastStatus) {
       const messageAtSet = lastStatus;
       statusTimer = setTimeout(() => {
         if (lastStatus === messageAtSet) {
           lastStatus = '';
+          statusTimer = 0;
           const current = document.getElementById('twgif-status');
           const messageElement = current && current.querySelector('#twgif-status-message');
           if (messageElement) messageElement.textContent = '';
@@ -1390,7 +1379,7 @@
     return worker;
   }
 
-  async function ffmpegMediaToFormat(file, outputFormat, maxWidth = loadConfig().maxWidth, compression = loadConfig().compression, runId = null) {
+  async function ffmpegMediaToFormat(file, outputFormat, maxWidth = loadConfig().maxWidth, compression = loadConfig().compression, runId = null, compressEnabled = true) {
     if (!file || !file.size) throw new Error('Файл пустой.');
     const inputExt = fileExtension(file).replace(/[^a-z0-9]/gi, '') || 'bin';
     const validFormats = ['webp', 'gif', 'jpg', 'png', 'mp4', 'webm'];
@@ -1400,7 +1389,7 @@
     const dot = originalName.lastIndexOf('.');
     const baseName = (dot > 0 ? originalName.slice(0, dot) : originalName) || 'media';
     const outputName = baseName + '.' + outputFormat;
-    const width = clampInt(maxWidth, 100, 4000, DEFAULT_MAX_WIDTH);
+    const width = compressEnabled ? clampInt(maxWidth, 100, 4000, DEFAULT_MAX_WIDTH) : 4000;
     const options = normalizeCompressionSettings(compression, DEFAULT_CONFIG().compression);
     const videoFps = options.videoFps;
     const animationFps = options.animationFps;
@@ -1424,14 +1413,19 @@
     const sourceIsGif = mime === 'image/gif' || originalName.toLowerCase().endsWith('.gif');
     const sourceIsStillImage = mime.startsWith('image/') && !sourceIsGif;
     const outputIsVideo = outputFormat === 'mp4' || outputFormat === 'webm';
-    const scaleFilter = 'scale=' + width + ':' + width +
-      ':force_original_aspect_ratio=decrease:force_divisible_by=2:flags=' + scaleMethod;
-    const videoRateArgs = videoBitrate > 0
-      ? ['-b:v', videoBitrate + 'k', '-maxrate', Math.round(videoBitrate * 1.25) + 'k', '-bufsize', (videoBitrate * 2) + 'k']
-      : ['-crf', String(videoCrf)];
-    const webmRateArgs = videoBitrate > 0
-      ? ['-b:v', videoBitrate + 'k', '-maxrate', Math.round(videoBitrate * 1.25) + 'k', '-bufsize', (videoBitrate * 2) + 'k']
-      : ['-crf', String(videoCrf), '-b:v', '0'];
+    const scaleFilter = compressEnabled
+      ? 'scale=' + width + ':' + width + ':force_original_aspect_ratio=decrease:force_divisible_by=2:flags=' + scaleMethod
+      : '';
+    const videoRateArgs = !compressEnabled
+      ? ['-crf', '0']
+      : (videoBitrate > 0
+        ? ['-b:v', videoBitrate + 'k', '-maxrate', Math.round(videoBitrate * 1.25) + 'k', '-bufsize', (videoBitrate * 2) + 'k']
+        : ['-crf', String(videoCrf)]);
+    const webmRateArgs = !compressEnabled
+      ? ['-crf', '0', '-b:v', '0']
+      : (videoBitrate > 0
+        ? ['-b:v', videoBitrate + 'k', '-maxrate', Math.round(videoBitrate * 1.25) + 'k', '-bufsize', (videoBitrate * 2) + 'k']
+        : ['-crf', String(videoCrf), '-b:v', '0']);
     const args = [];
 
     // When a still image is sent to a video container, create a short 2s clip.
@@ -1442,45 +1436,49 @@
     }
 
     if (outputFormat === 'gif') {
-      args.push(
-        '-filter_complex',
-        '[0:v]fps=' + animationFps + ',' + scaleFilter + ',split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:diff_mode=rectangle',
-        '-loop', '0',
-        outputPath
-      );
+      const gifFilter = compressEnabled
+        ? '[0:v]fps=' + animationFps + ',' + scaleFilter + ',split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:diff_mode=rectangle'
+        : '[0:v]split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:diff_mode=rectangle';
+      args.push('-filter_complex', gifFilter, '-loop', '0', outputPath);
     } else if (outputFormat === 'webp') {
       if (sourceIsStillImage) {
         args.push(
-          '-vf', scaleFilter, '-frames:v', '1',
-          '-an', '-c:v', 'libwebp', '-quality', String(imageQuality), '-compression_level', String(webpCompressionLevel),
-          outputPath
+          ...(compressEnabled ? ['-vf', scaleFilter] : []),
+          '-frames:v', '1', '-an', '-c:v', 'libwebp',
+          ...(compressEnabled ? ['-quality', String(imageQuality)] : ['-lossless', '1']),
+          '-compression_level', String(webpCompressionLevel), outputPath
         );
       } else {
         args.push(
-          '-vf', 'fps=' + animationFps + ',' + scaleFilter,
-          '-an', '-c:v', 'libwebp', '-quality', String(animationQuality), '-compression_level', String(webpCompressionLevel),
-          '-loop', '0', outputPath
+          ...(compressEnabled ? ['-vf', 'fps=' + animationFps + ',' + scaleFilter] : []),
+          '-an', '-c:v', 'libwebp',
+          ...(compressEnabled ? ['-quality', String(animationQuality)] : ['-lossless', '1']),
+          '-compression_level', String(webpCompressionLevel), '-loop', '0', outputPath
         );
       }
     } else if (outputFormat === 'jpg') {
-      args.push('-vf', scaleFilter, '-frames:v', '1', '-q:v', String(Math.max(2, Math.round((100 - imageQuality) / 7))), outputPath);
+      args.push(
+        ...(compressEnabled ? ['-vf', scaleFilter] : []),
+        '-frames:v', '1', '-q:v', compressEnabled ? String(Math.max(2, Math.round((100 - imageQuality) / 7))) : '2',
+        outputPath
+      );
     } else if (outputFormat === 'png') {
-      args.push('-vf', scaleFilter, '-frames:v', '1', outputPath);
+      args.push(...(compressEnabled ? ['-vf', scaleFilter] : []), '-frames:v', '1', outputPath);
     } else if (outputFormat === 'mp4') {
       args.push(
-        '-vf', 'fps=' + videoFps + ',' + scaleFilter,
-        '-c:v', 'libx264', '-preset', speedPreset,
+        ...(compressEnabled ? ['-vf', 'fps=' + videoFps + ',' + scaleFilter] : []),
+        '-c:v', 'libx264', '-preset', compressEnabled ? speedPreset : 'medium',
         ...videoRateArgs,
         '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
-        '-c:a', 'aac', '-b:a', audioBitrate + 'k', outputPath
+        '-c:a', 'aac', '-b:a', (compressEnabled ? audioBitrate : 320) + 'k', outputPath
       );
     } else if (outputFormat === 'webm') {
       args.push(
-        '-vf', 'fps=' + videoFps + ',' + scaleFilter,
-        '-c:v', 'libvpx', '-deadline', 'realtime',
-        '-cpu-used', String(cpuUsed),
+        ...(compressEnabled ? ['-vf', 'fps=' + videoFps + ',' + scaleFilter] : []),
+        '-c:v', 'libvpx', '-deadline', compressEnabled ? 'realtime' : 'good',
+        '-cpu-used', String(compressEnabled ? cpuUsed : 0),
         ...webmRateArgs,
-        '-c:a', 'libopus', '-b:a', audioBitrate + 'k', outputPath
+        '-c:a', 'libopus', '-b:a', (compressEnabled ? audioBitrate : 320) + 'k', outputPath
       );
     }
 
@@ -1560,7 +1558,7 @@
     return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
   }
 
-  async function prepareUpload(file, runId = null) {
+  async function prepareUpload(file, runId = null, compressEnabled = isCompressionEnabled()) {
     ensureProcessingRun(runId);
     if (!file || !file.size) throw new Error('Файл пустой.');
     if (file.size > MAX_FILE_BYTES) throw new Error('Файл больше ' + formatBytes(MAX_FILE_BYTES) + '. Уменьши его перед загрузкой.');
@@ -1574,7 +1572,7 @@
 
     // Still images use the browser's native Canvas encoder (usually much faster than WASM).
     // Animated GIFs and videos remain on FFmpeg to preserve animation and time-based output.
-    if (category === 'image' && ['webp', 'png', 'jpg'].includes(target)) {
+    if (compressEnabled && category === 'image' && ['webp', 'png', 'jpg'].includes(target)) {
       try {
         setStatus('Конвертирую изображение встроенными средствами браузера…', 'info', true);
         setProgress(null, true);
@@ -1587,12 +1585,12 @@
       }
     }
     const conversionWidth = category === 'video' ? config.compression.videoMaxWidth : config.maxWidth;
-    return ffmpegMediaToFormat(file, target, conversionWidth, config.compression, runId);
+    return ffmpegMediaToFormat(file, target, conversionWidth, config.compression, runId, compressEnabled);
   }
 
 
 
-  function addItem(url, name, type, sourceKey = '', previewUrl = '', mediaBlob = null) {
+  function addItem(url, name, type, sourceKey = '', previewUrl = '', mediaBlob = null, isHd = false) {
     const data = loadData();
     const normalizedUrl = String(url || '').trim();
     const normalizedPreview = String(previewUrl || normalizedUrl).trim();
@@ -1615,6 +1613,7 @@
       type: type || 'image',
       sourceKey: String(sourceKey || ''),
       favorite: false,
+      hd: Boolean(isHd),
       addedAt: now,
       updatedAt: now
     });
@@ -1983,8 +1982,8 @@
     return new File([blob], name, { type: mime, lastModified: Date.now() });
   }
 
-  async function addUrl(rawUrl, customName = '', runId = null) {
-    if (runId !== null && runId !== undefined) return addUrlCore(rawUrl, customName, runId);
+  async function addUrl(rawUrl, customName = '', runId = null, compressEnabled = isCompressionEnabled()) {
+    if (runId !== null && runId !== undefined) return addUrlCore(rawUrl, customName, runId, '', compressEnabled);
     if (activeProcessingRunId) {
       throw new Error('Уже выполняется обработка. Дождись завершения или отмени её значком стоп у кольца прогресса.');
     }
@@ -1992,16 +1991,21 @@
     activeProcessingRunId = ownedRunId;
     setProgressCancelable(true);
     try {
-      return await addUrlCore(rawUrl, customName, ownedRunId);
+      return await addUrlCore(rawUrl, customName, ownedRunId, '', compressEnabled);
+    } catch (error) {
+      if (error?.name !== 'AbortError') setStatus(error.message || String(error), 'error');
+      throw error;
     } finally {
       if (activeProcessingRunId === ownedRunId) {
         activeProcessingRunId = 0;
         setProgressCancelable(false);
       }
+      if (isProcessingRunCurrent(ownedRunId)) finishProgress(1000);
+      else setProgress(null, false);
     }
   }
 
-  async function addUrlCore(rawUrl, customName = '', runId = null, sourceKeyOverride = '') {
+  async function addUrlCore(rawUrl, customName = '', runId = null, sourceKeyOverride = '', compressEnabled = isCompressionEnabled()) {
     const text = String(rawUrl || '').trim().replace(/^<|>$/g, '');
     let parsed;
     try { parsed = new URL(text); }
@@ -2033,7 +2037,7 @@
         const media = telegramMedia[index];
         const mediaSourceKey = 'telegram-post:' + telegramPost.canonicalUrl + '#' + encodeURIComponent(media.url);
         try {
-          const added = await addUrlCore(media.url, '', runId, mediaSourceKey);
+          const added = await addUrlCore(media.url, '', runId, mediaSourceKey, compressEnabled);
           if (added) imported++;
           else skipped++;
         } catch (error) {
@@ -2086,7 +2090,7 @@
         const type = mediaTypeFromMime(pathMime);
         if (type !== 'video') await waitForImage(originalUrl);
         ensureProcessingRun(runId);
-        return addItem(originalUrl, hintedName, type, sourceKey, originalUrl);
+        return addItem(originalUrl, hintedName, type, sourceKey, originalUrl, null, !compressEnabled);
       }
     }
 
@@ -2109,12 +2113,12 @@
       ensureProcessingRun(runId);
       setProgress(100, true);
       finishProgress(700);
-      return addItem(originalUrl, hintedName || file.name, type, sourceKey, originalUrl);
+      return addItem(originalUrl, hintedName || file.name, type, sourceKey, originalUrl, null, !compressEnabled);
     }
 
     setStatus('Конвертирую медиа по ссылке: ' + file.name + '…', 'info', true);
     setProgress(8, true);
-    const prepared = await prepareUpload(file, runId);
+    const prepared = await prepareUpload(file, runId, compressEnabled);
     ensureProcessingRun(runId);
     setProgress(65, true);
     setStatus('Загружаю обработанное медиа на kappa.lol…', 'info', true);
@@ -2127,7 +2131,7 @@
     const ext = fileExtension(prepared);
     const outputType = ext === 'gif' ? 'gif'
       : ['webm', 'mp4', 'mov', 'mkv', 'avi', 'ogv', 'mpg', 'mpeg'].includes(ext) ? 'video' : 'image';
-    const added = addItem(uploaded.url, prepared.name || hintedName || file.name, outputType, sourceKey, uploaded.url, prepared);
+    const added = addItem(uploaded.url, prepared.name || hintedName || file.name, outputType, sourceKey, uploaded.url, prepared, !compressEnabled);
     setProgress(100, true);
     finishProgress(1000);
     return added;
@@ -2137,13 +2141,13 @@
     return [String(file.name || ''), String(file.size || 0), String(file.lastModified || 0), String(file.type || '')].join('|');
   }
 
-  async function processSingleFile(file, sourceKey, runId) {
+  async function processSingleFile(file, sourceKey, runId, compressEnabled = isCompressionEnabled()) {
     setProgress(0, true);
     try {
       ensureProcessingRun(runId);
       setStatus('Подготавливаю «' + (file.name || 'медиа') + '»…', 'info', true);
       setProgress(4, true);
-      const prepared = await prepareUpload(file, runId);
+      const prepared = await prepareUpload(file, runId, compressEnabled);
       ensureProcessingRun(runId);
       setProgress(65, true);
       setStatus('Загружаю «' + (prepared.name || file.name) + '» на kappa.lol…', 'info', true);
@@ -2158,7 +2162,7 @@
       const ext = fileExtension(prepared);
       const type = ext === 'gif' ? 'gif'
         : ['webm', 'mp4', 'mov', 'mkv', 'avi'].includes(ext) ? 'video' : 'image';
-      addItem(uploaded.url, prepared.name || file.name || 'Медиафайл', type, sourceKey, uploaded.url, prepared);
+      addItem(uploaded.url, prepared.name || file.name || 'Медиафайл', type, sourceKey, uploaded.url, prepared, !compressEnabled);
       setProgress(100, true);
       setStatus('Готово: ' + (prepared.name || file.name) + ' загружен на kappa.lol.', 'success');
       finishProgress(1200);
@@ -2191,6 +2195,7 @@
       return;
     }
 
+    const compressEnabled = isCompressionEnabled();
     const runId = ++processingRunId;
     activeProcessingRunId = runId;
     setProgressCancelable(true);
@@ -2219,7 +2224,7 @@
 
         // Register before the first await so a bubbling/duplicate event cannot
         // create a second converter job and a second Kappa upload.
-        const task = processSingleFile(file, key, runId);
+        const task = processSingleFile(file, key, runId, compressEnabled);
         processingFiles.set(key, task);
         let succeeded = false;
         try {
@@ -2234,6 +2239,8 @@
         activeProcessingRunId = 0;
         setProgressCancelable(false);
       }
+      if (isProcessingRunCurrent(runId)) finishProgress(1000);
+      else setProgress(null, false);
     }
   }
 
@@ -2670,170 +2677,6 @@
   }
 
 
-  function syncableSettings(config = loadConfig()) {
-    return {
-      maxWidth: config.maxWidth,
-      mediaScale: config.mediaScale,
-      tileView: config.tileView,
-      pageSize: config.pageSize,
-      previewMaxSize: config.previewMaxSize,
-      previewTileBoost: config.previewTileBoost,
-      conversionRules: { ...config.conversionRules },
-      compression: { ...config.compression },
-      debug: config.debug,
-      settingsUpdatedAt: config.settingsUpdatedAt || 0,
-      settingsSchemaVersion: SETTINGS_SCHEMA_VERSION
-    };
-  }
-
-
-  async function readGistFile(config, filename) {
-    const response = await request({
-      method: 'GET', url: `${GITHUB_API}/gists/${encodeURIComponent(config.gistId)}`, timeout: 35000,
-      headers: {
-        'Accept': 'application/vnd.github+json',
-        'Authorization': `Bearer ${config.gistToken}`,
-        'X-GitHub-Api-Version': '2022-11-28'
-      }
-    });
-    const payload = parseResponse(response, 'GitHub Gist');
-    const file = payload.files && payload.files[filename];
-    if (!file) return null;
-    if (!file.truncated) return parseJson(file.content, null);
-    if (!file.raw_url) return null;
-    const rawResponse = await request({
-      method: 'GET', url: file.raw_url, timeout: 35000,
-      headers: { 'Authorization': `Bearer ${config.gistToken}` }
-    });
-    return parseJson(rawResponse.responseText, null);
-  }
-
-  async function writeGistFile(config, filename, content) {
-    const response = await request({
-      method: 'PATCH', url: `${GITHUB_API}/gists/${encodeURIComponent(config.gistId)}`, timeout: 35000,
-      headers: {
-        'Accept': 'application/vnd.github+json',
-        'Authorization': `Bearer ${config.gistToken}`,
-        'X-GitHub-Api-Version': '2022-11-28',
-        'Content-Type': 'application/json'
-      },
-      data: JSON.stringify({ files: { [filename]: { content: JSON.stringify(content, null, 2) } } })
-    });
-    return parseResponse(response, 'GitHub Gist');
-  }
-
-  async function performSyncSettingsOnce() {
-    const config = loadConfig();
-    if (!config.gistToken || !config.gistId) {
-      throw new Error('Сначала сохрани GitHub token и ID Gist во вкладке синхронизации.');
-    }
-
-    const remote = await readGistFile(config, SETTINGS_FILENAME);
-    // If settings changed during the request, retry with the newest local snapshot.
-    const latestConfig = loadConfig();
-    if (latestConfig.settingsUpdatedAt !== config.settingsUpdatedAt) {
-      settingsSyncAgain = true;
-      return;
-    }
-    const localSnapshot = syncableSettings(config);
-
-    if (!remote || !Number(remote.settingsUpdatedAt)) {
-      await writeGistFile(config, SETTINGS_FILENAME, localSnapshot);
-      setStatus('Настройки отправлены в Gist.', 'success', true);
-      return;
-    }
-
-    const remoteSchemaVersion = Number(remote.settingsSchemaVersion) || 0;
-    if (remoteSchemaVersion < SETTINGS_SCHEMA_VERSION) {
-      const remoteUpdatedAt = Number(remote.settingsUpdatedAt) || 0;
-      const localUpdatedAt = Number(config.settingsUpdatedAt) || 0;
-
-      // Prefer the newer local settings. If the remote snapshot is newer, migrate
-      // it and publish the current conversion settings to other devices.
-      if (localUpdatedAt > 0 && localUpdatedAt >= remoteUpdatedAt) {
-        await writeGistFile(config, SETTINGS_FILENAME, localSnapshot);
-        setStatus('Настройки синхронизированы. Старые правила конвертации обновлены.', 'success', true);
-        return;
-      }
-
-      const defaults = DEFAULT_CONFIG();
-      const resetConversionDefaults = remoteSchemaVersion < 9;
-      const migratedRules = resetConversionDefaults
-        ? { ...defaults.conversionRules }
-        : {
-            image: remote.conversionRules?.image || defaults.conversionRules.image,
-            gif: remote.conversionRules?.gif || defaults.conversionRules.gif,
-            video: remote.conversionRules?.video || defaults.conversionRules.video
-          };
-
-      const migratedSettingsUpdatedAt = Date.now();
-      saveConfig({
-        ...remote,
-        ...(resetConversionDefaults ? { maxWidth: defaults.maxWidth, compression: { ...defaults.compression } } : {}),
-        conversionRules: migratedRules,
-        gistToken: config.gistToken,
-        gistId: config.gistId,
-        settingsUpdatedAt: migratedSettingsUpdatedAt,
-        settingsSchemaVersion: SETTINGS_SCHEMA_VERSION
-      });
-      const migratedSnapshot = syncableSettings(loadConfig());
-      await writeGistFile(config, SETTINGS_FILENAME, migratedSnapshot);
-      setStatus('Настройки загружены из старого Gist и обновлены.', 'success', true);
-      logDebug('Settings schema migrated in Gist', { from: remoteSchemaVersion, to: SETTINGS_SCHEMA_VERSION });
-      if (panelView === 'settings') renderSettings();
-      return;
-    }
-
-    if (Number(remote.settingsUpdatedAt) > Number(config.settingsUpdatedAt || 0)) {
-      // Pull the newest cloud settings, but never replace the local GitHub credential/Gist ID.
-      saveConfig({
-        ...remote,
-        gistToken: config.gistToken,
-        gistId: config.gistId,
-        settingsUpdatedAt: Number(remote.settingsUpdatedAt)
-      });
-      const snapshot = loadConfig();
-      GM_setValue(CONFIG_KEY, { ...snapshot, settingsUpdatedAt: Number(remote.settingsUpdatedAt) });
-      setStatus('Настройки загружены из Gist.', 'success', true);
-      logDebug('Settings synced from Gist', { settingsUpdatedAt: remote.settingsUpdatedAt });
-      if (panelView === 'settings') renderSettings();
-    } else {
-      await writeGistFile(config, SETTINGS_FILENAME, localSnapshot);
-      setStatus('Текущие настройки синхронизированы.', 'success', true);
-      logDebug('Settings synced to Gist', { settingsUpdatedAt: config.settingsUpdatedAt });
-    }
-  }
-
-
-  async function syncSettingsNow() {
-    if (settingsSyncRunning) {
-      settingsSyncAgain = true;
-      return;
-    }
-    settingsSyncRunning = true;
-    try {
-      do {
-        settingsSyncAgain = false;
-        await performSyncSettingsOnce();
-      } while (settingsSyncAgain);
-    } finally {
-      settingsSyncRunning = false;
-    }
-  }
-
-  function queueSettingsSync() {
-    const config = loadConfig();
-    if (!config.gistToken || !config.gistId) return;
-    if (settingsSyncTimer) clearTimeout(settingsSyncTimer);
-    settingsSyncTimer = setTimeout(() => {
-      settingsSyncTimer = 0;
-      syncSettingsNow().catch(error => {
-        logDebug('Automatic settings sync failed', error);
-        if (isPanelOpen()) setStatus(`Автосинхронизация настроек: ${formatGitHubSyncError(error)}`, 'error', true);
-      });
-    }, 1500);
-  }
-
   async function performSyncOnce() {
     const config = loadConfig();
     if (!config.gistToken || !config.gistId) throw new Error('Сначала настрой GitHub token и ID Gist.');
@@ -2906,6 +2749,8 @@
       .twgif-small-btn:hover{background:#34343b;border-color:#65656e}.twgif-small-btn:disabled{opacity:.55;cursor:wait}
       .twgif-primary{background:#9147ff;border-color:#9147ff;color:#fff}.twgif-primary:hover{background:#772ce8;border-color:#772ce8}
       .twgif-toolbar-icon{width:30px;min-width:30px;height:30px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:19px}
+      .twgif-compress-toggle{display:inline-flex;align-items:center;justify-content:center;gap:3px;flex:0 0 auto;color:#bcbcc6;font-size:10px;white-space:nowrap;cursor:pointer;user-select:none}
+      .twgif-compress-toggle input{width:12px;height:12px;margin:0;accent-color:#9147ff;cursor:pointer}
       .twgif-drop{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 7px;margin-bottom:8px;border:1px dashed #41414b;border-radius:7px;color:#a8a8b3;font-size:10px}
       .twgif-drop strong{display:block;color:#d9d9df;font-size:10px;font-weight:600}.twgif-drop span{font-size:9px}.twgif-drop.twgif-drag{border-color:#a970ff;background:#9147ff1a}#twgif-panel.twgif-drag{border-color:#a970ff;box-shadow:0 0 0 2px #9147ff55,0 10px 34px #0009}#twgif-panel.twgif-drag::after{content:'Отпусти файлы для добавления';position:absolute;inset:4px;z-index:20;display:flex;align-items:center;justify-content:center;border:2px dashed #b78cff;border-radius:8px;background:#18181be8;color:#f4eaff;font-size:14px;font-weight:700;pointer-events:none}
       .twgif-masonry{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--twgif-tile-min,76px),1fr));grid-auto-rows:0.25px;align-items:start;gap:6px}.twgif-masonry.twgif-grid-mode{grid-auto-rows:auto;gap:6px}.twgif-masonry[hidden]{display:none!important}
@@ -3600,8 +3445,7 @@
     renderPanelView();
     repositionPanel();
     if (loadConfig().gistToken && loadConfig().gistId) {
-      syncNow().catch(error => setStatus(`Синхронизация коллекции: ${formatGitHubSyncError(error)}`, 'error', true));
-      syncSettingsNow().catch(error => setStatus(`Синхронизация настроек: ${formatGitHubSyncError(error)}`, 'error', true));
+      syncNow().catch(error => setStatus(`Синхронизация коллекции: ${formatGitHubSyncError(error)}`, 'error'));
     }
     logDebug('Panel opened');
   }
@@ -3658,9 +3502,11 @@
       <div class="twgif-toolbar">
         <input id="twgif-url-input" class="twgif-input twgif-url-input" type="url" placeholder="Ссылка или несколько ссылок через пробел…" autocomplete="url" aria-label="Ссылка для добавления">
         <button id="twgif-add-url" class="twgif-small-btn twgif-primary twgif-toolbar-icon" type="button" title="Добавить ссылку" aria-label="Добавить ссылку">+</button>
+        <label class="twgif-compress-toggle" title="Отключить уменьшение разрешения и ограничение качества" for="twgif-compress-toggle"><input id="twgif-compress-toggle" type="checkbox" ${isCompressionEnabled() ? 'checked' : ''}>сжимать</label>
       </div>
       <div class="twgif-gallery-tabs" role="tablist" aria-label="Тип медиа">
         <button class="twgif-gallery-tab" type="button" data-gallery-tab="all" role="tab" aria-selected="true">Все <span id="twgif-all-count" class="twgif-gallery-tab-count">0</span></button>
+        <button class="twgif-gallery-tab" type="button" data-gallery-tab="hd" role="tab" aria-selected="false">HD <span id="twgif-hd-count" class="twgif-gallery-tab-count">0</span></button>
         <button class="twgif-gallery-tab" type="button" data-gallery-tab="7tv" role="tab" aria-selected="false">7TV <span id="twgif-7tv-count" class="twgif-gallery-tab-count">0</span></button>
         <button class="twgif-gallery-tab" type="button" data-gallery-tab="favorites" role="tab" aria-selected="false">Избранное <span id="twgif-favorites-count" class="twgif-gallery-tab-count">0</span></button>
       </div>
@@ -3672,6 +3518,11 @@
 
     const urlInput = body.querySelector('#twgif-url-input');
     const addButton = body.querySelector('#twgif-add-url');
+    const compressToggle = body.querySelector('#twgif-compress-toggle');
+    compressToggle.addEventListener('change', event => {
+      try { GM_setValue(COMPRESS_ENABLED_KEY, Boolean(event.currentTarget.checked)); }
+      catch (error) { logDebug('Unable to save compression toggle', error); }
+    });
     const addLink = async () => {
       const links = urlInput.value.trim().split(/\s+/).filter(Boolean);
       if (!links.length) { urlInput.focus(); return; }
@@ -3680,6 +3531,7 @@
         return;
       }
 
+      const compressEnabled = isCompressionEnabled();
       const runId = ++processingRunId;
       activeProcessingRunId = runId;
       setProgressCancelable(true);
@@ -3693,7 +3545,7 @@
           const link = links[i];
           setStatus(`Добавляю ссылки: ${i + 1} из ${links.length}…`, 'info', true);
           try {
-            if (await addUrl(link, '', runId)) added++;
+            if (await addUrl(link, '', runId, compressEnabled)) added++;
             else skipped++;
           } catch (error) {
             if (error?.name === 'AbortError' || !isProcessingRunCurrent(runId)) break;
@@ -3707,13 +3559,15 @@
           const summary = `Добавлено: ${added}; уже есть: ${skipped}; ошибок: ${failures.length}.`;
           setStatus(failures.length
             ? summary + ' ' + failures.slice(0, 2).join(' | ')
-            : summary, failures.length ? 'error' : 'success', true);
+            : summary, failures.length ? 'error' : 'success');
         }
       } finally {
         if (activeProcessingRunId === runId) {
           activeProcessingRunId = 0;
           setProgressCancelable(false);
         }
+        if (isProcessingRunCurrent(runId)) finishProgress(1000);
+        else setProgress(null, false);
         addButton.disabled = false;
       }
     };
@@ -3721,7 +3575,7 @@
 
     body.querySelectorAll('.twgif-gallery-tab').forEach(button => {
       button.addEventListener('click', () => {
-        galleryTab = ['7tv', 'favorites'].includes(button.dataset.galleryTab) ? button.dataset.galleryTab : 'all';
+        galleryTab = ['7tv', 'favorites', 'hd'].includes(button.dataset.galleryTab) ? button.dataset.galleryTab : 'all';
         galleryPage = 0;
         body.querySelectorAll('.twgif-gallery-tab').forEach(tab => {
           tab.setAttribute('aria-selected', String(tab.dataset.galleryTab === galleryTab));
@@ -4180,20 +4034,26 @@
     const storedItems = data.items.slice().sort(compareGalleryItems);
     const allItems = storedItems.filter(item => !is7TVGalleryItem(item));
     const sevenTvItems = storedItems.filter(is7TVGalleryItem);
+    const hdItems = allItems.filter(item => item.hd);
     const favoriteItems = storedItems.filter(item => item.favorite);
     const allTab = body.querySelector('[data-gallery-tab="all"]');
+    const hdTab = body.querySelector('[data-gallery-tab="hd"]');
     const sevenTvTab = body.querySelector('[data-gallery-tab="7tv"]');
     const favoritesTab = body.querySelector('[data-gallery-tab="favorites"]');
     if (allTab) allTab.setAttribute('aria-selected', String(galleryTab === 'all'));
+    if (hdTab) hdTab.setAttribute('aria-selected', String(galleryTab === 'hd'));
     if (sevenTvTab) sevenTvTab.setAttribute('aria-selected', String(galleryTab === '7tv'));
     if (favoritesTab) favoritesTab.setAttribute('aria-selected', String(galleryTab === 'favorites'));
     const allCount = body.querySelector('#twgif-all-count');
+    const hdCount = body.querySelector('#twgif-hd-count');
     const sevenTvCount = body.querySelector('#twgif-7tv-count');
     const favoritesCount = body.querySelector('#twgif-favorites-count');
     if (allCount) allCount.textContent = String(allItems.length);
+    if (hdCount) hdCount.textContent = String(hdItems.length);
     if (sevenTvCount) sevenTvCount.textContent = String(sevenTvItems.length);
     if (favoritesCount) favoritesCount.textContent = String(favoriteItems.length);
     const items = galleryTab === '7tv' ? sevenTvItems
+      : galleryTab === 'hd' ? hdItems
       : galleryTab === 'favorites' ? favoriteItems
       : allItems;
     const pageSize = config.pageSize;
@@ -4376,21 +4236,19 @@
       content = `
         <div class="twgif-settings">
           <div class="twgif-section">
-            <div class="twgif-section-title">Коллекция и настройки между устройствами</div>
+            <div class="twgif-section-title">Синхронизация коллекции</div>
             <label class="twgif-field-label" for="twgif-gist-token">GitHub token (доступ gist)</label>
             <input id="twgif-gist-token" name="twgif-github-gist-token" class="twgif-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-bwignore="true" data-form-type="other" style="-webkit-text-security:disc" placeholder="GitHub token" value="${escapeAttr(config.gistToken)}">
             <label class="twgif-field-label" for="twgif-gist-id">ID Gist</label>
             <input id="twgif-gist-id" class="twgif-input" type="text" autocomplete="off" spellcheck="false" placeholder="ID Gist" value="${escapeAttr(config.gistId)}">
-            <div class="twgif-help"><b>Первое устройство:</b> создай GitHub token с разрешением <code>gist</code>, вставь его сюда, оставь ID Gist пустым и нажми «Создать Gist». Затем нажми «Синхронизировать галерею» и «Синхронизировать настройки».</div>
-            <div class="twgif-help"><b>Другое устройство:</b> введи <b>тот же GitHub token</b> и <b>тот же ID Gist</b>, которые использовались на первом устройстве. Нажми «Сохранить доступ», затем «Синхронизировать галерею» и «Синхронизировать настройки». ID Gist — длинная строка из URL Gist; сам GitHub token автоматически на другие устройства не переносится.</div>
-            <div class="twgif-help">Gist хранит коллекцию и синхронизируемые настройки. Secret Gist не является приватным для людей, знающих его URL. GitHub token в Gist не записывается.</div>
+            <div class="twgif-help"><b>Первое устройство:</b> создай GitHub token с разрешением <code>gist</code>, вставь его сюда, оставь ID Gist пустым и нажми «Создать Gist». Затем нажми «Синхронизировать галерею».</div>
+            <div class="twgif-help"><b>Другое устройство:</b> введи <b>тот же GitHub token</b> и <b>тот же ID Gist</b>, которые использовались на первом устройстве. Нажми «Сохранить доступ», затем «Синхронизировать галерею». ID Gist — длинная строка из URL Gist; сам GitHub token автоматически на другие устройства не переносится.</div>
+            <div class="twgif-help">Gist хранит только данные коллекции. Настройки отображения и конвертации сохраняются локально на этом устройстве. Secret Gist не является приватным для людей, знающих его URL. GitHub token в Gist не записывается.</div>
             <div class="twgif-row" style="margin-top:8px">
               <button id="twgif-save-gist" class="twgif-small-btn" type="button">Сохранить доступ</button>
               <button id="twgif-create-gist" class="twgif-small-btn" type="button">Создать Gist</button>
               <button id="twgif-sync-now" class="twgif-small-btn" type="button">Синхронизировать галерею</button>
             </div>
-            <button id="twgif-sync-settings" class="twgif-small-btn twgif-primary" type="button" style="margin-top:8px">Синхронизировать настройки</button>
-            <div class="twgif-help">Отдельная кнопка синхронизирует настройки отображения и правила конвертации. GitHub-токен в Gist не записывается.</div>
             <div class="twgif-help"><a href="https://github.com/settings/tokens/new?scopes=gist&description=Twitch%20GIF%20Gallery" target="_blank" rel="noopener noreferrer">Создать GitHub-токен с разрешением gist</a>.</div>
           </div>
         </div>`;
@@ -4459,7 +4317,7 @@
             webpCompressionLevel: $('#twgif-webp-effort').value
           }
         });
-        setStatus('Правила форматов и сжатия сохранены; при настроенном Gist синхронизируются автоматически.', 'success', true);
+        setStatus('Правила форматов и сжатия сохранены на этом устройстве.', 'success');
       });
       $('#twgif-reset-convert-defaults').addEventListener('click', () => {
         const defaults = DEFAULT_CONFIG();
@@ -4489,7 +4347,7 @@
           const id = await createGist(cfg, loadData());
           saveConfig({ gistId: id });
           $('#twgif-gist-id').value = id;
-          setStatus(`Gist создан: ${id}. Теперь можно синхронизировать коллекцию и настройки.`, 'success', true);
+          setStatus(`Gist создан: ${id}. Теперь можно синхронизировать коллекцию.`, 'success');
         } catch (error) {
           setStatus(`Не удалось создать Gist: ${formatGitHubSyncError(error)}`, 'error', true);
         } finally { button.disabled = false; }
@@ -4498,10 +4356,7 @@
         saveConfig({ gistToken: $('#twgif-gist-token').value, gistId: $('#twgif-gist-id').value });
         try { await syncNow(); } catch (error) { setStatus(`Синхронизация галереи: ${formatGitHubSyncError(error)}`, 'error', true); }
       });
-      $('#twgif-sync-settings').addEventListener('click', async () => {
-        saveConfig({ gistToken: $('#twgif-gist-token').value, gistId: $('#twgif-gist-id').value });
-        try { await syncSettingsNow(); } catch (error) { setStatus(`Синхронизация настроек: ${formatGitHubSyncError(error)}`, 'error', true); }
-      });
+
     }
 
     if (settingsTab === 'debug') {
