@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.34
+// @version      5.9.35
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.34';
+  const APP_VERSION = '5.9.35';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -2080,6 +2080,16 @@
     playTriggerResult(result);
   }
 
+  function syncPortalImportIndicator() {
+    // Twitch can replace its chat toolbar while a dropped file is processing.
+    // Keep the loading pulse on whichever picker button is currently mounted.
+    const shouldPulse = portalImportDepth > 0;
+    const triggers = new Set([document.getElementById('twgif-trigger'), activeTrigger]);
+    for (const trigger of triggers) {
+      if (trigger) trigger.classList.toggle('twgif-uploading', shouldPulse);
+    }
+  }
+
   function addItem(url, name, type, sourceKey = '', previewUrl = '', mediaBlob = null, isHd = false) {
     const data = loadData();
     const normalizedUrl = String(url || '').trim();
@@ -3223,7 +3233,7 @@
       #twgif-trigger.twgif-inline-twitch{flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important}
       #twgif-trigger.twgif-inline-wtv{flex:0 0 44px!important;width:44px!important;min-width:44px!important;height:44px!important}
       #twgif-trigger.twgif-inline-kick{flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important}
-      #twgif-trigger.twgif-uploading svg{animation:twgif-upload-pulse 1.35s ease-in-out infinite;filter:drop-shadow(0 0 2px #a970ff33);}
+      #twgif-trigger.twgif-uploading svg{position:relative;z-index:2;transform-origin:center;will-change:transform,opacity,filter;animation:twgif-upload-pulse 1.35s ease-in-out infinite;}
       #twgif-trigger:hover,#twgif-trigger[aria-expanded=true]{background:var(--color-background-button-text-hover,#2b2b2f)!important;color:var(--color-text-link,#bf94ff)!important;border-radius:50%!important}
       #twgif-trigger svg{display:block;width:20px;height:20px;flex:0 0 20px;align-self:center;pointer-events:none}
       #twgif-trigger.twgif-portal-active,#twgif-trigger.twgif-portal-closing{overflow:visible!important;isolation:isolate!important;z-index:2147483500!important;transform:scale(1.08)!important;}
@@ -3247,7 +3257,7 @@
       @keyframes twgif-portal-vortex{to{transform:rotate(-360deg)}}
       @keyframes twgif-portal-breathe{from{filter:blur(1.8px) brightness(.85);transform:scale(.94)}to{filter:blur(1.8px) brightness(1.3);transform:scale(1.04)}}
       @keyframes twgif-portal-close{to{opacity:0;transform:scale(.12) rotate(180deg)}}
-      @keyframes twgif-upload-pulse{0%,100%{opacity:.78;filter:drop-shadow(0 0 1px #a970ff22)}50%{opacity:1;filter:drop-shadow(0 0 4px #a970ff66)}}
+      @keyframes twgif-upload-pulse{0%,100%{opacity:.76;transform:scale(.96);filter:brightness(.98) drop-shadow(0 0 2px #a970ff55) drop-shadow(0 0 3px #a970ff33)}50%{opacity:1;transform:scale(1.08);filter:brightness(1.1) drop-shadow(0 0 3px #d4b5ffb8) drop-shadow(0 0 8px #a970ff99)}}
       @keyframes twgif-success-icon-glow{0%,100%{opacity:.55;filter:drop-shadow(0 0 1px #28c45c) drop-shadow(0 0 2px #28c45c)}50%{opacity:1;filter:drop-shadow(0 0 3px #28c45c) drop-shadow(0 0 10px #28c45c)}}
       @keyframes twgif-error-icon-glow{0%,100%{opacity:.55;filter:drop-shadow(0 0 1px #ff4055) drop-shadow(0 0 2px #ff4055)}50%{opacity:1;filter:drop-shadow(0 0 3px #ff4055) drop-shadow(0 0 10px #ff4055)}}
       @keyframes twgif-duplicate-icon-glow{0%,100%{opacity:.55;filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 2px #fff)}50%{opacity:1;filter:drop-shadow(0 0 3px #fff) drop-shadow(0 0 10px #fff)}}
@@ -3660,12 +3670,12 @@
       closePortal(true);
       if (files.length) {
         portalImportDepth++;
-        button.classList.add('twgif-uploading');
+        syncPortalImportIndicator();
         try {
           await processFiles(files);
         } finally {
-          button.classList.remove('twgif-uploading');
           portalImportDepth = Math.max(0, portalImportDepth - 1);
+          syncPortalImportIndicator();
         }
       }
     });
@@ -3893,6 +3903,7 @@
     let button = document.getElementById('twgif-trigger');
     if (!button) button = createTrigger();
     activeTrigger = button;
+    syncPortalImportIndicator();
 
     hideDropsToolbarButtons(toolbar);
     // Placement is inline for Kick/w.tv and independent for Twitch/other sites.
@@ -5273,7 +5284,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.34 started', { href: location.href });
+    logDebug('Userscript v5.9.35 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
