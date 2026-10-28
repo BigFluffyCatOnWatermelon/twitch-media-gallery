@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.41
+// @version      5.9.42
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.41';
+  const APP_VERSION = '5.9.42';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -4138,17 +4138,20 @@
     panel.style.position = 'fixed';
     panel.style.width = String(availableWidth) + 'px';
 
-    // Anchor the panel's bottom above the chat input. Resizing moves only the top edge.
+    // Keep the bottom above the chat input. The standard size is the minimum;
+    // the top edge can expand all the way to the top of the available viewport.
     const roomAbove = Math.max(1, Math.floor(inputRect.top - 16));
-    const minPanelHeight = viewportWidth <= 500 ? 180 : 220;
-    const maxPanelHeight = Math.max(1, Math.min(520, Math.floor(viewportHeight * 0.85), roomAbove));
+    const maxPanelHeight = Math.max(1, Math.min(Math.floor(viewportHeight - 16), roomAbove));
+    const standardPanelHeight = Math.max(1, Math.min(520, Math.floor(viewportHeight * 0.68), maxPanelHeight));
     let savedPanelHeight = 0;
     try {
       savedPanelHeight = Number(localStorage.getItem(PANEL_HEIGHT_STORAGE_KEY)) || 0;
     } catch (_) {}
-    const defaultPanelHeight = Math.min(520, Math.floor(viewportHeight * 0.68), maxPanelHeight);
-    const panelHeight = Math.max(1, Math.min(savedPanelHeight > 0 ? savedPanelHeight : defaultPanelHeight, maxPanelHeight));
-    panel.style.minHeight = String(Math.min(minPanelHeight, maxPanelHeight)) + 'px';
+    const panelHeight = Math.max(
+      standardPanelHeight,
+      Math.min(savedPanelHeight > 0 ? savedPanelHeight : standardPanelHeight, maxPanelHeight)
+    );
+    panel.style.minHeight = String(standardPanelHeight) + 'px';
     panel.style.height = String(panelHeight) + 'px';
     panel.style.maxHeight = String(maxPanelHeight) + 'px';
     panel.style.bottom = 'auto';
@@ -4244,9 +4247,10 @@
       if (!raw) return;
       const height = Number(raw);
       if (!Number.isFinite(height)) return;
-      const minHeight = window.innerWidth <= 500 ? 180 : 220;
-      const maxHeight = Math.max(minHeight, window.innerHeight - 16);
-      panel.style.height = Math.max(minHeight, Math.min(maxHeight, Math.round(height))) + 'px';
+      const maxHeight = Math.max(1, window.innerHeight - 16);
+      const standardHeight = Math.max(1, Math.min(520, Math.floor(window.innerHeight * 0.68), maxHeight));
+      panel.style.minHeight = standardHeight + 'px';
+      panel.style.height = Math.max(standardHeight, Math.min(maxHeight, Math.round(height))) + 'px';
     } catch (_) {}
   }
 
@@ -4286,11 +4290,12 @@
       if (!drag || event.pointerId !== drag.pointerId) return;
       event.preventDefault();
       event.stopPropagation();
-      // Moving the pointer UP increases height; the bottom edge is held at its initial Y.
-      const minHeight = Math.min(window.innerWidth <= 500 ? 180 : 220, drag.maxHeight);
+      // Moving the pointer UP increases height; never shrink below the standard size.
       const deltaUp = drag.startY - event.clientY;
-      const nextHeight = Math.max(minHeight, Math.min(drag.maxHeight, Math.round(drag.startHeight + deltaUp)));
+      const nextHeight = Math.max(drag.minHeight, Math.min(drag.maxHeight, Math.round(drag.startHeight + deltaUp)));
       panel.style.bottom = 'auto';
+      panel.style.maxHeight = drag.maxHeight + 'px';
+      panel.style.minHeight = drag.minHeight + 'px';
       panel.style.height = nextHeight + 'px';
       panel.style.top = Math.round(drag.bottom - nextHeight) + 'px';
     };
@@ -4301,16 +4306,14 @@
       event.stopPropagation();
       const rect = panel.getBoundingClientRect();
       const availableAbove = Math.max(1, Math.floor(rect.bottom - 8));
-      const minHeight = Math.min(window.innerWidth <= 500 ? 180 : 220, availableAbove);
-      const maxHeight = Math.max(
-        minHeight,
-        Math.min(520, Math.floor(window.innerHeight * 0.85), availableAbove)
-      );
+      const maxHeight = Math.max(1, Math.min(Math.floor(window.innerHeight - 16), availableAbove));
+      const minHeight = Math.max(1, Math.min(520, Math.floor(window.innerHeight * 0.68), maxHeight));
       drag = {
         pointerId: event.pointerId,
         startY: event.clientY,
-        startHeight: rect.height,
+        startHeight: Math.max(minHeight, rect.height),
         bottom: rect.bottom,
+        minHeight,
         maxHeight
       };
       panel.classList.add('twgif-resizing');
@@ -5577,7 +5580,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.41 started', { href: location.href });
+    logDebug('Userscript v5.9.42 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
