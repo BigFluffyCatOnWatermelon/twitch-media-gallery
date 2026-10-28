@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.24
+// @version      5.9.25
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.24';
+  const APP_VERSION = '5.9.25';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -4129,9 +4129,11 @@
     empty.hidden = visible.length > 0;
     empty.textContent = galleryTab === '7tv'
       ? 'В коллекции пока нет ссылок 7TV.'
-      : galleryTab === 'favorites'
-        ? 'Пока нет избранных медиа. Нажми сердечко на карточке.'
-        : 'Коллекция пуста. Добавь ссылку или перетащи файл.';
+      : galleryTab === 'hd'
+        ? 'Пока нет HD-медиа. Сними галочку «сжимать» и добавь файлы.'
+        : galleryTab === 'favorites'
+          ? 'Пока нет избранных медиа. Нажми сердечко на карточке.'
+          : 'Коллекция пуста. Добавь ссылку или перетащи файл.';
 
     pagination.hidden = items.length <= pageSize;
     pageLabel.textContent = `Стр. ${galleryPage + 1} / ${pages}`;
@@ -4610,7 +4612,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.23 started', { href: location.href });
+    logDebug('Userscript v5.9.25 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
