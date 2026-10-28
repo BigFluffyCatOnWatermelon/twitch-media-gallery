@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.32
+// @version      5.9.33
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.32';
+  const APP_VERSION = '5.9.33';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -666,6 +666,266 @@
       logDebug('Animated WebP detection failed', error);
     }
     return false;
+  }
+
+  function webpReadU24LE(bytes, offset) {
+    return (bytes[offset] || 0) | ((bytes[offset + 1] || 0) << 8) | ((bytes[offset + 2] || 0) << 16);
+  }
+
+  function webpReadU32LE(bytes, offset) {
+    return ((bytes[offset] || 0) | ((bytes[offset + 1] || 0) << 8) |
+      ((bytes[offset + 2] || 0) << 16) | ((bytes[offset + 3] || 0) << 24)) >>> 0;
+  }
+
+  function webpWriteU24LE(bytes, offset, value) {
+    const number = Math.max(0, Math.floor(Number(value) || 0));
+    bytes[offset] = number & 255;
+    bytes[offset + 1] = (number >>> 8) & 255;
+    bytes[offset + 2] = (number >>> 16) & 255;
+  }
+
+  function webpWriteU32LE(bytes, offset, value) {
+    const number = Math.max(0, Math.floor(Number(value) || 0)) >>> 0;
+    bytes[offset] = number & 255;
+    bytes[offset + 1] = (number >>> 8) & 255;
+    bytes[offset + 2] = (number >>> 16) & 255;
+    bytes[offset + 3] = (number >>> 24) & 255;
+  }
+
+  function webpAscii(bytes, offset, length) {
+    let value = '';
+    for (let index = offset; index < offset + length; index++) value += String.fromCharCode(bytes[index] || 0);
+    return value;
+  }
+
+  function webpJoinBytes(parts) {
+    const validParts = parts.filter(part => part && part.byteLength !== 0);
+    const size = validParts.reduce((total, part) => total + part.byteLength, 0);
+    const output = new Uint8Array(size);
+    let offset = 0;
+    for (const part of validParts) {
+      output.set(part instanceof Uint8Array ? part : new Uint8Array(part), offset);
+      offset += part.byteLength;
+    }
+    return output;
+  }
+
+  function webpMakeChunk(type, payload) {
+    const data = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
+    const header = new Uint8Array(8);
+    for (let index = 0; index < 4; index++) header[index] = type.charCodeAt(index);
+    webpWriteU32LE(header, 4, data.length);
+    const padding = data.length & 1 ? new Uint8Array(1) : null;
+    return webpJoinBytes([header, data, padding]);
+  }
+
+  function webpMakeRiff(chunks) {
+    const webpTag = new Uint8Array([87, 69, 66, 80]); // WEBP
+    const body = webpJoinBytes([webpTag, ...chunks]);
+    const header = new Uint8Array(8);
+    header.set([82, 73, 70, 70], 0); // RIFF
+    webpWriteU32LE(header, 4, body.length);
+    return new Blob([header, body], { type: 'image/webp' });
+  }
+
+  function webpParseChunks(bytes, start = 12, end = bytes.length) {
+    const chunks = [];
+    let offset = start;
+    const safeEnd = Math.min(bytes.length, Math.max(start, end));
+    while (offset + 8 <= safeEnd) {
+      const type = webpAscii(bytes, offset, 4);
+      const length = webpReadU32LE(bytes, offset + 4);
+      const payloadStart = offset + 8;
+      const payloadEnd = payloadStart + length;
+      if (payloadEnd > safeEnd || payloadEnd < payloadStart) break;
+      chunks.push({
+        type,
+        data: bytes.subarray(payloadStart, payloadEnd),
+        byteLength: 8 + length + (length & 1)
+      });
+      offset = payloadEnd + (length & 1);
+    }
+    return chunks;
+  }
+
+  function webpMakeCanvas(width, height) {
+    if (typeof OffscreenCanvas === 'function') return new OffscreenCanvas(width, height);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    return canvas;
+  }
+
+  async function webpCanvasToBlob(canvas, quality) {
+    if (typeof canvas.convertToBlob === 'function') {
+      return canvas.convertToBlob({ type: 'image/webp', quality });
+    }
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Браузер не смог сжать кадр в WebP.')), 'image/webp', quality);
+    });
+  }
+
+  function webpMakeCanvasHeader(width, height, alpha) {
+    const payload = new Uint8Array(10);
+    payload[0] = alpha ? 0x10 : 0;
+    webpWriteU24LE(payload, 4, width - 1);
+    webpWriteU24LE(payload, 7, height - 1);
+    return webpMakeChunk('VP8X', payload);
+  }
+
+  async function compressAnimatedWebP(file, maxWidth, quality, runId = null) {
+    if (!file || !file.size) throw new Error('Файл пустой.');
+    const inputBytes = new Uint8Array(await file.arrayBuffer());
+    ensureProcessingRun(runId);
+    if (inputBytes.length < 30 || webpAscii(inputBytes, 0, 4) !== 'RIFF' ||
+        webpAscii(inputBytes, 8, 4) !== 'WEBP') {
+      throw new Error('Повреждённый заголовок WebP.');
+    }
+
+    const topChunks = webpParseChunks(inputBytes, 12, inputBytes.length);
+    const sourceVp8x = topChunks.find(chunk => chunk.type === 'VP8X');
+    const sourceAnim = topChunks.find(chunk => chunk.type === 'ANIM');
+    const sourceFrames = topChunks.filter(chunk => chunk.type === 'ANMF');
+    if (!sourceVp8x || !sourceAnim || !sourceFrames.length || sourceVp8x.data.length < 10 || sourceAnim.data.length < 6) {
+      throw new Error('Не удалось прочитать структуру кадров анимированного WebP.');
+    }
+
+    const originalWidth = webpReadU24LE(sourceVp8x.data, 4) + 1;
+    const originalHeight = webpReadU24LE(sourceVp8x.data, 7) + 1;
+    if (!originalWidth || !originalHeight) throw new Error('Не удалось определить размеры анимированного WebP.');
+
+    const configuredWidth = clampInt(maxWidth, 100, 4000, DEFAULT_MAX_WIDTH);
+    const scale = originalWidth > configuredWidth ? configuredWidth / originalWidth : 1;
+    const canvasWidth = Math.max(1, Math.round(originalWidth * scale));
+    const canvasHeight = Math.max(1, Math.round(originalHeight * scale));
+    const sourceAlpha = (sourceVp8x.data[0] & 0x10) !== 0;
+    const iccChunk = topChunks.find(chunk => chunk.type === 'ICCP');
+    const iccBlock = iccChunk ? webpMakeChunk('ICCP', iccChunk.data) : null;
+
+    const encodeAtQuality = async encodeQuality => {
+      const outputFrames = [];
+      for (let index = 0; index < sourceFrames.length; index++) {
+        ensureProcessingRun(runId);
+        const sourceFrame = sourceFrames[index];
+        if (sourceFrame.data.length < 16) throw new Error('Некорректный кадр WebP №' + (index + 1) + '.');
+
+        const sourceX = webpReadU24LE(sourceFrame.data, 0) * 2;
+        const sourceY = webpReadU24LE(sourceFrame.data, 3) * 2;
+        const sourceWidth = webpReadU24LE(sourceFrame.data, 6) + 1;
+        const sourceHeight = webpReadU24LE(sourceFrame.data, 9) + 1;
+        const duration = webpReadU24LE(sourceFrame.data, 12);
+        const frameFlags = sourceFrame.data[15];
+        const frameChunks = webpParseChunks(sourceFrame.data, 16, sourceFrame.data.length);
+        const alphaChunk = frameChunks.find(chunk => chunk.type === 'ALPH');
+        const encodedImageChunks = frameChunks.filter(chunk =>
+          chunk.type === 'ALPH' || chunk.type === 'VP8 ' || chunk.type === 'VP8L'
+        );
+        if (!encodedImageChunks.some(chunk => chunk.type === 'VP8 ' || chunk.type === 'VP8L')) {
+          throw new Error('В кадре WebP №' + (index + 1) + ' не найдено изображение.');
+        }
+
+        const standaloneChunks = [
+          webpMakeCanvasHeader(sourceWidth, sourceHeight, sourceAlpha || Boolean(alphaChunk)),
+          ...encodedImageChunks.map(chunk => webpMakeChunk(chunk.type, chunk.data))
+        ];
+        const standalone = webpMakeRiff(standaloneChunks);
+        let bitmap = null;
+        try {
+          bitmap = await createImageBitmap(standalone);
+          const frameX = Math.min(canvasWidth - 1, Math.max(0, Math.round((sourceX * scale) / 2) * 2));
+          const frameY = Math.min(canvasHeight - 1, Math.max(0, Math.round((sourceY * scale) / 2) * 2));
+          const frameWidth = Math.max(1, Math.min(canvasWidth - frameX, Math.round(sourceWidth * scale)));
+          const frameHeight = Math.max(1, Math.min(canvasHeight - frameY, Math.round(sourceHeight * scale)));
+          const canvas = webpMakeCanvas(frameWidth, frameHeight);
+          const context = canvas.getContext('2d', { alpha: true });
+          if (!context) throw new Error('Canvas недоступен при сжатии анимированного WebP.');
+          context.clearRect(0, 0, frameWidth, frameHeight);
+          context.drawImage(bitmap, 0, 0, frameWidth, frameHeight);
+          const encodedBlob = await webpCanvasToBlob(canvas, encodeQuality);
+          if (!encodedBlob || !encodedBlob.size || !/^image\/webp$/i.test(encodedBlob.type || '')) {
+            throw new Error('Браузер не вернул WebP при сжатии кадра.');
+          }
+          const encodedBytes = new Uint8Array(await encodedBlob.arrayBuffer());
+          const encodedChunks = webpParseChunks(encodedBytes, 12, encodedBytes.length)
+            .filter(chunk => chunk.type === 'ALPH' || chunk.type === 'VP8 ' || chunk.type === 'VP8L');
+          if (!encodedChunks.some(chunk => chunk.type === 'VP8 ' || chunk.type === 'VP8L')) {
+            throw new Error('Не удалось извлечь сжатый кадр WebP.');
+          }
+
+          const frameHeader = new Uint8Array(16);
+          webpWriteU24LE(frameHeader, 0, Math.floor(frameX / 2));
+          webpWriteU24LE(frameHeader, 3, Math.floor(frameY / 2));
+          webpWriteU24LE(frameHeader, 6, frameWidth - 1);
+          webpWriteU24LE(frameHeader, 9, frameHeight - 1);
+          webpWriteU24LE(frameHeader, 12, duration);
+          frameHeader[15] = frameFlags;
+          outputFrames.push(webpMakeChunk('ANMF', webpJoinBytes([
+            frameHeader,
+            ...encodedChunks.map(chunk => webpMakeChunk(chunk.type, chunk.data))
+          ])));
+        } finally {
+          if (bitmap && typeof bitmap.close === 'function') bitmap.close();
+        }
+
+        if (index === sourceFrames.length - 1 || index % 8 === 0) {
+          setProgress(10 + Math.round(((index + 1) / sourceFrames.length) * 78), true);
+          setStatus('Сжимаю анимированный WebP: кадр ' + (index + 1) + ' из ' + sourceFrames.length + '…', 'info', true);
+        }
+      }
+
+      const vp8xData = new Uint8Array(10);
+      vp8xData[0] = 0x02 | (sourceAlpha ? 0x10 : 0) | (iccChunk ? 0x20 : 0);
+      webpWriteU24LE(vp8xData, 4, canvasWidth - 1);
+      webpWriteU24LE(vp8xData, 7, canvasHeight - 1);
+      const outputChunks = [
+        webpMakeChunk('VP8X', vp8xData),
+        ...(iccBlock ? [iccBlock] : []),
+        webpMakeChunk('ANIM', sourceAnim.data),
+        ...outputFrames
+      ];
+      return webpMakeRiff(outputChunks);
+    };
+
+    const initialQuality = clampInt(Math.round((Number(quality) || 0.68) * 100), 20, 100, 68) / 100;
+    const qualities = [...new Set([
+      initialQuality,
+      Math.min(initialQuality, 0.54),
+      Math.min(initialQuality, 0.40),
+      Math.min(initialQuality, 0.28)
+    ])];
+    let smallest = null;
+    for (let attempt = 0; attempt < qualities.length; attempt++) {
+      ensureProcessingRun(runId);
+      const candidate = await encodeAtQuality(qualities[attempt]);
+      if (!smallest || candidate.size < smallest.size) smallest = candidate;
+      if (candidate.size < file.size) {
+        const baseName = String(file.name || 'animated.webp').replace(/\.[^.]+$/i, '') || 'animated';
+        const output = new File([candidate], baseName + '.webp', {
+          type: 'image/webp',
+          lastModified: Date.now()
+        });
+        logDebug('Animated WebP compressed', {
+          inputBytes: file.size,
+          outputBytes: output.size,
+          quality: qualities[attempt],
+          sourceFrames: sourceFrames.length,
+          sourceWidth: originalWidth,
+          outputWidth: canvasWidth
+        });
+        setStatus('Анимированный WebP сжат: ' + formatBytes(file.size) + ' → ' + formatBytes(output.size) + '.', 'success');
+        setProgress(95, true);
+        return output;
+      }
+    }
+
+    logDebug('Animated WebP compression was not smaller; original retained', {
+      inputBytes: file.size,
+      smallestOutputBytes: smallest ? smallest.size : 0,
+      sourceFrames: sourceFrames.length
+    });
+    setStatus('Анимированный WebP уже оптимизирован: оригинал меньше результата сжатия.', 'info');
+    setProgress(95, true);
+    return file;
   }
 
   function openMediaCacheDb() {
@@ -1666,17 +1926,36 @@
     const target = config.conversionRules[category] || 'keep';
     if (target === 'keep') return file;
 
-    // Current bundled FFmpeg can encode animated WebP, but does not reliably
-    // decode animated WebP input. Preserve the original instead of flattening it.
+    // Preserve animation but re-encode its individual frame patches in-browser.
+    // This avoids the static-image Canvas path that would keep only frame one.
     if (animatedWebP) {
       if (target === 'webp') {
-        setStatus('Анимированный WebP: сохраняю оригинал, чтобы не потерять кадры…', 'info', true);
-        logDebug('Animated WebP detected; passing through unchanged to preserve animation', {
-          name: file.name, size: file.size
-        });
-        return file;
+        if (!compressEnabled) {
+          setStatus('Анимированный WebP: исходный размер сохранён (сжатие отключено).', 'info');
+          return file;
+        }
+        setStatus('Подготавливаю сжатие анимированного WebP…', 'info', true);
+        setProgress(5, true);
+        try {
+          const converted = await compressAnimatedWebP(
+            file,
+            config.maxWidth,
+            config.compression.animationQuality / 100,
+            runId
+          );
+          ensureProcessingRun(runId);
+          return converted;
+        } catch (error) {
+          if (!isProcessingRunCurrent(runId)) throw error;
+          logDebug('Animated WebP compression failed; original kept to preserve animation', {
+            name: file.name,
+            error: error.message || String(error)
+          });
+          setStatus('Не удалось безопасно сжать анимированный WebP; загружаю оригинал.', 'info');
+          return file;
+        }
       }
-      throw new Error('Это анимированный WebP. Текущая сборка не умеет безопасно конвертировать его в другой формат без потери кадров. Выбери целевой формат WebP или «Оставить исходный формат».');
+      throw new Error('Это анимированный WebP. Чтобы сохранить анимацию, выбери целевой формат WebP или «Оставить исходный формат».');
     }
 
     // Still images use the browser's native Canvas encoder (usually much faster than WASM).
@@ -4904,7 +5183,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.32 started', { href: location.href });
+    logDebug('Userscript v5.9.33 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
