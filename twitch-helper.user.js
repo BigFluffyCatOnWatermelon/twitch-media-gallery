@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.43
+// @version      5.9.44
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.43';
+  const APP_VERSION = '5.9.44';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -138,9 +138,8 @@
 
   const DEFAULT_CONFIG = () => ({
     maxWidth: DEFAULT_MAX_WIDTH,
-    mediaScale: 1,
+    rowsPerPage: 4,
     tileView: 'masonry',
-    pageSize: 100,
     previewMaxSize: 1920,
     previewTileBoost: 5,
     conversionRules: { image: 'webp', gif: 'webp', video: 'webp' },
@@ -262,9 +261,8 @@
     const cleanTarget = (key, value) => allowedTargets[key].includes(String(value)) ? String(value) : defaults.conversionRules[key];
     const config = {
       maxWidth: clampInt(raw.maxWidth ?? defaults.maxWidth, 100, 4000, defaults.maxWidth),
-      mediaScale: clampFloat(raw.mediaScale ?? defaults.mediaScale, 0.5, 2, defaults.mediaScale),
+      rowsPerPage: clampInt(raw.rowsPerPage ?? defaults.rowsPerPage, 1, 10, defaults.rowsPerPage),
       tileView: raw.tileView === 'grid' ? 'grid' : 'masonry',
-      pageSize: clampInt(raw.pageSize ?? 100, 10, 500, 100),
       previewMaxSize: clampInt(raw.previewMaxSize ?? defaults.previewMaxSize, 1, 4000, defaults.previewMaxSize),
       previewTileBoost: clampInt(raw.previewTileBoost ?? defaults.previewTileBoost, 0, 100, defaults.previewTileBoost),
       conversionRules: {
@@ -311,9 +309,8 @@
     }, defaults.compression);
     const config = {
       maxWidth: clampInt(next.maxWidth ?? current.maxWidth, 100, 4000, defaults.maxWidth),
-      mediaScale: clampFloat(next.mediaScale ?? current.mediaScale, 0.5, 2, defaults.mediaScale),
+      rowsPerPage: clampInt(next.rowsPerPage ?? current.rowsPerPage, 1, 10, defaults.rowsPerPage),
       tileView: (next.tileView ?? current.tileView) === 'grid' ? 'grid' : 'masonry',
-      pageSize: clampInt(next.pageSize ?? current.pageSize, 10, 500, defaults.pageSize),
       previewMaxSize: clampInt(next.previewMaxSize ?? current.previewMaxSize, 1, 4000, defaults.previewMaxSize),
       previewTileBoost: clampInt(next.previewTileBoost ?? current.previewTileBoost, 0, 100, defaults.previewTileBoost),
       conversionRules: rules,
@@ -4979,12 +4976,13 @@
     if (!masonry || !empty || !pagination) return;
 
     const config = loadConfig();
-    const scale = config.mediaScale;
     masonry.classList.toggle('twgif-grid-mode', config.tileView === 'grid');
-    masonry.style.setProperty('--twgif-scale', String(scale));
-    masonry.style.setProperty('--twgif-tile-min', `${Math.round(76 * scale)}px`);
-    masonry.style.setProperty('--twgif-thumb-height', `${Math.round(90 * scale)}px`);
-    const gap = Math.max(3, Math.round(6 * scale));
+    // Tile size is stable; the selected row count determines how many items are paged in.
+    const minTileWidth = 76;
+    const thumbHeight = 90;
+    const gap = 6;
+    masonry.style.setProperty('--twgif-tile-min', `${minTileWidth}px`);
+    masonry.style.setProperty('--twgif-thumb-height', `${thumbHeight}px`);
     masonry.style.columnGap = `${gap}px`;
     masonry.style.rowGap = `${gap}px`;
     masonry.style.gap = `${gap}px`;
@@ -5016,7 +5014,8 @@
       : galleryTab === 'hd' ? hdItems
       : galleryTab === 'favorites' ? favoriteItems
       : allItems;
-    const pageSize = config.pageSize;
+    const columnsPerRow = Math.max(1, Math.floor((masonry.clientWidth + gap) / (minTileWidth + gap)));
+    const pageSize = config.rowsPerPage * columnsPerRow;
     const pages = Math.max(1, Math.ceil(items.length / pageSize));
     galleryPage = Math.max(0, Math.min(galleryPage, pages - 1));
     const start = galleryPage * pageSize;
@@ -5119,17 +5118,16 @@
         <div class="twgif-settings">
           <div class="twgif-section">
             <div class="twgif-section-title">Галерея</div>
-            <label class="twgif-field-label" for="twgif-media-scale">Масштаб плиток</label>
-            <select id="twgif-media-scale" class="twgif-input">
-              ${targetOptions(String(config.mediaScale), [['0.5','50%'],['0.7','70%'],['0.85','85%'],['1','100%'],['1.2','120%'],['1.4','140%'],['1.6','160%'],['2','200%']])}
+            <label class="twgif-field-label" for="twgif-rows-per-page">Количество рядов на странице</label>
+            <select id="twgif-rows-per-page" class="twgif-input">
+              ${targetOptions(String(config.rowsPerPage), [['1','1 ряд'],['2','2 ряда'],['3','3 ряда'],['4','4 ряда'],['5','5 рядов'],['6','6 рядов'],['7','7 рядов'],['8','8 рядов'],['9','9 рядов'],['10','10 рядов']])}
             </select>
+            <div class="twgif-help">Количество плиток на странице рассчитывается автоматически с учётом ширины галереи.</div>
             <label class="twgif-field-label" for="twgif-tile-view">Вид плиток</label>
             <select id="twgif-tile-view" class="twgif-input">
               <option value="masonry" ${config.tileView === 'masonry' ? 'selected' : ''}>Плотная мозаика</option>
               <option value="grid" ${config.tileView === 'grid' ? 'selected' : ''}>Ровная сетка</option>
             </select>
-            <label class="twgif-field-label" for="twgif-page-size">Медиа на странице (10–500)</label>
-            <input id="twgif-page-size" class="twgif-input" type="number" min="10" max="500" step="10" value="${config.pageSize}">
             <label class="twgif-field-label" for="twgif-preview-max-size">Максимальный размер предпросмотра (px)</label>
             <input id="twgif-preview-max-size" class="twgif-input" type="number" min="10" max="4000" step="1" value="${config.previewMaxSize}">
             <label class="twgif-field-label" for="twgif-preview-tile-boost">Увеличение превью относительно плитки (%)</label>
@@ -5233,9 +5231,8 @@
     if (settingsTab === 'general') {
       $('#twgif-save-gallery-settings').addEventListener('click', () => {
         saveConfig({
-          mediaScale: $('#twgif-media-scale').value,
+          rowsPerPage: $('#twgif-rows-per-page').value,
           tileView: $('#twgif-tile-view').value,
-          pageSize: $('#twgif-page-size').value,
           previewMaxSize: $('#twgif-preview-max-size').value,
           previewTileBoost: $('#twgif-preview-tile-boost').value
         });
@@ -5450,6 +5447,7 @@
   window.addEventListener('resize', () => {
     repositionTrigger();
     repositionPanel();
+    if (isPanelOpen() && panelView === 'gallery') renderGalleryItems();
     if (holdPreviewItem) {
       const holder = document.getElementById('twgif-hold-preview');
       if (holder && holder.firstElementChild && holder.__twgifCard) {
