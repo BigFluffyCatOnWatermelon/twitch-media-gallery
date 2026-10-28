@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.31
+// @version      5.9.32
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.31';
+  const APP_VERSION = '5.9.32';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -634,6 +634,38 @@
       mkv: 'video/x-matroska', avi: 'video/x-msvideo', ogv: 'video/ogg', mpg: 'video/mpeg', mpeg: 'video/mpeg'
     };
     return map[ext] || '';
+  }
+
+  async function isAnimatedWebP(file) {
+    if (!file || !file.size || (mimeFromFile(file) !== 'image/webp' && fileExtension(file) !== 'webp')) return false;
+    try {
+      // The VP8X animation flag is near the beginning of a WebP file. ANIM/ANMF
+      // chunks are additional definitive signals for animated containers.
+      const buffer = await file.slice(0, Math.min(file.size, 1024 * 1024)).arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      if (bytes.length < 16) return false;
+      const ascii = (offset, length) => String.fromCharCode(...bytes.subarray(offset, offset + length));
+      if (ascii(0, 4) !== 'RIFF' || ascii(8, 4) !== 'WEBP') return false;
+      let offset = 12;
+      while (offset + 8 <= bytes.length) {
+        const chunkType = ascii(offset, 4);
+        const chunkLength = bytes[offset + 4] |
+          (bytes[offset + 5] << 8) |
+          (bytes[offset + 6] << 16) |
+          (bytes[offset + 7] << 24);
+        const payloadOffset = offset + 8;
+        if (chunkType === 'ANIM' || chunkType === 'ANMF') return true;
+        if (chunkType === 'VP8X' && chunkLength > 0 &&
+            payloadOffset < bytes.length && (bytes[payloadOffset] & 0x02) !== 0) return true;
+        if (chunkLength < 0) break;
+        const nextOffset = payloadOffset + chunkLength + (chunkLength & 1);
+        if (nextOffset <= offset || nextOffset > bytes.length) break;
+        offset = nextOffset;
+      }
+    } catch (error) {
+      logDebug('Animated WebP detection failed', error);
+    }
+    return false;
   }
 
   function openMediaCacheDb() {
@@ -1626,11 +1658,26 @@
     if (file.size > MAX_FILE_BYTES) throw new Error('Файл больше ' + formatBytes(MAX_FILE_BYTES) + '. Уменьши его перед загрузкой.');
     const mime = mimeFromFile(file);
     if (!mime || (!mime.startsWith('image/') && !mime.startsWith('video/'))) throw new Error('Поддерживаются изображения, GIF и видео.');
+    const animatedWebP = await isAnimatedWebP(file);
+    ensureProcessingRun(runId);
     const config = loadConfig();
     const category = mime.startsWith('video/') ? 'video'
-      : (mime === 'image/gif' || String(file.name || '').toLowerCase().endsWith('.gif') ? 'gif' : 'image');
+      : (mime === 'image/gif' || animatedWebP || String(file.name || '').toLowerCase().endsWith('.gif') ? 'gif' : 'image');
     const target = config.conversionRules[category] || 'keep';
     if (target === 'keep') return file;
+
+    // Current bundled FFmpeg can encode animated WebP, but does not reliably
+    // decode animated WebP input. Preserve the original instead of flattening it.
+    if (animatedWebP) {
+      if (target === 'webp') {
+        setStatus('Анимированный WebP: сохраняю оригинал, чтобы не потерять кадры…', 'info', true);
+        logDebug('Animated WebP detected; passing through unchanged to preserve animation', {
+          name: file.name, size: file.size
+        });
+        return file;
+      }
+      throw new Error('Это анимированный WebP. Текущая сборка не умеет безопасно конвертировать его в другой формат без потери кадров. Выбери целевой формат WebP или «Оставить исходный формат».');
+    }
 
     // Still images use the browser's native Canvas encoder (usually much faster than WASM).
     // Animated GIFs and videos remain on FFmpeg to preserve animation and time-based output.
@@ -4857,7 +4904,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.31 started', { href: location.href });
+    logDebug('Userscript v5.9.32 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
