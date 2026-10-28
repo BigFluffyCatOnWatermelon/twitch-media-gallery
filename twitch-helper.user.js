@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.42
+// @version      5.9.43
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.42';
+  const APP_VERSION = '5.9.43';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -3599,7 +3599,12 @@
 
   function getChatRegion(input) {
     if (isTwitchSite()) {
-      return document.querySelector('[data-a-target="chat-room-component-layout"]') ||
+      // Prefer Twitch's actual stream-chat column so the gallery's upper edge
+      // is constrained by the top of the chat, not by the browser viewport.
+      return document.querySelector('.Layout-sc-1xcs6mc-0.jUmLZD.stream-chat') ||
+        document.querySelector('.Layout-sc-1xcs6mc-0.stream-chat') ||
+        document.querySelector('div.stream-chat[class*="Layout-sc-1xcs6mc-0"]') ||
+        document.querySelector('[data-a-target="chat-room-component-layout"]') ||
         input?.closest('.chat-room') || input?.closest('[class*="chat-room"]') ||
         input?.closest('[data-a-target="chat-input-container"]')?.parentElement?.parentElement ||
         input?.parentElement?.parentElement?.parentElement || document.body;
@@ -4119,7 +4124,7 @@
     const region = getChatRegion(input);
     const regionRect = region && region.getBoundingClientRect
       ? region.getBoundingClientRect()
-      : { left: 0, right: innerWidth, width: innerWidth };
+      : { top: 0, left: 0, right: innerWidth, width: innerWidth };
     const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
     const viewportHeight = Math.max(1, document.documentElement.clientHeight || innerHeight);
     const rawRegionLeft = Number.isFinite(regionRect.left) ? regionRect.left : 0;
@@ -4138,10 +4143,11 @@
     panel.style.position = 'fixed';
     panel.style.width = String(availableWidth) + 'px';
 
-    // Keep the bottom above the chat input. The standard size is the minimum;
-    // the top edge can expand all the way to the top of the available viewport.
-    const roomAbove = Math.max(1, Math.floor(inputRect.top - 16));
-    const maxPanelHeight = Math.max(1, Math.min(Math.floor(viewportHeight - 16), roomAbove));
+    // Keep the bottom above the chat input and stop the top edge at the top
+    // of Twitch's stream-chat container.
+    const chatTop = Math.max(0, Math.ceil(Number.isFinite(regionRect.top) ? regionRect.top : 0));
+    const panelBottom = Math.min(Math.floor(inputRect.top - 8), Math.floor(viewportHeight - 8));
+    const maxPanelHeight = Math.max(1, Math.floor(panelBottom - chatTop));
     const standardPanelHeight = Math.max(1, Math.min(520, Math.floor(viewportHeight * 0.68), maxPanelHeight));
     let savedPanelHeight = 0;
     try {
@@ -4158,7 +4164,7 @@
 
     const maxLeft = Math.max(8, viewportWidth - availableWidth - 8);
     const left = Math.round(Math.max(8, Math.min(maxLeft, panelLeft)));
-    const top = Math.max(0, Math.round(inputRect.top - panelHeight - 8));
+    const top = Math.max(chatTop, Math.round(panelBottom - panelHeight));
     panel.style.left = String(left) + 'px';
     panel.style.top = String(top) + 'px';
   }
@@ -4305,8 +4311,11 @@
       event.preventDefault();
       event.stopPropagation();
       const rect = panel.getBoundingClientRect();
-      const availableAbove = Math.max(1, Math.floor(rect.bottom - 8));
-      const maxHeight = Math.max(1, Math.min(Math.floor(window.innerHeight - 16), availableAbove));
+      const input = getChatInput() || (activeComposer && activeComposer.isConnected ? activeComposer : null);
+      const region = input ? getChatRegion(input) : null;
+      const regionRect = region?.getBoundingClientRect ? region.getBoundingClientRect() : null;
+      const chatTop = Math.max(0, Math.ceil(Number.isFinite(regionRect?.top) ? regionRect.top : 0));
+      const maxHeight = Math.max(1, Math.floor(rect.bottom - chatTop));
       const minHeight = Math.max(1, Math.min(520, Math.floor(window.innerHeight * 0.68), maxHeight));
       drag = {
         pointerId: event.pointerId,
@@ -5580,7 +5589,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.42 started', { href: location.href });
+    logDebug('Userscript v5.9.43 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
