@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.35
+// @version      5.9.36
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.35';
+  const APP_VERSION = '5.9.36';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -1914,6 +1914,92 @@
       probe.src = source;
       try { probe.load(); } catch (_) { finish(0); }
     }).finally(() => {
+      videoDurationLookupPending.delete(url);
+    });
+
+    videoDurationLookupPending.set(url, lookup);
+    return lookup;
+  }
+
+  function isLikelyWebPItem(item, rawUrl) {
+    return [rawUrl, item?.url, item?.previewUrl, item?.name].some(value => {
+      const text = String(value || '').trim();
+      return /^data:image\/webp[;,]/i.test(text) || /\.webp(?:$|[?#])/i.test(text);
+    });
+  }
+
+  function getAnimatedWebPDurationSeconds(blob) {
+    if (!(blob instanceof Blob) || blob.size < 30) return Promise.resolve(0);
+    return blob.arrayBuffer().then(buffer => {
+      const bytes = new Uint8Array(buffer);
+      if (webpAscii(bytes, 0, 4) !== 'RIFF' || webpAscii(bytes, 8, 4) !== 'WEBP') return 0;
+      const riffLength = webpReadU32LE(bytes, 4);
+      const riffEnd = riffLength > 0 ? Math.min(bytes.length, riffLength + 8) : bytes.length;
+      const chunks = webpParseChunks(bytes, 12, riffEnd);
+      let totalMilliseconds = 0;
+      let frameCount = 0;
+      for (const chunk of chunks) {
+        if (chunk.type !== 'ANMF' || chunk.data.length < 16) continue;
+        totalMilliseconds += webpReadU24LE(chunk.data, 12);
+        frameCount++;
+      }
+      return frameCount > 0 && totalMilliseconds > 0 ? totalMilliseconds / 1000 : 0;
+    }).catch(() => 0);
+  }
+
+  async function resolveAnimatedWebPDuration(item, rawUrl) {
+    const url = String(rawUrl || '').trim();
+    if (!url) return 0;
+    if (videoDurationCache.has(url)) return videoDurationCache.get(url);
+    if (videoDurationLookupPending.has(url)) return videoDurationLookupPending.get(url);
+
+    const lookup = (async () => {
+      let blob = null;
+      const candidateUrls = Array.from(new Set([
+        url,
+        String(item?.url || '').trim(),
+        String(item?.previewUrl || '').trim()
+      ].filter(Boolean)));
+
+      // Prefer blobs already stored by gallery imports; this avoids re-downloading
+      // the same animation just to read its frame timings.
+      for (const candidate of candidateUrls) {
+        try {
+          blob = await getCachedMediaBlob(candidate);
+          if (!blob) blob = await getSharedMediaBlob(candidate);
+          if (!blob) {
+            const objectUrl = cachedMediaObjectUrls.get(candidate);
+            if (objectUrl) {
+              const response = await fetch(objectUrl);
+              if (response.ok) blob = await response.blob();
+            }
+          }
+          if (blob instanceof Blob && blob.size > 0) break;
+          blob = null;
+        } catch (_) {
+          blob = null;
+        }
+      }
+
+      // For an uncached remote WebP, download only when the server reports a
+      // reasonable size; do not unexpectedly fetch a huge file on hover.
+      if (!blob && /^https?:\/\//i.test(url)) {
+        try {
+          const head = await request({ method: 'HEAD', url, timeout: 10000, acceptHttpErrors: true });
+          const lengthMatch = String(head.responseHeaders || '').match(/content-length:\s*(\d+)/i);
+          const contentLength = lengthMatch ? Number(lengthMatch[1]) : 0;
+          if (head.status >= 200 && head.status < 300 &&
+              contentLength > 0 && contentLength <= 30 * 1024 * 1024) {
+            blob = await requestBlob(url, 25000, false);
+          }
+        } catch (_) {}
+      }
+
+      if (!blob) return 0;
+      const duration = await getAnimatedWebPDurationSeconds(blob);
+      if (duration > 0) videoDurationCache.set(url, duration);
+      return duration;
+    })().finally(() => {
       videoDurationLookupPending.delete(url);
     });
 
@@ -4320,24 +4406,30 @@
     card.addEventListener('focus', updateFileSizeBadge);
 
     let durationBadge = null;
-    if (isVideo) {
+    const isWebP = !isVideo && isLikelyWebPItem(item, previewUrl);
+    if (isVideo || isWebP) {
       durationBadge = document.createElement('span');
       durationBadge.className = 'twgif-video-duration';
       durationBadge.setAttribute('aria-hidden', 'true');
       durationBadge.hidden = true;
-      const updateVideoDurationBadge = async () => {
+      const updateDurationBadge = async () => {
         if (!durationBadge.isConnected || !durationBadge.hidden) return;
-        const existingDuration = Number(media.duration);
-        const duration = Number.isFinite(existingDuration) && existingDuration >= 0
-          ? existingDuration
-          : await resolveVideoDuration(previewUrl);
-        if (!durationBadge.isConnected || !Number.isFinite(duration) || duration <= 0) return;
-        durationBadge.textContent = formatVideoDuration(duration);
+        const duration = isVideo
+          ? (() => {
+              const existingDuration = Number(media.duration);
+              return Number.isFinite(existingDuration) && existingDuration >= 0
+                ? Promise.resolve(existingDuration)
+                : resolveVideoDuration(previewUrl);
+            })()
+          : resolveAnimatedWebPDuration(item, previewUrl);
+        const seconds = await duration;
+        if (!durationBadge.isConnected || !Number.isFinite(seconds) || seconds <= 0) return;
+        durationBadge.textContent = formatVideoDuration(seconds);
         durationBadge.hidden = false;
       };
-      media.addEventListener('loadedmetadata', updateVideoDurationBadge);
-      card.addEventListener('mouseenter', updateVideoDurationBadge);
-      card.addEventListener('focus', updateVideoDurationBadge);
+      if (isVideo) media.addEventListener('loadedmetadata', updateDurationBadge);
+      card.addEventListener('mouseenter', updateDurationBadge);
+      card.addEventListener('focus', updateDurationBadge);
     }
     if (durationBadge) frame.appendChild(durationBadge);
     card.appendChild(frame);
@@ -5284,7 +5376,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.35 started', { href: location.href });
+    logDebug('Userscript v5.9.36 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
