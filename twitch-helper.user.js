@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.33
+// @version      5.9.34
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.33';
+  const APP_VERSION = '5.9.34';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -117,6 +117,8 @@
   const recentFileFingerprints = new Map();
   const mediaSizeCache = new Map();
   const mediaSizeLookupPending = new Map();
+  const videoDurationCache = new Map();
+  const videoDurationLookupPending = new Map();
   let localFfmpegAssetsPromise = null;
   let localFfmpegAssets = null;
   let localFfmpegWorker = null;
@@ -1856,6 +1858,69 @@
     return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
   }
 
+  function formatVideoDuration(seconds) {
+    if (!Number.isFinite(seconds) || seconds < 0) return '';
+    const totalSeconds = Math.floor(seconds);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const rest = totalSeconds % 60;
+    return hours > 0
+      ? hours + ':' + String(minutes).padStart(2, '0') + ':' + String(rest).padStart(2, '0')
+      : minutes + ':' + String(rest).padStart(2, '0');
+  }
+
+  function resolveVideoDuration(rawUrl) {
+    const url = String(rawUrl || '').trim();
+    if (!url) return Promise.resolve(0);
+    if (videoDurationCache.has(url)) return Promise.resolve(videoDurationCache.get(url));
+    if (videoDurationLookupPending.has(url)) return videoDurationLookupPending.get(url);
+
+    const lookup = new Promise(resolve => {
+      const probe = document.createElement('video');
+      let settled = false;
+      let timeout = 0;
+      probe.preload = 'metadata';
+      probe.muted = true;
+      probe.playsInline = true;
+
+      const finish = duration => {
+        if (settled) return;
+        settled = true;
+        if (timeout) clearTimeout(timeout);
+        probe.removeEventListener('loadedmetadata', readDuration);
+        probe.removeEventListener('durationchange', readDuration);
+        probe.removeEventListener('error', onError);
+        try {
+          probe.pause();
+          probe.removeAttribute('src');
+          probe.load();
+        } catch (_) {}
+        const safeDuration = Number.isFinite(duration) && duration >= 0 ? duration : 0;
+        if (safeDuration > 0) videoDurationCache.set(url, safeDuration);
+        resolve(safeDuration);
+      };
+      const readDuration = () => {
+        const duration = Number(probe.duration);
+        if (Number.isFinite(duration) && duration >= 0) finish(duration);
+        else if (duration === Infinity) finish(0);
+      };
+      const onError = () => finish(0);
+
+      probe.addEventListener('loadedmetadata', readDuration);
+      probe.addEventListener('durationchange', readDuration);
+      probe.addEventListener('error', onError);
+      timeout = window.setTimeout(() => finish(0), 10000);
+      const source = cachedMediaObjectUrls.get(url) || url;
+      probe.src = source;
+      try { probe.load(); } catch (_) { finish(0); }
+    }).finally(() => {
+      videoDurationLookupPending.delete(url);
+    });
+
+    videoDurationLookupPending.set(url, lookup);
+    return lookup;
+  }
+
   async function resolveMediaSizeBytes(item, rawUrl) {
     const url = String(rawUrl || item?.previewUrl || item?.url || '').trim();
     const knownSize = Math.max(0, Math.floor(Number(item?.size) || 0));
@@ -3226,6 +3291,9 @@
       .twgif-file-size{position:absolute;z-index:2;right:4px;bottom:4px;max-width:calc(100% - 8px);padding:2px 4px;border:1px solid #ffffff10;border-radius:4px;background:#09090bd1;color:#c5c5ce;font-size:9px;font-weight:400;line-height:1.25;letter-spacing:.01em;white-space:nowrap;opacity:0;visibility:hidden;transform:translateY(2px);transition:opacity .14s ease,visibility .14s ease,transform .14s ease;pointer-events:none;backdrop-filter:blur(3px);font-variant-numeric:tabular-nums}
       .twgif-card:hover .twgif-file-size,.twgif-card:focus-visible .twgif-file-size,.twgif-card:focus-within .twgif-file-size{opacity:.82;visibility:visible;transform:translateY(0)}
       .twgif-file-size[hidden]{display:none!important}
+      .twgif-video-duration{position:absolute;z-index:2;left:50%;bottom:4px;max-width:calc(100% - 12px);padding:2px 5px;border:1px solid #ffffff10;border-radius:4px;background:#09090bd1;color:#c5c5ce;font-size:9px;font-weight:400;line-height:1.25;letter-spacing:.01em;white-space:nowrap;opacity:0;visibility:hidden;transform:translate(-50%,2px);transition:opacity .14s ease,visibility .14s ease,transform .14s ease;pointer-events:none;backdrop-filter:blur(3px);font-variant-numeric:tabular-nums}
+      .twgif-card:hover .twgif-video-duration,.twgif-card:focus-visible .twgif-video-duration,.twgif-card:focus-within .twgif-video-duration{opacity:.82;visibility:visible;transform:translate(-50%,0)}
+      .twgif-video-duration[hidden]{display:none!important}
       .twgif-media-error{min-height:44px;padding:10px;text-align:center;color:#9c9ca6;font-size:10px}
       .twgif-delete{position:absolute;z-index:3;top:-1px;right:-1px;display:flex;align-items:center;justify-content:center;width:17px;height:17px;padding:0;border:1px solid #ffffff26;border-radius:0 5px 0 6px;background:#18181beF;color:#f2f2f2;opacity:0;pointer-events:none;transition:opacity .13s,background .13s,transform .13s;cursor:pointer}
       .twgif-delete svg{width:10px;height:10px;display:block;pointer-events:none}.twgif-card:hover .twgif-delete,.twgif-card:focus-within .twgif-delete{opacity:1;pointer-events:auto}.twgif-delete:hover{background:#b42335;border-color:#ef4444;transform:scale(1.08)}
@@ -4239,6 +4307,28 @@
     };
     card.addEventListener('mouseenter', updateFileSizeBadge);
     card.addEventListener('focus', updateFileSizeBadge);
+
+    let durationBadge = null;
+    if (isVideo) {
+      durationBadge = document.createElement('span');
+      durationBadge.className = 'twgif-video-duration';
+      durationBadge.setAttribute('aria-hidden', 'true');
+      durationBadge.hidden = true;
+      const updateVideoDurationBadge = async () => {
+        if (!durationBadge.isConnected || !durationBadge.hidden) return;
+        const existingDuration = Number(media.duration);
+        const duration = Number.isFinite(existingDuration) && existingDuration >= 0
+          ? existingDuration
+          : await resolveVideoDuration(previewUrl);
+        if (!durationBadge.isConnected || !Number.isFinite(duration) || duration <= 0) return;
+        durationBadge.textContent = formatVideoDuration(duration);
+        durationBadge.hidden = false;
+      };
+      media.addEventListener('loadedmetadata', updateVideoDurationBadge);
+      card.addEventListener('mouseenter', updateVideoDurationBadge);
+      card.addEventListener('focus', updateVideoDurationBadge);
+    }
+    if (durationBadge) frame.appendChild(durationBadge);
     card.appendChild(frame);
 
     const favorite = document.createElement('button');
@@ -5183,7 +5273,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.33 started', { href: location.href });
+    logDebug('Userscript v5.9.34 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
