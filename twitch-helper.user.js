@@ -405,7 +405,7 @@
           if (messageElement) messageElement.textContent = '';
           if (current) current.dataset.empty = 'true';
         }
-      }, 7000);
+      }, 700);
     }
     if (message) logDebug('status:' + type, message);
   }
