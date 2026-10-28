@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.27
+// @version      5.9.28
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.27';
+  const APP_VERSION = '5.9.28';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -90,6 +90,7 @@
   let mediaCacheDbPromise = null;
   let galleryResizeObserver = null;
   let activeTrigger = null;
+  let triggerResultTimer = 0;
   let activeComposer = null;
   let savedComposerRange = null;
   let savedComposerOffset = null;
@@ -1590,6 +1591,19 @@
 
 
 
+  function flashTriggerResult(result) {
+    const trigger = document.getElementById('twgif-trigger') || activeTrigger;
+    if (!trigger || !trigger.isConnected) return;
+    if (triggerResultTimer) clearTimeout(triggerResultTimer);
+    trigger.classList.remove('twgif-result-success', 'twgif-result-error', 'twgif-portal-active', 'twgif-portal-closing');
+    void trigger.offsetWidth; // Restart the blink if another item finishes immediately.
+    trigger.classList.add(result === 'success' ? 'twgif-result-success' : 'twgif-result-error');
+    triggerResultTimer = window.setTimeout(() => {
+      trigger.classList.remove('twgif-result-success', 'twgif-result-error');
+      triggerResultTimer = 0;
+    }, 1450);
+  }
+
   function addItem(url, name, type, sourceKey = '', previewUrl = '', mediaBlob = null, isHd = false) {
     const data = loadData();
     const normalizedUrl = String(url || '').trim();
@@ -1625,6 +1639,7 @@
       cacheSharedMediaBlob(cacheUrl, mediaBlob);
     }
     setStatus('Добавлено в коллекцию.', 'success');
+    flashTriggerResult('success');
     return true;
   }
 
@@ -1993,7 +2008,10 @@
     try {
       return await addUrlCore(rawUrl, customName, ownedRunId, '', compressEnabled);
     } catch (error) {
-      if (error?.name !== 'AbortError') setStatus(error.message || String(error), 'error');
+      if (error?.name !== 'AbortError') {
+        flashTriggerResult('error');
+        setStatus(error.message || String(error), 'error');
+      }
       throw error;
     } finally {
       if (activeProcessingRunId === ownedRunId) {
@@ -2173,6 +2191,7 @@
         return false;
       }
       logDebug('File processing failed', file.name, error);
+      flashTriggerResult('error');
       setStatus((file.name || 'Файл') + ': ' + (error.message || error), 'error', true);
       finishProgress(2400);
       return false;
@@ -2187,6 +2206,7 @@
       return mime.startsWith('image/') || mime.startsWith('video/');
     });
     if (!files.length) {
+      flashTriggerResult('error');
       setStatus('Буфер или перетаскивание не содержат изображение или видео.', 'error');
       return;
     }
@@ -2722,18 +2742,30 @@
       #twgif-trigger:hover,#twgif-trigger[aria-expanded=true]{background:var(--color-background-button-text-hover,#2b2b2f)!important;color:var(--color-text-link,#bf94ff)!important;border-radius:50%!important}
       #twgif-trigger svg{display:block;width:20px;height:20px;flex:0 0 20px;align-self:center;pointer-events:none}
       #twgif-trigger.twgif-portal-active,#twgif-trigger.twgif-portal-closing{overflow:visible!important;isolation:isolate!important;z-index:2147483500!important;transform:scale(1.08)!important;}
-      #twgif-trigger.twgif-portal-active{background:radial-gradient(circle,#26123f 0,#13091f 72%)!important;box-shadow:0 0 0 1px #dabaff66,0 0 18px #a65cffb8,0 0 32px #7437c799!important;color:#f1dfff!important;}
-      #twgif-trigger.twgif-portal-active::before,#twgif-trigger.twgif-portal-closing::before{content:"";position:absolute;z-index:0;inset:-7px;border-radius:50%;pointer-events:none;background:conic-gradient(from 0deg,#3b176b,#e2c5ff,#7b35d5,#1b0d35,#bf8dff,#55219a,#3b176b);filter:drop-shadow(0 0 4px #ad72ffb3);}
+      #twgif-trigger.twgif-portal-active{background:radial-gradient(circle,#26123f 0,#13091f 72%)!important;box-shadow:0 0 0 1px #dabaff55,0 0 22px #a65cffaa,0 0 36px #7437c788!important;color:#f1dfff!important;}
+      #twgif-trigger.twgif-portal-active::before,#twgif-trigger.twgif-portal-closing::before{content:"";position:absolute;z-index:0;inset:-11px;border-radius:50%;pointer-events:none;background:conic-gradient(from 0deg,#3b176b,#e2c5ff,#7b35d5,#1b0d35,#bf8dff,#55219a,#3b176b);filter:blur(3.8px) drop-shadow(0 0 7px #ad72ff99);opacity:.92;mask:radial-gradient(circle,transparent 0 39%,#000 49% 64%,transparent 82%);}
       #twgif-trigger.twgif-portal-active::before{animation:twgif-portal-spin .85s linear infinite;}
-      #twgif-trigger.twgif-portal-active::after,#twgif-trigger.twgif-portal-closing::after{content:"";position:absolute;z-index:1;inset:2px;border-radius:50%;pointer-events:none;border:1px solid #e4ccffad;background:radial-gradient(circle at 50% 48%,#07030d 0 25%,#170a29 39%,transparent 59%),conic-gradient(from 0deg,#12071f,#a86aff,#291142,#e5c7ff,#32134d,#8d43ed,#12071f);box-shadow:inset 0 0 7px #030007,0 0 8px #a45cff99;}
+      #twgif-trigger.twgif-portal-active::after,#twgif-trigger.twgif-portal-closing::after{content:"";position:absolute;z-index:1;inset:-3px;border-radius:50%;pointer-events:none;border:0;background:radial-gradient(circle at 50% 48%,#07030d 0 22%,#170a29b8 35%,#a86aff55 51%,#8e43ed22 62%,transparent 75%),conic-gradient(from 0deg,#12071f,#a86aff,#291142,#e5c7ff,#32134d,#8d43ed,#12071f);filter:blur(1.8px);box-shadow:inset 0 0 7px #030007,0 0 12px #a45cff88;mask:radial-gradient(circle,#000 0 50%,#000c 60%,transparent 78%);}
       #twgif-trigger.twgif-portal-active::after{animation:twgif-portal-vortex 1.45s linear infinite,twgif-portal-breathe .8s ease-in-out infinite alternate;}
       #twgif-trigger.twgif-portal-active svg{position:relative;z-index:2;opacity:.18;transform:scale(.78);filter:drop-shadow(0 0 3px #fff);}
       #twgif-trigger.twgif-portal-closing::before{animation:twgif-portal-close .26s ease-in forwards;}
       #twgif-trigger.twgif-portal-closing::after{animation:twgif-portal-close .22s ease-in forwards;}
+      #twgif-trigger.twgif-result-success,#twgif-trigger.twgif-result-error{overflow:visible!important;isolation:isolate!important;z-index:2147483500!important;}
+      #twgif-trigger.twgif-result-success{background:#123b26!important;color:#c0ffd4!important;box-shadow:0 0 0 2px #28c45c,0 0 16px #28c45caa!important;}
+      #twgif-trigger.twgif-result-error{background:#481b22!important;color:#ffd0d0!important;box-shadow:0 0 0 2px #ff4055,0 0 16px #ff4055aa!important;}
+      #twgif-trigger.twgif-result-success::before,#twgif-trigger.twgif-result-error::before{content:"";position:absolute;z-index:0;inset:-7px;border-radius:50%;pointer-events:none;filter:blur(4px);animation:twgif-result-glow .42s ease-in-out 3;}
+      #twgif-trigger.twgif-result-success::before{background:radial-gradient(circle,#4dff8b99 0 24%,#28c45c55 48%,transparent 76%);}
+      #twgif-trigger.twgif-result-error::before{background:radial-gradient(circle,#ff526699 0 24%,#ff405555 48%,transparent 76%);}
+      #twgif-trigger.twgif-result-success::after,#twgif-trigger.twgif-result-error::after{content:"";position:absolute;z-index:1;inset:-2px;border-radius:50%;pointer-events:none;animation:twgif-result-core .42s ease-in-out 3;}
+      #twgif-trigger.twgif-result-success::after{background:radial-gradient(circle,#28c45c66,transparent 74%);}
+      #twgif-trigger.twgif-result-error::after{background:radial-gradient(circle,#ff405566,transparent 74%);}
+      #twgif-trigger.twgif-result-success svg,#twgif-trigger.twgif-result-error svg{position:relative;z-index:2;filter:drop-shadow(0 0 4px currentColor);}
       @keyframes twgif-portal-spin{to{transform:rotate(360deg)}}
       @keyframes twgif-portal-vortex{to{transform:rotate(-360deg)}}
-      @keyframes twgif-portal-breathe{from{filter:brightness(.85);transform:scale(.94)}to{filter:brightness(1.3);transform:scale(1.04)}}
+      @keyframes twgif-portal-breathe{from{filter:blur(1.8px) brightness(.85);transform:scale(.94)}to{filter:blur(1.8px) brightness(1.3);transform:scale(1.04)}}
       @keyframes twgif-portal-close{to{opacity:0;transform:scale(.12) rotate(180deg)}}
+      @keyframes twgif-result-glow{0%,100%{opacity:.16;transform:scale(.72)}50%{opacity:1;transform:scale(1.12)}}
+      @keyframes twgif-result-core{0%,100%{opacity:.15;transform:scale(.78)}50%{opacity:.9;transform:scale(1.06)}}
       #twgif-panel{position:fixed!important;top:8px;left:8px;bottom:auto;z-index:2147483000!important;width:400px;max-width:calc(100vw - 16px);max-height:68vh;display:flex;flex-direction:column;overflow:hidden;color:#efeff1;background:#18181b;border:1px solid #34343b;border-radius:10px;box-shadow:0 10px 34px #0009;font:13px/1.4 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-sizing:border-box;pointer-events:auto}
       #twgif-panel[hidden]{display:none!important}#twgif-panel *{box-sizing:border-box}
       .twgif-head{display:flex;align-items:center;gap:5px;padding:6px 8px;min-height:42px;border-bottom:1px solid #34343b;flex-shrink:0}
@@ -4694,7 +4726,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.27 started', { href: location.href });
+    logDebug('Userscript v5.9.28 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
