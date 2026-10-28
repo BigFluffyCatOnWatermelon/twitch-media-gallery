@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.39
+// @version      5.9.40
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.39';
+  const APP_VERSION = '5.9.40';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -3399,8 +3399,11 @@
       @keyframes twgif-success-icon-glow{0%,100%{opacity:.55;filter:drop-shadow(0 0 1px #28c45c) drop-shadow(0 0 2px #28c45c)}50%{opacity:1;filter:drop-shadow(0 0 3px #28c45c) drop-shadow(0 0 10px #28c45c)}}
       @keyframes twgif-error-icon-glow{0%,100%{opacity:.55;filter:drop-shadow(0 0 1px #ff4055) drop-shadow(0 0 2px #ff4055)}50%{opacity:1;filter:drop-shadow(0 0 3px #ff4055) drop-shadow(0 0 10px #ff4055)}}
       @keyframes twgif-duplicate-icon-glow{0%,100%{opacity:.55;filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 2px #fff)}50%{opacity:1;filter:drop-shadow(0 0 3px #fff) drop-shadow(0 0 10px #fff)}}
-      #twgif-panel{position:fixed!important;top:8px;left:8px;bottom:auto;z-index:2147483000!important;width:400px;height:var(--twgif-panel-height,auto);max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);min-height:220px;display:flex;flex-direction:column;overflow:hidden;resize:vertical;color:#efeff1;background:#18181b;border:1px solid #34343b;border-radius:10px;box-shadow:0 10px 34px #0009;font:13px/1.4 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-sizing:border-box;pointer-events:auto}
+      #twgif-panel{position:fixed!important;top:8px;left:8px;bottom:auto;z-index:2147483000!important;width:400px;height:var(--twgif-panel-height,auto);max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);min-height:220px;display:flex;flex-direction:column;overflow:hidden;color:#efeff1;background:#18181b;border:1px solid #34343b;border-radius:10px;box-shadow:0 10px 34px #0009;font:13px/1.4 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-sizing:border-box;pointer-events:auto}
       #twgif-panel[hidden]{display:none!important}#twgif-panel *{box-sizing:border-box}
+      #twgif-resize-top{position:absolute;top:0;left:50%;transform:translateX(-50%);width:64px;height:8px;z-index:8;display:flex;justify-content:center;align-items:flex-start;cursor:n-resize;touch-action:none;user-select:none}
+      #twgif-resize-top:after{content:"";display:block;width:30px;height:3px;margin-top:2px;border-radius:3px;background:#65656f;opacity:.75;transition:background .12s,opacity .12s}
+      #twgif-resize-top:hover:after{background:#b7b7c2;opacity:1}
       .twgif-head{display:flex;align-items:center;gap:5px;padding:6px 8px;min-height:42px;border-bottom:1px solid #34343b;flex-shrink:0}
       .twgif-heading{font-size:13px;font-weight:700;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .twgif-head-btn{appearance:none;border:0;background:transparent;color:#c4c4cc;width:29px;height:29px;display:inline-flex;align-items:center;justify-content:center;padding:0;border-radius:6px;cursor:pointer;flex-shrink:0}
@@ -3502,6 +3505,7 @@
     panel.setAttribute('role', 'dialog');
     panel.setAttribute('aria-label', 'Коллекция GIF и изображений');
     panel.innerHTML = `
+      <div id="twgif-resize-top" title="Потяните верхнюю границу вверх или вниз, чтобы изменить высоту" aria-hidden="true"></div>
       <div class="twgif-head">
         <button id="twgif-settings-back-top" class="twgif-head-btn" type="button" title="Назад к галерее" aria-label="Назад" hidden>←</button>
         <div id="twgif-heading" class="twgif-heading">GIF и картинки</div>
@@ -3529,6 +3533,7 @@
     document.documentElement.appendChild(panel);
     restorePanelSize(panel);
     installPanelResizePersistence(panel);
+    installTopEdgeResize(panel);
     updateStatusIndicator();
     syncProgressIndicatorView();
 
@@ -4131,12 +4136,19 @@
     panel.style.position = 'fixed';
     panel.style.width = String(availableWidth) + 'px';
 
-    // Lock the panel's height at placement time so later gallery renders cannot push it
-    // down across the chat composer. Its bottom always stays at least 8px above the input.
-    const roomAbove = Math.max(0, Math.floor(inputRect.top - 16));
-    const panelHeight = Math.max(0, Math.min(520, Math.floor(viewportHeight * 0.68), roomAbove));
+    // Anchor the panel's bottom above the chat input. Resizing moves only the top edge.
+    const roomAbove = Math.max(1, Math.floor(inputRect.top - 16));
+    const minPanelHeight = viewportWidth <= 500 ? 180 : 220;
+    const maxPanelHeight = Math.max(1, Math.min(520, Math.floor(viewportHeight * 0.85), roomAbove));
+    let savedPanelHeight = 0;
+    try {
+      savedPanelHeight = Number(localStorage.getItem(PANEL_HEIGHT_STORAGE_KEY)) || 0;
+    } catch (_) {}
+    const defaultPanelHeight = Math.min(520, Math.floor(viewportHeight * 0.68), maxPanelHeight);
+    const panelHeight = Math.max(1, Math.min(savedPanelHeight > 0 ? savedPanelHeight : defaultPanelHeight, maxPanelHeight));
+    panel.style.minHeight = String(Math.min(minPanelHeight, maxPanelHeight)) + 'px';
     panel.style.height = String(panelHeight) + 'px';
-    panel.style.maxHeight = String(panelHeight) + 'px';
+    panel.style.maxHeight = String(maxPanelHeight) + 'px';
     panel.style.bottom = 'auto';
 
     const maxLeft = Math.max(8, viewportWidth - availableWidth - 8);
@@ -4241,6 +4253,56 @@
     const height = Math.round(panel.getBoundingClientRect().height);
     if (!Number.isFinite(height) || height < 100) return;
     try { localStorage.setItem(PANEL_HEIGHT_STORAGE_KEY, String(height)); } catch (_) {}
+  }
+
+  function installTopEdgeResize(panel) {
+    if (!panel || panel.__twgifTopResizeInstalled) return;
+    const handle = panel.querySelector('#twgif-resize-top');
+    if (!handle) return;
+    panel.__twgifTopResizeInstalled = true;
+
+    let drag = null;
+    const finishResize = () => {
+      if (!drag) return;
+      window.removeEventListener('pointermove', moveResize, true);
+      window.removeEventListener('pointerup', finishResize, true);
+      window.removeEventListener('pointercancel', finishResize, true);
+      drag = null;
+      savePanelSize(panel);
+    };
+    const moveResize = event => {
+      if (!drag) return;
+      event.preventDefault();
+      const minHeight = Math.min(window.innerWidth <= 500 ? 180 : 220, drag.maxHeight);
+      const desiredTop = drag.startTop + (event.clientY - drag.startY);
+      const minTop = Math.max(0, drag.bottom - drag.maxHeight);
+      const maxTop = Math.max(minTop, drag.bottom - minHeight);
+      const nextTop = Math.max(minTop, Math.min(maxTop, desiredTop));
+      const nextHeight = Math.max(minHeight, Math.min(drag.maxHeight, Math.round(drag.bottom - nextTop)));
+      panel.style.top = Math.round(drag.bottom - nextHeight) + 'px';
+      panel.style.height = nextHeight + 'px';
+    };
+
+    handle.addEventListener('pointerdown', event => {
+      if (event.button !== 0 || panel.hidden) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = panel.getBoundingClientRect();
+      const availableAbove = Math.max(1, Math.floor(rect.bottom - 8));
+      const maxHeight = Math.max(
+        Math.min(window.innerWidth <= 500 ? 180 : 220, availableAbove),
+        Math.min(520, Math.floor(window.innerHeight * 0.85), availableAbove)
+      );
+      drag = {
+        startY: event.clientY,
+        startTop: rect.top,
+        bottom: rect.bottom,
+        maxHeight
+      };
+      window.addEventListener('pointermove', moveResize, true);
+      window.addEventListener('pointerup', finishResize, true);
+      window.addEventListener('pointercancel', finishResize, true);
+    });
   }
 
   function installPanelResizePersistence(panel) {
@@ -5499,7 +5561,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.39 started', { href: location.href });
+    logDebug('Userscript v5.9.40 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
