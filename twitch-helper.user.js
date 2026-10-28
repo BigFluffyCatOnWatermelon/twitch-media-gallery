@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.28
+// @version      5.9.29
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.28';
+  const APP_VERSION = '5.9.29';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -113,6 +113,8 @@
   const debugLogs = [];
   const processingFiles = new Map();
   const recentFileFingerprints = new Map();
+  const mediaSizeCache = new Map();
+  const mediaSizeLookupPending = new Map();
   let localFfmpegAssetsPromise = null;
   let localFfmpegAssets = null;
   let localFfmpegWorker = null;
@@ -210,6 +212,7 @@
           sourceKey: String(item.sourceKey || ''),
           favorite: Boolean(item.favorite),
           hd: Boolean(item.hd),
+          size: Math.max(0, Math.floor(Number(item.size) || 0)),
           addedAt,
           updatedAt
         };
@@ -1559,6 +1562,62 @@
     return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
   }
 
+  async function resolveMediaSizeBytes(item, rawUrl) {
+    const url = String(rawUrl || item?.previewUrl || item?.url || '').trim();
+    const knownSize = Math.max(0, Math.floor(Number(item?.size) || 0));
+    if (knownSize > 0) {
+      mediaSizeCache.set(url, knownSize);
+      return knownSize;
+    }
+    if (!url) return 0;
+    const cachedSize = mediaSizeCache.get(url) || 0;
+    if (cachedSize > 0) return cachedSize;
+    if (mediaSizeLookupPending.has(url)) return mediaSizeLookupPending.get(url);
+
+    const lookup = (async () => {
+      try {
+        const localBlob = await getCachedMediaBlob(url);
+        if (localBlob && localBlob.size > 0) return localBlob.size;
+        const sharedBlob = await getSharedMediaBlob(url);
+        if (sharedBlob && sharedBlob.size > 0) {
+          cacheMediaBlob(url, sharedBlob);
+          return sharedBlob.size;
+        }
+
+        const parsed = new URL(url, location.href);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return 0;
+        const response = await request({
+          method: 'HEAD',
+          url: parsed.href,
+          timeout: 9000,
+          acceptHttpErrors: true
+        });
+        if (response.status < 200 || response.status >= 300) return 0;
+        const headers = String(response.responseHeaders || '');
+        const lengthMatch = headers.match(/content-length:\s*(\d+)/i);
+        if (lengthMatch) {
+          const size = Number(lengthMatch[1]);
+          if (Number.isFinite(size) && size > 0) return size;
+        }
+        const rangeMatch = headers.match(/content-range:\s*bytes\s+\d+-\d+\/(\d+)/i);
+        if (rangeMatch) {
+          const size = Number(rangeMatch[1]);
+          if (Number.isFinite(size) && size > 0) return size;
+        }
+      } catch (_) {
+        // Some hosts do not support HEAD; a missing size must not affect media loading.
+      }
+      return 0;
+    })().then(size => {
+      if (size > 0) mediaSizeCache.set(url, size);
+      return size;
+    }).finally(() => {
+      mediaSizeLookupPending.delete(url);
+    });
+    mediaSizeLookupPending.set(url, lookup);
+    return lookup;
+  }
+
   async function prepareUpload(file, runId = null, compressEnabled = isCompressionEnabled()) {
     ensureProcessingRun(runId);
     if (!file || !file.size) throw new Error('Файл пустой.');
@@ -1628,6 +1687,7 @@
       sourceKey: String(sourceKey || ''),
       favorite: false,
       hd: Boolean(isHd),
+      size: mediaBlob instanceof Blob ? Math.max(0, Number(mediaBlob.size) || 0) : 0,
       addedAt: now,
       updatedAt: now
     });
@@ -2803,6 +2863,9 @@
       .twgif-card[hidden]{display:none!important}.twgif-masonry.twgif-grid-mode .twgif-card{display:block;width:100%;margin:0;overflow:visible;grid-row-end:auto!important}.twgif-card,.twgif-card img,.twgif-card video{user-select:none;-webkit-user-select:none;-webkit-user-drag:none}
       .twgif-media-frame{position:relative;overflow:hidden;border-radius:5px;background:#101012;isolation:isolate}
       .twgif-media{display:block;width:100%;height:auto;max-width:100%;background:#101012;object-fit:contain}.twgif-masonry.twgif-grid-mode .twgif-media{width:100%;height:var(--twgif-thumb-height,90px);object-fit:contain}
+      .twgif-file-size{position:absolute;z-index:2;right:4px;bottom:4px;max-width:calc(100% - 8px);padding:2px 4px;border:1px solid #ffffff10;border-radius:4px;background:#09090bd1;color:#c5c5ce;font-size:9px;font-weight:400;line-height:1.25;letter-spacing:.01em;white-space:nowrap;opacity:0;visibility:hidden;transform:translateY(2px);transition:opacity .14s ease,visibility .14s ease,transform .14s ease;pointer-events:none;backdrop-filter:blur(3px);font-variant-numeric:tabular-nums}
+      .twgif-card:hover .twgif-file-size,.twgif-card:focus-visible .twgif-file-size,.twgif-card:focus-within .twgif-file-size{opacity:.82;visibility:visible;transform:translateY(0)}
+      .twgif-file-size[hidden]{display:none!important}
       .twgif-media-error{min-height:44px;padding:10px;text-align:center;color:#9c9ca6;font-size:10px}
       .twgif-delete{position:absolute;z-index:3;top:-1px;right:-1px;display:flex;align-items:center;justify-content:center;width:17px;height:17px;padding:0;border:1px solid #ffffff26;border-radius:0 5px 0 6px;background:#18181beF;color:#f2f2f2;opacity:0;pointer-events:none;transition:opacity .13s,background .13s,transform .13s;cursor:pointer}
       .twgif-delete svg{width:10px;height:10px;display:block;pointer-events:none}.twgif-card:hover .twgif-delete,.twgif-card:focus-within .twgif-delete{opacity:1;pointer-events:auto}.twgif-delete:hover{background:#b42335;border-color:#ef4444;transform:scale(1.08)}
@@ -3785,7 +3848,28 @@
       note.textContent = 'Превью недоступно';
       media.replaceWith(note);
     }, { once: true });
+
+    const sizeBadge = document.createElement('span');
+    sizeBadge.className = 'twgif-file-size';
+    sizeBadge.setAttribute('aria-hidden', 'true');
+    const knownSize = Math.max(0, Math.floor(Number(item.size) || mediaSizeCache.get(previewUrl) || 0));
+    if (knownSize > 0) {
+      sizeBadge.textContent = formatBytes(knownSize);
+      mediaSizeCache.set(previewUrl, knownSize);
+    } else {
+      sizeBadge.hidden = true;
+    }
     frame.appendChild(media);
+    frame.appendChild(sizeBadge);
+    const updateFileSizeBadge = async () => {
+      if (!sizeBadge.isConnected || (sizeBadge.textContent && !sizeBadge.hidden)) return;
+      const size = await resolveMediaSizeBytes(card.__twgifItem, previewUrl);
+      if (!size || !sizeBadge.isConnected) return;
+      sizeBadge.textContent = formatBytes(size);
+      sizeBadge.hidden = false;
+    };
+    card.addEventListener('mouseenter', updateFileSizeBadge);
+    card.addEventListener('focus', updateFileSizeBadge);
     card.appendChild(frame);
 
     const favorite = document.createElement('button');
@@ -4726,7 +4810,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.28 started', { href: location.href });
+    logDebug('Userscript v5.9.29 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
