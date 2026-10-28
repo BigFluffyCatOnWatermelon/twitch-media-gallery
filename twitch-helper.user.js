@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.38
+// @version      5.9.39
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.38';
+  const APP_VERSION = '5.9.39';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -3399,7 +3399,7 @@
       @keyframes twgif-success-icon-glow{0%,100%{opacity:.55;filter:drop-shadow(0 0 1px #28c45c) drop-shadow(0 0 2px #28c45c)}50%{opacity:1;filter:drop-shadow(0 0 3px #28c45c) drop-shadow(0 0 10px #28c45c)}}
       @keyframes twgif-error-icon-glow{0%,100%{opacity:.55;filter:drop-shadow(0 0 1px #ff4055) drop-shadow(0 0 2px #ff4055)}50%{opacity:1;filter:drop-shadow(0 0 3px #ff4055) drop-shadow(0 0 10px #ff4055)}}
       @keyframes twgif-duplicate-icon-glow{0%,100%{opacity:.55;filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 2px #fff)}50%{opacity:1;filter:drop-shadow(0 0 3px #fff) drop-shadow(0 0 10px #fff)}}
-      #twgif-panel{position:fixed!important;top:8px;left:8px;bottom:auto;z-index:2147483000!important;width:400px;max-width:calc(100vw - 16px);max-height:68vh;display:flex;flex-direction:column;overflow:hidden;color:#efeff1;background:#18181b;border:1px solid #34343b;border-radius:10px;box-shadow:0 10px 34px #0009;font:13px/1.4 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-sizing:border-box;pointer-events:auto}
+      #twgif-panel{position:fixed!important;top:8px;left:8px;bottom:auto;z-index:2147483000!important;width:400px;height:var(--twgif-panel-height,auto);max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);min-height:220px;display:flex;flex-direction:column;overflow:hidden;resize:vertical;color:#efeff1;background:#18181b;border:1px solid #34343b;border-radius:10px;box-shadow:0 10px 34px #0009;font:13px/1.4 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-sizing:border-box;pointer-events:auto}
       #twgif-panel[hidden]{display:none!important}#twgif-panel *{box-sizing:border-box}
       .twgif-head{display:flex;align-items:center;gap:5px;padding:6px 8px;min-height:42px;border-bottom:1px solid #34343b;flex-shrink:0}
       .twgif-heading{font-size:13px;font-weight:700;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -3483,7 +3483,7 @@
       .twgif-chat-add{appearance:none!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;vertical-align:middle!important;width:16px!important;height:16px!important;margin:0 0 0 4px!important;padding:0!important;border:1px solid #9147ff70!important;border-radius:4px!important;color:#d7b8ff!important;background:#18181bcc!important;font:700 12px/1 system-ui!important;cursor:pointer!important;opacity:.35;transition:opacity .12s,background .12s!important}.twgif-chat-add:hover{opacity:1!important;background:#9147ff!important;color:#fff!important}
       #twgif-hold-preview{position:fixed;z-index:2147483100;pointer-events:none;display:flex;align-items:center;justify-content:center;opacity:0;overflow:hidden;transform:scale(.92);transform-origin:center center;transition:transform .18s ease,opacity .18s ease;filter:drop-shadow(0 12px 30px #000b);max-width:calc(100vw - 16px);max-height:calc(100vh - 16px)}
       #twgif-hold-preview.twgif-preview-visible{opacity:1;transform:scale(1)}#twgif-hold-preview img,#twgif-hold-preview video{display:block;width:100%;height:100%;max-width:100%;max-height:100%;object-fit:contain;border:1px solid #ffffff33;border-radius:8px;background:#111}
-      @media(max-width:500px){#twgif-panel{max-height:68vh}.twgif-drop{align-items:flex-start;flex-direction:column}.twgif-head{gap:2px;padding-left:6px}.twgif-heading{font-size:12px}}
+      @media(max-width:500px){#twgif-panel{max-height:calc(100vh - 16px);min-height:180px}.twgif-drop{align-items:flex-start;flex-direction:column}.twgif-head{gap:2px;padding-left:6px}.twgif-heading{font-size:12px}}
     `;
     document.head.appendChild(style);
 
@@ -3527,6 +3527,8 @@
       <div id="twgif-panel-body" class="twgif-panel-body"></div>
     `;
     document.documentElement.appendChild(panel);
+    restorePanelSize(panel);
+    installPanelResizePersistence(panel);
     updateStatusIndicator();
     syncProgressIndicatorView();
 
@@ -4220,6 +4222,42 @@
     chatMediaObserver.observe(root, { childList: true, subtree: true });
   }
 
+  const PANEL_HEIGHT_STORAGE_KEY = 'twgif-panel-height-v1';
+
+  function restorePanelSize(panel) {
+    try {
+      const raw = localStorage.getItem(PANEL_HEIGHT_STORAGE_KEY);
+      if (!raw) return;
+      const height = Number(raw);
+      if (!Number.isFinite(height)) return;
+      const minHeight = window.innerWidth <= 500 ? 180 : 220;
+      const maxHeight = Math.max(minHeight, window.innerHeight - 16);
+      panel.style.height = Math.max(minHeight, Math.min(maxHeight, Math.round(height))) + 'px';
+    } catch (_) {}
+  }
+
+  function savePanelSize(panel) {
+    if (!panel || panel.hidden) return;
+    const height = Math.round(panel.getBoundingClientRect().height);
+    if (!Number.isFinite(height) || height < 100) return;
+    try { localStorage.setItem(PANEL_HEIGHT_STORAGE_KEY, String(height)); } catch (_) {}
+  }
+
+  function installPanelResizePersistence(panel) {
+    if (panel.__twgifResizePersistenceInstalled) return;
+    panel.__twgifResizePersistenceInstalled = true;
+    let resizeFrame = 0;
+    const observer = new ResizeObserver(() => {
+      if (panel.hidden || resizeFrame) return;
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = 0;
+        savePanelSize(panel);
+      });
+    });
+    observer.observe(panel);
+    panel.__twgifResizeObserver = observer;
+  }
+
   function openPanel(trigger) {
     buildPanel();
     activeTrigger = trigger || document.getElementById('twgif-trigger');
@@ -4237,7 +4275,10 @@
 
   function closePanel() {
     const panel = document.getElementById('twgif-panel');
-    if (panel) panel.hidden = true;
+    if (panel) {
+      savePanelSize(panel);
+      panel.hidden = true;
+    }
     activeTrigger?.setAttribute('aria-expanded', 'false');
     logDebug('Panel closed');
   }
@@ -5458,7 +5499,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.38 started', { href: location.href });
+    logDebug('Userscript v5.9.39 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
