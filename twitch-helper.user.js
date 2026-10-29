@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.56
+// @version      5.9.57
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,8 +37,8 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.56';
-  const VERSION = 11;
+  const APP_VERSION = '5.9.57';
+  const VERSION = 12;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
@@ -1906,14 +1906,26 @@
       videoTransformFilters.push('setpts=(PTS-STARTPTS)/' + editOptions.speed.toFixed(3));
       if (editOptions.crop.x > 0.5 || editOptions.crop.y > 0.5 ||
           editOptions.crop.w < 99.5 || editOptions.crop.h < 99.5) {
-        const x = (editOptions.crop.x / 100).toFixed(5);
-        const y = (editOptions.crop.y / 100).toFixed(5);
-        const w = (editOptions.crop.w / 100).toFixed(5);
-        const h = (editOptions.crop.h / 100).toFixed(5);
-        videoTransformFilters.push(
-          'crop=trunc(iw*' + w + '/2)*2:trunc(ih*' + h + '/2)*2:' +
-          'trunc(iw*' + x + '/2)*2:trunc(ih*' + y + '/2)*2'
-        );
+        const sourceWidth = Math.floor(Number(editOptions.sourceWidth) || 0);
+        const sourceHeight = Math.floor(Number(editOptions.sourceHeight) || 0);
+        if (sourceWidth >= 2 && sourceHeight >= 2) {
+          const evenWidth = Math.floor(sourceWidth / 2) * 2;
+          const evenHeight = Math.floor(sourceHeight / 2) * 2;
+          const cropWidth = Math.max(2, Math.min(evenWidth, Math.floor(sourceWidth * editOptions.crop.w / 100 / 2) * 2));
+          const cropHeight = Math.max(2, Math.min(evenHeight, Math.floor(sourceHeight * editOptions.crop.h / 100 / 2) * 2));
+          const cropX = Math.max(0, Math.min(evenWidth - cropWidth, Math.floor(sourceWidth * editOptions.crop.x / 100 / 2) * 2));
+          const cropY = Math.max(0, Math.min(evenHeight - cropHeight, Math.floor(sourceHeight * editOptions.crop.y / 100 / 2) * 2));
+          videoTransformFilters.push('crop=' + cropWidth + ':' + cropHeight + ':' + cropX + ':' + cropY);
+        } else {
+          const x = (editOptions.crop.x / 100).toFixed(5);
+          const y = (editOptions.crop.y / 100).toFixed(5);
+          const w = (editOptions.crop.w / 100).toFixed(5);
+          const h = (editOptions.crop.h / 100).toFixed(5);
+          videoTransformFilters.push(
+            'crop=max(2\\,trunc(iw*' + w + '/2)*2):max(2\\,trunc(ih*' + h + '/2)*2):' +
+            'trunc(iw*' + x + '/2)*2:trunc(ih*' + y + '/2)*2'
+          );
+        }
       }
       if (editOptions.speed !== 1) {
         audioTransformFilters.push('asetpts=PTS-STARTPTS');
@@ -1964,13 +1976,15 @@
         );
       }
     } else if (outputFormat === 'jpg') {
+      const jpgFilters = videoFiltersWithCompression(compressEnabled ? [scaleFilter] : []);
       args.push(
-        ...(compressEnabled ? ['-vf', scaleFilter] : []),
+        ...(jpgFilters.length ? ['-vf', jpgFilters.join(',')] : []),
         '-frames:v', '1', '-q:v', compressEnabled ? String(Math.max(2, Math.round((100 - imageQuality) / 7))) : '2',
         outputPath
       );
     } else if (outputFormat === 'png') {
-      args.push(...(compressEnabled ? ['-vf', scaleFilter] : []), '-frames:v', '1', outputPath);
+      const pngFilters = videoFiltersWithCompression(compressEnabled ? [scaleFilter] : []);
+      args.push(...(pngFilters.length ? ['-vf', pngFilters.join(',')] : []), '-frames:v', '1', outputPath);
     } else if (outputFormat === 'mp4') {
       const videoFilters = videoFiltersWithCompression(compressEnabled ? ['fps=' + videoFps, scaleFilter] : []);
       args.push(
