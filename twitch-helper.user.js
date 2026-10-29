@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.70
+// @version      5.9.71
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.70';
+  const APP_VERSION = '5.9.71';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -2549,7 +2549,7 @@
       '.twgif-editor-output{display:flex;justify-content:space-between;gap:10px;padding:11px;border:1px solid #a970ff33;border-radius:11px;background:#9147ff12}.twgif-editor-output-label{color:#a4a4b0;font-size:10px}.twgif-editor-output-value{color:#eee2ff;font-size:12px}',
       '.twgif-editor-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 22px;border-top:1px solid #ffffff12}.twgif-editor-summary{color:#aaaab5;font-size:11px}.twgif-editor-summary strong{color:#eee}.twgif-editor-actions{display:flex;gap:8px}.twgif-editor-btn{padding:10px 14px;border:1px solid #3b3b46;border-radius:9px;background:#ffffff08;color:#ddd;font:inherit;font-size:12px;font-weight:650;cursor:pointer}.twgif-editor-btn-primary{border-color:#9147ff;background:linear-gradient(135deg,#9c5bff,#7a32e5);color:white}',
       '@media(max-width:760px){#twgif-media-editor-overlay{padding:7px;align-items:flex-start}#twgif-media-editor{max-height:calc(100vh - 14px)}.twgif-editor-body{grid-template-columns:1fr;padding:10px;gap:10px}.twgif-editor-stage{height:34vh;min-height:175px}.twgif-editor-footer{align-items:flex-start;flex-direction:column;padding:12px 14px}.twgif-editor-actions{width:100%}.twgif-editor-actions .twgif-editor-btn{flex:1}}',
-      '#twgif-media-editor{width:min(1180px,100%);max-height:92vh}.twgif-editor-header{align-items:center;padding:11px 16px;gap:10px}.twgif-editor-title{font-size:18px;margin:3px 0}.twgif-editor-subtitle{margin:3px 0}.twgif-editor-safe{margin-top:4px}.twgif-editor-close{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:34px;height:34px;flex:0 0 34px;padding:0;border:1px solid #ffffff18;border-radius:9px;background:#ffffff08;color:#ddd;font-size:22px;line-height:1;cursor:pointer}.twgif-editor-body{flex:1 1 auto;grid-template-columns:minmax(0,1.55fr) minmax(260px,.85fr);gap:12px;min-height:0;padding:10px 16px;overflow:hidden}.twgif-editor-preview-column{gap:8px;min-height:0}.twgif-editor-stage{height:clamp(180px,35vh,380px);min-height:180px}.twgif-editor-body>aside{display:flex;flex-direction:column;gap:6px;min-width:0;min-height:0;overflow:hidden}.twgif-editor-body>aside>.twgif-editor-section{padding:8px;margin:0;flex:0 0 auto}.twgif-editor-section+.twgif-editor-section{margin-top:0}.twgif-editor-section-head{align-items:center;margin-bottom:5px}.twgif-editor-help{margin-top:4px;font-size:9px;line-height:1.35}.twgif-editor-speed-ends{font-size:9px}.twgif-editor-crop-readout{margin-bottom:5px}.twgif-editor-output{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px;flex:0 0 auto}.twgif-editor-footer{padding:10px 16px}.twgif-editor-btn{padding:9px 12px}.twgif-editor-play{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:34px;height:34px;flex:0 0 34px;padding:0;border:1px solid #a970ff66;border-radius:9px;background:#9147ff24;color:#eadcff;line-height:1;cursor:pointer}.twgif-editor-timeline-wrap{padding:9px 10px}.twgif-editor-timeline-head{margin-bottom:24px}.twgif-editor-timeline-visual{height:76px;touch-action:none;cursor:crosshair}.twgif-editor-storyboard{pointer-events:none}.twgif-editor-frame-thumb{display:block;width:100%;height:100%;min-width:0;object-fit:contain;background:#0c0c10;opacity:.9;user-select:none;-webkit-user-select:none;-webkit-user-drag:none;pointer-events:none;cursor:default}.twgif-editor-playhead{will-change:left}.twgif-editor-playhead-label{position:absolute;z-index:7;top:-25px;left:0;transform:translateX(-50%);padding:2px 5px;border:1px solid #604783;border-radius:5px;background:#20162d;color:#f0e2ff;font-size:10px;font-variant-numeric:tabular-nums;line-height:1.2;white-space:nowrap;pointer-events:none;will-change:left}.twgif-editor-timeline-wrap .twgif-editor-player{display:flex;align-items:center;gap:8px;padding:5px 0 0;border:0;background:transparent}.twgif-editor-player-time[hidden],.twgif-editor-player-range[hidden]{display:none!important}.twgif-editor-timeline-wrap .twgif-editor-help{margin-top:5px}.twgif-editor-close:focus-visible,.twgif-editor-play:focus-visible{outline:2px solid #e2c5ff;outline-offset:2px}@media(max-width:760px){#twgif-media-editor-overlay{padding:7px;align-items:flex-start}#twgif-media-editor{max-height:calc(100vh - 14px)}.twgif-editor-body{grid-template-columns:1fr;padding:10px;gap:10px;overflow:auto}.twgif-editor-body>aside{overflow:visible}.twgif-editor-stage{height:34vh;min-height:175px}.twgif-editor-footer{align-items:flex-start;flex-direction:column;padding:12px 14px}.twgif-editor-actions{width:100%}.twgif-editor-actions .twgif-editor-btn{flex:1}}',
+      '#twgif-media-editor{display:flex;flex-direction:column;width:min(1180px,calc(100vw - 32px));height:min(820px,calc(100vh - 32px));max-height:calc(100vh - 32px)}.twgif-editor-header{flex:0 0 auto;align-items:center;padding:10px 16px;gap:10px}.twgif-editor-title{font-size:18px;margin:3px 0}.twgif-editor-subtitle{margin:3px 0}.twgif-editor-safe{margin-top:4px}.twgif-editor-close{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:34px;height:34px;flex:0 0 34px;padding:0;border:1px solid #ffffff18;border-radius:9px;background:#ffffff08;color:#ddd;font-size:22px;line-height:1;cursor:pointer}.twgif-editor-body{display:grid;flex:1 1 auto;grid-template-columns:minmax(0,1.55fr) minmax(275px,.85fr);grid-template-rows:minmax(180px,1fr) auto;align-content:start;gap:10px 12px;min-height:0;padding:10px 16px;overflow:auto}.twgif-editor-preview-column{grid-column:1;grid-row:1;display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0}.twgif-editor-stage{height:clamp(150px,31vh,320px);min-height:140px;flex:0 1 auto}.twgif-editor-body>aside{grid-column:2;grid-row:1;display:flex;flex-direction:column;gap:6px;min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden}.twgif-editor-body>aside>.twgif-editor-section{padding:8px;margin:0;flex:0 0 auto}.twgif-editor-section+.twgif-editor-section{margin-top:0}.twgif-editor-section-head{align-items:center;margin-bottom:5px}.twgif-editor-help{margin-top:4px;font-size:9px;line-height:1.35}.twgif-editor-speed-ends{font-size:9px}.twgif-editor-crop-readout{margin-bottom:5px}.twgif-editor-output{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px;flex:0 0 auto}.twgif-editor-footer{flex:0 0 auto;padding:10px 16px}.twgif-editor-btn{padding:9px 12px}.twgif-editor-play{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:34px;height:34px;flex:0 0 34px;padding:0;border:1px solid #a970ff66;border-radius:9px;background:#9147ff24;color:#eadcff;line-height:1;cursor:pointer}.twgif-editor-timeline-wrap{grid-column:1/-1;grid-row:2;min-width:0;margin:0;padding:9px 10px;border:1px solid #ffffff12;border-radius:12px;background:linear-gradient(135deg,#ffffff07,#ffffff02)}.twgif-editor-timeline-head{margin-bottom:24px}.twgif-editor-timeline-visual{height:76px;touch-action:none;cursor:crosshair;overflow:hidden}.twgif-editor-storyboard{position:absolute;inset:0;display:flex;align-items:stretch;gap:0;overflow:hidden;border-radius:8px;pointer-events:none}.twgif-editor-frame-thumb{display:block;flex:0 0 auto;width:auto;height:100%;max-width:none;object-fit:contain;background:#0c0c10;opacity:.9;user-select:none;-webkit-user-select:none;-webkit-user-drag:none;pointer-events:none;cursor:default}.twgif-editor-playhead{left:0;will-change:transform}.twgif-editor-playhead-label{position:absolute;z-index:7;top:-25px;left:0;transform:translate3d(0,0,0) translateX(-50%);padding:2px 5px;border:1px solid #604783;border-radius:5px;background:#20162d;color:#f0e2ff;font-size:10px;font-variant-numeric:tabular-nums;line-height:1.2;white-space:nowrap;pointer-events:none;will-change:transform}.twgif-editor-timeline-wrap .twgif-editor-player{display:flex;align-items:center;gap:8px;padding:5px 0 0;border:0;background:transparent}.twgif-editor-player-time[hidden],.twgif-editor-player-range[hidden]{display:none!important}.twgif-editor-timeline-wrap .twgif-editor-help{margin-top:5px}.twgif-editor-close:focus-visible,.twgif-editor-play:focus-visible{outline:2px solid #e2c5ff;outline-offset:2px}@media(max-width:760px){#twgif-media-editor-overlay{padding:7px;align-items:flex-start}#twgif-media-editor{height:auto;max-height:calc(100vh - 14px)}.twgif-editor-body{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto auto;padding:10px;gap:10px;overflow:auto}.twgif-editor-preview-column{grid-column:1;grid-row:1}.twgif-editor-body>aside{grid-column:1;grid-row:2;overflow:visible}.twgif-editor-timeline-wrap{grid-column:1;grid-row:3}.twgif-editor-stage{height:34vh;min-height:175px}.twgif-editor-footer{align-items:flex-start;flex-direction:column;padding:12px 14px}.twgif-editor-actions{width:100%}.twgif-editor-actions .twgif-editor-btn{flex:1}}',
     ].join('\n');
     (document.head || document.documentElement).appendChild(st);
   }
@@ -2565,7 +2565,15 @@
         '<header class="twgif-editor-header"><div><span class="twgif-editor-eyebrow">Перед загрузкой · локально</span><h2 id="twgif-editor-title" class="twgif-editor-title">Редактор медиа</h2>',
         '<p class="twgif-editor-subtitle">Обрезай фрагмент, меняй скорость и кадрируй. Изменения применяются до загрузки.</p><span class="twgif-editor-safe">Файл обрабатывается на устройстве</span></div><button class="twgif-editor-close" data-editor-close aria-label="Закрыть">×</button></header>',
         '<div class="twgif-editor-body"><div class="twgif-editor-preview-column"><div class="twgif-editor-stage" data-stage><div class="twgif-editor-stage-hint">Перетаскивай рамку или её углы</div>',
-        '<div class="twgif-editor-crop-frame" data-crop-frame><span class="twgif-editor-handle" data-handle="nw"></span><span class="twgif-editor-handle" data-handle="ne"></span><span class="twgif-editor-handle" data-handle="sw"></span><span class="twgif-editor-handle" data-handle="se"></span></div></div>',
+        '<div class="twgif-editor-crop-frame" data-crop-frame><span class="twgif-editor-handle" data-handle="nw"></span><span class="twgif-editor-handle" data-handle="ne"></span><span class="twgif-editor-handle" data-handle="sw"></span><span class="twgif-editor-handle" data-handle="se"></span></div></div></div><aside>',
+        '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Скорость</span><span class="twgif-editor-section-meta" data-speed-summary>1× · обычная</span></div>',
+        '<input class="twgif-editor-speed-slider" type="range" data-speed min=".25" max="2" step=".05" value="1" aria-label="Скорость воспроизведения">',
+        '<div class="twgif-editor-speed-ends"><span>0,25× медленно</span><span>2× быстро</span></div><div class="twgif-editor-help">Скорость видна в предпросмотре и применяется к итоговому файлу.</div></section>',
+        '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Кадрирование</span><button class="twgif-editor-preset" type="button" data-crop-toggle aria-pressed="false">Включить</button></div>',
+        '<div data-crop-controls hidden><div class="twgif-editor-presets"><button class="twgif-editor-preset" type="button" data-preset="free" aria-pressed="true">Свободно</button><button class="twgif-editor-preset" type="button" data-preset="16:9">16:9</button><button class="twgif-editor-preset" type="button" data-preset="9:16">9:16</button><button class="twgif-editor-preset" type="button" data-preset="1:1">1:1</button><button class="twgif-editor-preset" type="button" data-preset="4:3">4:3</button></div>',
+        '<div class="twgif-editor-crop-readout"><span>Область кадра</span><strong data-crop-readout>100% × 100%</strong></div><button class="twgif-editor-preset" type="button" data-reset>Сбросить кадрирование</button><div class="twgif-editor-help">Перетаскивай рамку или углы. Сетка видна только в этом режиме.</div></div></section>',
+        '<section class="twgif-editor-section"><label class="twgif-editor-toggle"><input type="checkbox" data-loop><span><strong>Ping-pong</strong><small>Проигрывать выбранный фрагмент вперёд и назад. Для GIF/WebP режим сохраняется в файле.</small></span></label></section>',
+        '<div class="twgif-editor-output"><span><span class="twgif-editor-output-label">Формат результата</span><br><span class="twgif-editor-output-label" data-output-note>С учётом конвертации</span></span><strong class="twgif-editor-output-value" data-output>—</strong></div></aside>',
         '<div class="twgif-editor-timeline-wrap">',
         '<div class="twgif-editor-timeline-head"><span class="twgif-editor-section-title">Таймлайн</span><span class="twgif-editor-section-meta" data-selected>Весь файл</span></div>',
         '<div class="twgif-editor-timeline-visual" data-timeline-track>',
@@ -2577,15 +2585,7 @@
         '</div><div class="twgif-editor-timeline-edges"><span data-start-value>00:00.00</span><span data-end-value>—:—</span></div>',
         '<div class="twgif-editor-player"><button class="twgif-editor-play" type="button" data-play aria-label="Воспроизвести">▶</button><span class="twgif-editor-player-time" data-current hidden>00:00.00</span><input class="twgif-editor-player-range" type="range" min="0" max="0" step=".01" data-scrub aria-label="Позиция воспроизведения" hidden disabled><span class="twgif-editor-player-time" data-duration hidden>—:—</span></div>',
         '<div class="twgif-editor-help" data-trim-help>Перетаскивай маркеры по таймлайну, чтобы выбрать начало и конец.</div>',
-        '<div class="twgif-editor-help" data-preview-help>Кадрирование и настройки применяются к файлу перед загрузкой.</div></div><aside>',
-        '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Скорость</span><span class="twgif-editor-section-meta" data-speed-summary>1× · обычная</span></div>',
-        '<input class="twgif-editor-speed-slider" type="range" data-speed min=".25" max="2" step=".05" value="1" aria-label="Скорость воспроизведения">',
-        '<div class="twgif-editor-speed-ends"><span>0,25× медленно</span><span>2× быстро</span></div><div class="twgif-editor-help">Скорость видна в предпросмотре и применяется к итоговому файлу.</div></section>',
-        '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Кадрирование</span><button class="twgif-editor-preset" type="button" data-crop-toggle aria-pressed="false">Включить</button></div>',
-        '<div data-crop-controls hidden><div class="twgif-editor-presets"><button class="twgif-editor-preset" type="button" data-preset="free" aria-pressed="true">Свободно</button><button class="twgif-editor-preset" type="button" data-preset="16:9">16:9</button><button class="twgif-editor-preset" type="button" data-preset="9:16">9:16</button><button class="twgif-editor-preset" type="button" data-preset="1:1">1:1</button><button class="twgif-editor-preset" type="button" data-preset="4:3">4:3</button></div>',
-        '<div class="twgif-editor-crop-readout"><span>Область кадра</span><strong data-crop-readout>100% × 100%</strong></div><button class="twgif-editor-preset" type="button" data-reset>Сбросить кадрирование</button><div class="twgif-editor-help">Перетаскивай рамку или углы. Сетка видна только в этом режиме.</div></div></section>',
-        '<section class="twgif-editor-section"><label class="twgif-editor-toggle"><input type="checkbox" data-loop><span><strong>Ping-pong</strong><small>Проигрывать выбранный фрагмент вперёд и назад. Для GIF/WebP режим сохраняется в файле.</small></span></label></section>',
-        '<div class="twgif-editor-output"><span><span class="twgif-editor-output-label">Формат результата</span><br><span class="twgif-editor-output-label" data-output-note>С учётом конвертации</span></span><strong class="twgif-editor-output-value" data-output>—</strong></div></aside></div>',
+        '<div class="twgif-editor-help" data-preview-help>Кадрирование и настройки применяются к файлу перед загрузкой.</div></div>',
         '<footer class="twgif-editor-footer"><div class="twgif-editor-summary" data-summary>Итоговая длительность: <strong>—</strong></div><div class="twgif-editor-actions"><button class="twgif-editor-btn" data-cancel>Отмена</button><button class="twgif-editor-btn twgif-editor-btn-primary" data-apply>Применить и продолжить →</button></div></footer></section>'
       ].join('');
       document.body.appendChild(overlay);
@@ -2636,11 +2636,15 @@
       let userChangedTrim = false, videoReverseTimer = 0, videoPingPongDirection = 1;
       let animationDecoder = null, animationFrameDurations = [], animationFrameStarts = [];
       let animationFrameIndex = 0, animationDirection = 1, animationPlaying = false, animationTimer = 0, animationGeneration = 0;
+      let animationSeekBusy = false, pendingAnimationSeek = null;
       let storyboardRun = 0;
+      const storyboardObjectUrls = [];
       const cleanup = () => {
         animationPlaying = false;
         animationGeneration++;
         storyboardRun++;
+        for (const thumbUrl of storyboardObjectUrls) URL.revokeObjectURL(thumbUrl);
+        storyboardObjectUrls.length = 0;
         if (videoReverseTimer) clearTimeout(videoReverseTimer);
         videoReverseTimer = 0;
         if (seekTimer) clearTimeout(seekTimer);
@@ -2692,12 +2696,13 @@
         const safeDuration = Math.max(0, Number(duration) || 0);
         const value = Math.max(0, Math.min(safeDuration || Number(seconds) || 0, Number(seconds) || 0));
         const pct = safeDuration ? Math.max(0, Math.min(100, value / safeDuration * 100)) : 0;
-        playhead.style.left = pct + '%';
-        playheadLabel.style.left = pct + '%';
+        const translateX = Math.round((timelineTrack.clientWidth || 0) * pct / 100);
+        playhead.style.transform = 'translate3d(' + translateX + 'px,0,0)';
+        playheadLabel.style.transform = 'translate3d(' + translateX + 'px,0,0) translateX(-50%)';
         const label = formatEditorTime(value);
         if (playheadLabel.textContent !== label) playheadLabel.textContent = label;
       };
-      const updateTimelineControls = () => {
+      const updateTimelineControls = (timeOverride = null) => {
         const safeDuration = Math.max(0, Number(duration) || 0);
         const startPct = safeDuration ? Math.max(0, Math.min(100, start / safeDuration * 100)) : 0;
         const endPct = safeDuration ? Math.max(startPct, Math.min(100, end / safeDuration * 100)) : 100;
@@ -2713,9 +2718,10 @@
         endInput.setAttribute('aria-valuemax', String(safeDuration));
         endInput.setAttribute('aria-valuenow', String(end));
         endInput.setAttribute('aria-valuetext', safeDuration ? formatEditorTime(end) : '—:—');
-        const previewTime = info.kind === 'video' ? (Number(media.currentTime) || 0)
-          : animationDecoder ? (Number(animationFrameStarts[animationFrameIndex]) || 0)
-            : (Number(scrub.value) || 0);
+        const previewTime = timeOverride !== null ? timeOverride
+          : info.kind === 'video' ? (Number(media.currentTime) || 0)
+            : animationDecoder ? (Number(animationFrameStarts[animationFrameIndex]) || 0)
+              : (Number(scrub.value) || 0);
         paintPlayhead(previewTime);
         scrub.max = String(safeDuration);
         if (Number.isFinite(previewTime)) scrub.value = String(Math.max(0, Math.min(safeDuration || previewTime, previewTime)));
@@ -2749,6 +2755,20 @@
         updateSummary();
       };
 
+      const canvasToStoryboardUrl = canvas => new Promise(resolve => {
+        canvas.toBlob(blob => {
+          if (!blob || done) { resolve(''); return; }
+          const objectUrl = URL.createObjectURL(blob);
+          storyboardObjectUrls.push(objectUrl);
+          resolve(objectUrl);
+        }, 'image/jpeg', 0.66);
+      });
+      const waitForPreviewIdle = async () => {
+        if (info.kind === 'video' && !media.paused) {
+          await new Promise(resolve => media.addEventListener('pause', resolve, { once: true }));
+        }
+        if (!done) await new Promise(resolve => window.setTimeout(resolve, 0));
+      };
       const addStoryboardThumb = (dataUrl, time, index, run) => {
         if (done || run !== storyboardRun || !dataUrl) return;
         const empty = $('[data-storyboard-empty]');
@@ -2765,12 +2785,14 @@
       const drawStoryboardFrame = (context, source, canvas) => {
         const sourceWidth = Number(source.videoWidth || source.displayWidth || source.naturalWidth || source.width) || canvas.width;
         const sourceHeight = Number(source.videoHeight || source.displayHeight || source.naturalHeight || source.height) || canvas.height;
-        const scale = Math.min(canvas.width / sourceWidth, canvas.height / sourceHeight);
-        const drawWidth = sourceWidth * scale;
-        const drawHeight = sourceHeight * scale;
-        context.fillStyle = '#0c0c10';
-        context.fillRect(0, 0, canvas.width, canvas.height);
-        context.drawImage(source, (canvas.width - drawWidth) / 2, (canvas.height - drawHeight) / 2, drawWidth, drawHeight);
+        if (Math.abs(canvas.width / canvas.height - sourceWidth / sourceHeight) > 0.02) {
+          canvas.width = Math.max(30, Math.min(360, Math.round(canvas.height * sourceWidth / sourceHeight)));
+        }
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.fillStyle = '#0c0c10';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
       };
 
       const populateVideoStoryboard = async () => {
@@ -2778,7 +2800,7 @@
         const run = ++storyboardRun;
         storyboard.replaceChildren();
         const probe = document.createElement('video');
-        probe.preload = 'auto'; probe.muted = true; probe.playsInline = true; probe.src = url;
+        probe.preload = 'metadata'; probe.muted = true; probe.playsInline = true; probe.src = url;
         const waitForEvent = (eventName, timeoutMs = 2200) => new Promise((resolve, reject) => {
           let timer = 0;
           const cleanup = () => {
@@ -2796,10 +2818,13 @@
           const metadataReady = waitForEvent('loadedmetadata', 6000);
           probe.load();
           await metadataReady;
-          const count = Math.min(12, Math.max(6, Math.ceil(duration / 2)));
-          storyboard.style.gridTemplateColumns = 'repeat(' + count + ', minmax(0,1fr))';
+          const aspect = probe.videoWidth && probe.videoHeight ? probe.videoWidth / probe.videoHeight : 16 / 9;
+          const thumbHeight = Math.max(40, timelineTrack.clientHeight || 76);
+          const thumbWidth = Math.max(30, thumbHeight * aspect);
+          const count = Math.max(1, Math.min(36, Math.floor((timelineTrack.clientWidth || 840) / thumbWidth)));
           const canvas = document.createElement('canvas');
-          canvas.width = 160; canvas.height = 90;
+          canvas.height = 90;
+          canvas.width = Math.max(30, Math.min(360, Math.round(canvas.height * aspect)));
           const context = canvas.getContext('2d');
           if (!context) return;
           for (let i = 0; i < count; i++) {
@@ -2810,9 +2835,11 @@
               try { probe.currentTime = Math.max(0, Math.min(Math.max(0, probe.duration - 0.03), time)); } catch (_) {}
               await seeked;
             }
+            await waitForPreviewIdle();
+            if (done || run !== storyboardRun) return;
             drawStoryboardFrame(context, probe, canvas);
-            addStoryboardThumb(canvas.toDataURL('image/jpeg', 0.66), time, i, run);
-            if (i % 3 === 2) await new Promise(yieldToBrowser => window.setTimeout(yieldToBrowser, 0));
+            addStoryboardThumb(await canvasToStoryboardUrl(canvas), time, i, run);
+            await new Promise(yieldToBrowser => window.setTimeout(yieldToBrowser, 0));
           }
         } catch (error) {
           if (!done) logDebug('Video storyboard creation stopped', error?.message || error);
@@ -2827,8 +2854,10 @@
         if (!animationDecoder || !animationFrameStarts.length || done) return;
         const run = ++storyboardRun;
         storyboard.replaceChildren();
-        const count = Math.min(12, animationFrameStarts.length);
-        storyboard.style.gridTemplateColumns = 'repeat(' + count + ', minmax(0,1fr))';
+        const aspect = width && height ? width / height : 16 / 9;
+        const thumbHeight = Math.max(40, timelineTrack.clientHeight || 76);
+        const thumbWidth = Math.max(30, thumbHeight * aspect);
+        const count = Math.max(1, Math.min(36, Math.floor((timelineTrack.clientWidth || 840) / thumbWidth)));
         for (let i = 0; i < count; i++) {
           if (done || run !== storyboardRun || !animationDecoder) return;
           const index = Math.round(i * (animationFrameStarts.length - 1) / Math.max(1, count - 1));
@@ -2836,12 +2865,14 @@
             const result = await animationDecoder.decode({ frameIndex: index });
             const image = result && result.image;
             if (!image) continue;
+            const imageAspect = image.displayWidth && image.displayHeight ? image.displayWidth / image.displayHeight : aspect;
             const canvas = document.createElement('canvas');
-            canvas.width = 160; canvas.height = 90;
+            canvas.height = 90;
+            canvas.width = Math.max(30, Math.min(360, Math.round(canvas.height * imageAspect)));
             const context = canvas.getContext('2d');
             if (context) {
               drawStoryboardFrame(context, image, canvas);
-              addStoryboardThumb(canvas.toDataURL('image/jpeg', 0.66), animationFrameStarts[index] || 0, i, run);
+              addStoryboardThumb(await canvasToStoryboardUrl(canvas), animationFrameStarts[index] || 0, i, run);
             }
             try { image.close(); } catch (_) {}
           } catch (error) {
@@ -2853,6 +2884,7 @@
 
       const pauseAnimationPreview = () => {
         animationPlaying = false;
+        pendingAnimationSeek = null;
         if (animationTimer) clearTimeout(animationTimer);
         animationTimer = 0;
         playButton.textContent = '▶';
@@ -2953,8 +2985,12 @@
 
       const playAnimationPreview = () => {
         if (!animationDecoder || done) return;
+        const firstFrame = findAnimationFrameAt(start);
+        const lastFrame = Math.max(firstFrame, findAnimationFrameAt(Math.max(start, end - 0.001)));
         if (duration > 0 && (animationFrameStarts[animationFrameIndex] < start ||
-            animationFrameStarts[animationFrameIndex] >= end)) animationFrameIndex = findAnimationFrameAt(start);
+            animationFrameStarts[animationFrameIndex] >= end || animationFrameIndex >= lastFrame)) {
+          animationFrameIndex = firstFrame;
+        }
         animationDirection = 1;
         animationPlaying = true;
         playButton.textContent = 'Ⅱ';
@@ -2968,30 +3004,48 @@
         const wasPlaying = animationPlaying;
         if (animationTimer) clearTimeout(animationTimer);
         animationTimer = 0;
-        animationFrameIndex = findAnimationFrameAt(Math.max(0, Math.min(duration, Number(seconds) || 0)));
-        const generation = ++animationGeneration;
-        drawAnimationFrame(animationFrameIndex, generation).then(drawn => {
-          if (!drawn) { pauseAnimationPreview(); return; }
-          if (!wasPlaying) return;
-          animationPlaying = true;
-          playButton.textContent = 'Ⅱ';
-          playButton.setAttribute('aria-label', 'Приостановить анимацию');
-          const frameDuration = Math.max(0.01, Number(animationFrameDurations[animationFrameIndex]) || 0.1);
-          animationTimer = window.setTimeout(() => {
-            animationTimer = 0;
-            if (generation !== animationGeneration || !animationPlaying) return;
-            const firstFrame = findAnimationFrameAt(start);
-            const lastFrame = Math.max(firstFrame, findAnimationFrameAt(Math.max(start, end - 0.001)));
-            let nextIndex = animationFrameIndex + 1;
-            if (nextIndex > lastFrame) {
-              if (loop && lastFrame > firstFrame) nextIndex = firstFrame;
-              else { pauseAnimationPreview(); return; }
+        const index = findAnimationFrameAt(Math.max(0, Math.min(duration, Number(seconds) || 0)));
+        pendingAnimationSeek = { index, wasPlaying };
+        animationGeneration++;
+        if (animationSeekBusy) return;
+        animationSeekBusy = true;
+        const drain = async () => {
+          try {
+            while (!done && animationDecoder && pendingAnimationSeek) {
+              const request = pendingAnimationSeek;
+              pendingAnimationSeek = null;
+              const generation = ++animationGeneration;
+              animationFrameIndex = request.index;
+              const drawn = await drawAnimationFrame(request.index, generation);
+              if (!drawn || generation !== animationGeneration) continue;
+              if (!request.wasPlaying || pendingAnimationSeek) continue;
+              animationPlaying = true;
+              playButton.textContent = 'Ⅱ';
+              playButton.setAttribute('aria-label', 'Приостановить анимацию');
+              const frameDuration = Math.max(0.01, Number(animationFrameDurations[animationFrameIndex]) || 0.1);
+              animationTimer = window.setTimeout(() => {
+                animationTimer = 0;
+                if (!animationPlaying || !animationDecoder || done) return;
+                const firstFrame = findAnimationFrameAt(start);
+                const lastFrame = Math.max(firstFrame, findAnimationFrameAt(Math.max(start, end - 0.001)));
+                let nextIndex = animationFrameIndex + 1;
+                if (nextIndex > lastFrame) {
+                  if (loop && lastFrame > firstFrame) nextIndex = firstFrame;
+                  else { pauseAnimationPreview(); return; }
+                }
+                animationFrameIndex = nextIndex;
+                runAnimationPreview(++animationGeneration).catch(() => pauseAnimationPreview());
+              }, Math.max(10, Math.min(10000, frameDuration / speed * 1000)));
             }
-            if (nextIndex < firstFrame || nextIndex > lastFrame) { pauseAnimationPreview(); return; }
-            animationFrameIndex = nextIndex;
-            runAnimationPreview(generation).catch(() => pauseAnimationPreview());
-          }, Math.max(10, Math.min(10000, frameDuration / speed * 1000)));
-        }).catch(() => fallbackAnimationPreview());
+          } catch (error) {
+            logDebug('Animation seek failed', error?.message || error);
+            fallbackAnimationPreview();
+          } finally {
+            animationSeekBusy = false;
+            if (pendingAnimationSeek && !done && animationDecoder) seekAnimationPreview(animationFrameStarts[pendingAnimationSeek.index] || 0);
+          }
+        };
+        drain();
       };
 
       const setupAnimationPreview = async durationPromise => {
@@ -3056,8 +3110,8 @@
           $('[data-preview-help]').textContent =
             'Покадровый предпросмотр: диапазон, скорость и ping-pong можно проверить до обработки.';
           updateFrame();
-          await populateAnimationStoryboard().catch(error => logDebug('Animation storyboard failed', error?.message || error));
-          playAnimationPreview();
+          populateAnimationStoryboard().catch(error => logDebug('Animation storyboard failed', error?.message || error));
+          seekAnimationPreview(start);
         } catch (error) {
           try { if (decoder) decoder.close(); } catch (_) {}
           if (animationDecoder === decoder) animationDecoder = null;
@@ -3132,7 +3186,7 @@
           try { media.currentTime = end; } catch (_) {}
         }
       };
-      const onVideoEnd = () => { media.pause(); };
+      const onVideoEnd = () => { media.pause(); paintPlayhead(start); currentLabel.textContent = formatEditorTime(start); };
       const onKey = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); } };
       const preset = value => {
         if (value === 'free') crop = { x: 0, y: 0, w: 100, h: 100 };
@@ -3167,7 +3221,7 @@
         videoPingPongDirection = 1;
         currentLabel.textContent = formatEditorTime(value);
         scrub.value = String(value);
-        updateTimelineControls();
+        updateTimelineControls(value);
         paintPlayhead(value);
         if (defer) {
           pendingSeekTime = value;
@@ -3309,18 +3363,35 @@
           else playAnimationPreview();
           return;
         }
-        if (videoReverseTimer) {
-          clearTimeout(videoReverseTimer);
-          videoReverseTimer = 0;
-          videoPingPongDirection = 1;
-          playButton.textContent = '▶';
-          playButton.setAttribute('aria-label', 'Воспроизвести');
-          return;
-        }
+        if (videoReverseTimer) { clearTimeout(videoReverseTimer); videoReverseTimer = 0; videoPingPongDirection = 1; }
+        
         if (media.paused) {
-          if (duration && (media.currentTime < start || media.currentTime >= end)) { try { media.currentTime = start; } catch (_) {} }
-          media.playbackRate = speed;
-          media.play().catch(() => { $('[data-preview-help]').textContent = 'Не удалось запустить предпросмотр; настройки всё равно применятся.'; });
+          const restartAtStart = duration && (media.currentTime < start || media.currentTime >= end - 0.025 || media.ended);
+          const playFromSelection = async () => {
+            if (restartAtStart) {
+              const target = start;
+              if (Math.abs((Number(media.currentTime) || 0) - target) > 0.015 || media.ended) {
+                await new Promise(resolve => {
+                  let finished = false;
+                  const doneSeek = () => {
+                    if (finished) return;
+                    finished = true;
+                    media.removeEventListener('seeked', doneSeek);
+                    clearTimeout(timeout);
+                    resolve();
+                  };
+                  const timeout = setTimeout(doneSeek, 350);
+                  media.addEventListener('seeked', doneSeek, { once: true });
+                  try { media.currentTime = target; } catch (_) { doneSeek(); }
+                });
+              }
+            }
+            if (done) return;
+            media.playbackRate = speed;
+            try { await media.play(); }
+            catch (_) { $('[data-preview-help]').textContent = 'Не удалось запустить предпросмотр; настройки всё равно применятся.'; }
+          };
+          playFromSelection();
         } else media.pause();
       });
       overlay.querySelectorAll('[data-editor-close],[data-cancel]').forEach(b => b.addEventListener('click', () => finish(null)));
