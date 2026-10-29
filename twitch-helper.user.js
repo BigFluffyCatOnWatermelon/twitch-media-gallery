@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.62
+// @version      5.9.63
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,8 +37,8 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.62';
-  const VERSION = 17;
+  const APP_VERSION = '5.9.63';
+  const VERSION = 18;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
@@ -2558,9 +2558,16 @@
       document.body.appendChild(overlay);
 
       const $ = selector => overlay.querySelector(selector);
+      const dialog = $('#twgif-media-editor');
       const stage = $('[data-stage]'), frame = $('[data-crop-frame]');
-      const scrub = $('[data-scrub]'), startInput = $('[data-start]'), endInput = $('[data-end]');
+      const timelineTrack = $('[data-timeline-track]');
+      const storyboard = $('[data-storyboard]');
+      const scrub = $('[data-scrub]'), startInput = $('[data-trim-start]'), endInput = $('[data-trim-end]');
+      const trimSelection = $('[data-trim-selection]');
+      const trimShadeLeft = $('[data-trim-shade-left]'), trimShadeRight = $('[data-trim-shade-right]');
+      const playhead = $('[data-playhead]');
       const speedInput = $('[data-speed]'), loopInput = $('[data-loop]');
+      const cropToggle = $('[data-crop-toggle]'), cropControls = $('[data-crop-controls]');
       const playButton = $('[data-play]');
       const currentLabel = $('[data-current]');
       const durationLabel = $('[data-duration]');
@@ -2587,14 +2594,19 @@
       $('[data-output]').textContent = chosen.toUpperCase();
       $('[data-output-note]').textContent = ['gif','webp'].includes(chosen) ? 'Зацикливание сохранится в файле' : 'Зацикливание действует в предпросмотре';
 
-      let done = false, duration = 0, width = 0, height = 0, start = 0, end = 0, speed = 1, loop = true;
-      let crop = { x: 0, y: 0, w: 100, h: 100 }, drag = null, dragId = null, resizeObserver = null, resizeHandler = null;
-      let userChangedTrim = false;
+      let done = false, duration = 0, width = 0, height = 0, start = 0, end = 0, speed = 1, loop = false;
+      let crop = { x: 0, y: 0, w: 100, h: 100 }, cropMode = false, trimDrag = null;
+      let drag = null, dragId = null, resizeObserver = null, resizeHandler = null;
+      let userChangedTrim = false, videoReverseTimer = 0, videoPingPongDirection = 1;
       let animationDecoder = null, animationFrameDurations = [], animationFrameStarts = [];
-      let animationFrameIndex = 0, animationPlaying = false, animationTimer = 0, animationGeneration = 0;
+      let animationFrameIndex = 0, animationDirection = 1, animationPlaying = false, animationTimer = 0, animationGeneration = 0;
+      let storyboardRun = 0;
       const cleanup = () => {
         animationPlaying = false;
         animationGeneration++;
+        storyboardRun++;
+        if (videoReverseTimer) clearTimeout(videoReverseTimer);
+        videoReverseTimer = 0;
         if (animationTimer) clearTimeout(animationTimer);
         animationTimer = 0;
         if (animationDecoder) {
@@ -2635,6 +2647,33 @@
         overlay.querySelectorAll('[data-preset]').forEach(b => b.setAttribute('aria-pressed',
           String(b.dataset.preset === 'free' && crop.x === 0 && crop.y === 0 && crop.w === 100 && crop.h === 100)));
       };
+      const updateTimelineControls = () => {
+        const safeDuration = Math.max(0, Number(duration) || 0);
+        const startPct = safeDuration ? Math.max(0, Math.min(100, start / safeDuration * 100)) : 0;
+        const endPct = safeDuration ? Math.max(startPct, Math.min(100, end / safeDuration * 100)) : 100;
+        startInput.style.left = startPct + '%';
+        endInput.style.left = endPct + '%';
+        trimSelection.style.left = startPct + '%';
+        trimSelection.style.width = Math.max(0, endPct - startPct) + '%';
+        trimShadeLeft.style.width = startPct + '%';
+        trimShadeRight.style.width = (100 - endPct) + '%';
+        startInput.setAttribute('aria-valuemax', String(safeDuration));
+        startInput.setAttribute('aria-valuenow', String(start));
+        startInput.setAttribute('aria-valuetext', formatEditorTime(start));
+        endInput.setAttribute('aria-valuemax', String(safeDuration));
+        endInput.setAttribute('aria-valuenow', String(end));
+        endInput.setAttribute('aria-valuetext', safeDuration ? formatEditorTime(end) : '—:—');
+        const previewTime = info.kind === 'video' ? (Number(media.currentTime) || 0)
+          : animationDecoder ? (Number(animationFrameStarts[animationFrameIndex]) || 0)
+            : (Number(scrub.value) || 0);
+        const playheadPct = safeDuration ? Math.max(0, Math.min(100, previewTime / safeDuration * 100)) : 0;
+        playhead.style.left = playheadPct + '%';
+        scrub.max = String(safeDuration);
+        if (Number.isFinite(previewTime)) scrub.value = String(Math.max(0, Math.min(safeDuration || previewTime, previewTime)));
+        startInput.disabled = safeDuration <= 0;
+        endInput.disabled = safeDuration <= 0;
+        $('[data-duration]').textContent = safeDuration > 0 ? formatEditorTime(safeDuration) : '—:—';
+      };
       const updateSummary = () => {
         const selected = duration > 0 ? Math.max(0, end - start) : 0;
         $('[data-selected]').textContent = selected > 0 ? formatEditorTime(selected) : 'Весь файл';
@@ -2645,11 +2684,11 @@
         $('[data-end-label]').textContent = duration > 0 ? formatEditorTime(end) : '—:—';
         $('[data-start-value]').textContent = formatEditorTime(start);
         $('[data-end-value]').textContent = duration > 0 ? formatEditorTime(end) : '—:—';
-        $('[data-trim-help]').textContent = duration > 0 ? 'После скорости: ' + formatEditorTime(selected / speed) :
-          'Длительность не определена: обрезка по времени недоступна.';
-        startInput.value = String(start); endInput.value = String(end);
-        startInput.max = String(duration); endInput.max = String(duration); scrub.max = String(duration);
-        $('[data-duration]').textContent = duration > 0 ? formatEditorTime(duration) : '—:—';
+        $('[data-trim-help]').textContent = duration > 0
+          ? 'Выбрано ' + formatEditorTime(selected) + ' · итоговая длительность ' + formatEditorTime(selected / speed)
+          : 'Длительность не определена: обрезка по времени недоступна.';
+        speedInput.value = String(speed);
+        updateTimelineControls();
       };
       const setDuration = value => {
         const n = Number(value);
