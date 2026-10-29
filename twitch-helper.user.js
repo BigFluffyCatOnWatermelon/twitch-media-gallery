@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.48
+// @version      5.9.49
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.48';
+  const APP_VERSION = '5.9.49';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -2364,6 +2364,24 @@
     }
   }
 
+  // The "Видео" filter includes actual videos plus image-based animations such as GIF.
+  // Animated WebP is included once its frame timing has been detected by the existing parser.
+  function isAnimatedMediaItem(item) {
+    const type = String(item?.type || '').toLowerCase();
+    if (type === 'video' || type === 'gif' || item?.animated === true) return true;
+
+    const candidates = [item?.previewUrl, item?.url, item?.name]
+      .map(value => String(value || '').trim())
+      .filter(Boolean);
+    return candidates.some(rawUrl => {
+      let pathname = rawUrl;
+      try { pathname = new URL(rawUrl, location.href).pathname; } catch (_) {}
+
+      if (/\.(?:gif|apng|webm|mp4|mov|m4v|mkv|avi|ogv|mpg|mpeg)$/i.test(pathname)) return true;
+      return /\.webp$/i.test(pathname) && Number(videoDurationCache.get(rawUrl)) > 0;
+    });
+  }
+
   async function resolve7TVEmote(url) {
     const id = parse7TVEmoteId(url);
     if (!id) return null;
@@ -3454,9 +3472,9 @@
       .twgif-tab{appearance:none;border:0;background:transparent;color:#a8a8b3;width:28px;height:28px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
       .twgif-tab:hover{background:#303036;color:#fff}.twgif-tab[aria-selected=true]{background:#392653;color:#d6b4ff}
       .twgif-media-filter{display:flex;align-items:center;gap:4px;margin:0 0 6px}
-      .twgif-media-filter-button{appearance:none;display:inline-flex;align-items:center;justify-content:center;border:1px solid #3c3c44;border-radius:6px;background:#202024;color:#bcbcc6;padding:5px 10px;font:inherit;font-size:11px;font-weight:500;line-height:1.2;cursor:pointer}
+      .twgif-media-filter-button{appearance:none;display:inline-flex;align-items:center;justify-content:center;min-width:58px;border:1px solid #3c3c44;border-radius:6px;background:#202024;color:#bcbcc6;padding:5px 10px;font:inherit;font-size:11px;font-weight:500;line-height:1.2;cursor:pointer}
       .twgif-media-filter-button:hover{background:#303036;color:#fff}
-      .twgif-media-filter-button[aria-pressed=true]{border-color:#8b5bd4;background:#392653;color:#e8d7ff}
+      .twgif-media-filter-button[data-filter-mode=photos],.twgif-media-filter-button[data-filter-mode=videos]{border-color:#8b5bd4;background:#392653;color:#e8d7ff}
       .twgif-gallery-tabs{display:flex;gap:5px;margin:0 0 8px}
       .twgif-gallery-tab{appearance:none;display:inline-flex;align-items:center;gap:5px;border:1px solid #3c3c44;border-radius:6px;background:#202024;color:#bcbcc6;padding:6px 9px;font:inherit;font-size:11px;font-weight:500;line-height:1.2;cursor:pointer}
       .twgif-gallery-tab:hover{background:#303036;color:#fff}.twgif-gallery-tab[aria-selected=true]{border-color:#8b5bd4;background:#392653;color:#e8d7ff}
@@ -4463,10 +4481,9 @@
         <button id="twgif-add-url" class="twgif-small-btn twgif-primary twgif-toolbar-icon" type="button" title="Добавить ссылку" aria-label="Добавить ссылку">+</button>
         <label class="twgif-compress-toggle" title="Отключить уменьшение разрешения и ограничение качества" for="twgif-compress-toggle"><input id="twgif-compress-toggle" type="checkbox" ${isCompressionEnabled() ? 'checked' : ''}>сжимать</label>
       </div>
-      <div class="twgif-media-filter" role="group" aria-label="Фильтр по типу медиа">
-        <button class="twgif-media-filter-button" type="button" data-media-filter="all" aria-pressed="true">Всё</button>
-        <button class="twgif-media-filter-button" type="button" data-media-filter="photos" aria-pressed="false">Фото</button>
-        <button class="twgif-media-filter-button" type="button" data-media-filter="videos" aria-pressed="false">Видео</button>
+      <div class="twgif-media-filter">
+        <button id="twgif-media-filter-toggle" class="twgif-media-filter-button" type="button"
+          aria-label="Фильтр медиа: Всё" title="Переключить фильтр: Всё → Фото → Видео">Всё</button>
       </div>
       <div class="twgif-gallery-tabs" role="tablist" aria-label="Категория медиа">
         <button class="twgif-gallery-tab" type="button" data-gallery-tab="all" role="tab" aria-selected="true">Все <span id="twgif-all-count" class="twgif-gallery-tab-count">0</span></button>
@@ -4550,16 +4567,15 @@
         renderGalleryItems();
       });
     });
-    body.querySelectorAll('.twgif-media-filter-button').forEach(button => {
-      button.addEventListener('click', () => {
-        const requestedFilter = button.dataset.mediaFilter;
-        galleryMediaType = ['photos', 'videos'].includes(requestedFilter) ? requestedFilter : 'all';
-        galleryPage = 0;
-        body.querySelectorAll('.twgif-media-filter-button').forEach(filterButton => {
-          filterButton.setAttribute('aria-pressed', String(filterButton.dataset.mediaFilter === galleryMediaType));
-        });
-        renderGalleryItems();
-      });
+    body.querySelector('#twgif-media-filter-toggle').addEventListener('click', () => {
+      // One button cycles through all media, static photos, then videos/animations.
+      galleryMediaType = galleryMediaType === 'all'
+        ? 'photos'
+        : galleryMediaType === 'photos'
+          ? 'videos'
+          : 'all';
+      galleryPage = 0;
+      renderGalleryItems();
     });
 
     urlInput.addEventListener('keydown', event => {
@@ -5084,15 +5100,21 @@
       : galleryTab === 'hd' ? hdItems
       : galleryTab === 'favorites' ? favoriteItems
       : allItems;
-    const mediaFilterButtons = body.querySelectorAll('.twgif-media-filter-button');
-    mediaFilterButtons.forEach(button => {
-      button.setAttribute('aria-pressed', String(button.dataset.mediaFilter === galleryMediaType));
-    });
+    const mediaFilterButton = body.querySelector('#twgif-media-filter-toggle');
+    if (mediaFilterButton) {
+      const labels = { all: 'Всё', photos: 'Фото', videos: 'Видео' };
+      const label = labels[galleryMediaType] || labels.all;
+      mediaFilterButton.textContent = label;
+      mediaFilterButton.dataset.filterMode = galleryMediaType;
+      mediaFilterButton.setAttribute('aria-label', 'Фильтр медиа: ' + label);
+      mediaFilterButton.title = 'Следующий фильтр: ' +
+        (galleryMediaType === 'all' ? 'Фото' : galleryMediaType === 'photos' ? 'Видео' : 'Всё');
+    }
     const items = galleryMediaType === 'all'
       ? categoryItems
       : categoryItems.filter(item => galleryMediaType === 'videos'
-        ? isVideoGalleryItem(item)
-        : !isVideoGalleryItem(item));
+        ? isAnimatedMediaItem(item)
+        : !isAnimatedMediaItem(item));
     const pageSize = config.pageSize;
     const pages = Math.max(1, Math.ceil(items.length / pageSize));
     galleryPage = Math.max(0, Math.min(galleryPage, pages - 1));
@@ -5165,9 +5187,9 @@
     masonry.hidden = visible.length === 0;
     empty.hidden = visible.length > 0;
     empty.textContent = galleryMediaType === 'photos'
-      ? 'В выбранной категории нет фото.'
+      ? 'В выбранной категории нет статичных изображений.'
       : galleryMediaType === 'videos'
-        ? 'В выбранной категории нет видео.'
+        ? 'В выбранной категории нет видео или анимаций.'
         : galleryTab === '7tv'
           ? 'В коллекции пока нет ссылок 7TV.'
           : galleryTab === 'hd'
@@ -5673,7 +5695,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.48 started', { href: location.href });
+    logDebug('Userscript v5.9.49 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
