@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.51
+// @version      5.9.52
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,8 +37,8 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.51';
-  const VERSION = 6;
+  const APP_VERSION = '5.9.52';
+  const VERSION = 7;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
@@ -204,6 +204,41 @@
     try { return JSON.parse(value); } catch (_) { return fallback; }
   }
 
+  // Persist the result of media classification with each gallery item. This prevents
+  // repeated WebP downloads and resorting after every page reload.
+  const PERSISTED_MEDIA_KINDS = new Set(['animated', 'photo', 'unknown', 'unavailable']);
+  const MEDIA_KIND_RETRY_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+  function inferInitialMediaKind(item) {
+    const type = String(item?.type || '').toLowerCase();
+    if (type === 'video' || type === 'gif' || item?.animated === true) return 'animated';
+
+    const candidates = [item?.previewUrl, item?.url, item?.name]
+      .map(value => String(value || '').trim())
+      .filter(Boolean);
+    for (const rawUrl of candidates) {
+      let pathname = rawUrl;
+      try { pathname = new URL(rawUrl, location.href).pathname; } catch (_) {}
+      if (/\.(?:gif|apng|webm|mp4|mov|m4v|mkv|avi|ogv|mpg|mpeg)$/i.test(pathname)) return 'animated';
+    }
+
+    // WebP's extension does not reveal whether the container has animation frames.
+    for (const rawUrl of candidates) {
+      if (!isWebPResource(rawUrl)) continue;
+      if (animatedWebPStatusCache.has(rawUrl)) {
+        return animatedWebPStatusCache.get(rawUrl) ? 'animated' : 'photo';
+      }
+      if (Number(videoDurationCache.get(rawUrl)) > 0) return 'animated';
+    }
+
+    return type === 'image' ? 'photo' : 'unknown';
+  }
+
+  function normalizeStoredMediaKind(item) {
+    const value = String(item?.mediaKind || '').toLowerCase();
+    return PERSISTED_MEDIA_KINDS.has(value) ? value : inferInitialMediaKind(item);
+  }
+
   // Collection persistence and normalization: callers work with validated, sorted records.
   function loadData() {
     const raw = parseJson(GM_getValue(DATA_KEY, EMPTY_DATA()), EMPTY_DATA());
@@ -211,6 +246,7 @@
     if (!raw || typeof raw !== 'object') return data;
 
     const rawItems = Array.isArray(raw.items) ? raw.items : [];
+    let needsMediaMetadataMigration = false;
     const cleaned = rawItems
       .filter(item => item && typeof item.id === 'string' && typeof item.url === 'string')
       .map(item => {
@@ -218,6 +254,10 @@
         // here made old entries appear new on every gallery refresh.
         const addedAt = Number(item.addedAt) || Number(item.updatedAt) || 0;
         const updatedAt = Number(item.updatedAt) || addedAt;
+        if (!PERSISTED_MEDIA_KINDS.has(String(item.mediaKind || '').toLowerCase()) ||
+            !Object.prototype.hasOwnProperty.call(item, 'mediaKindCheckedAt')) {
+          needsMediaMetadataMigration = true;
+        }
         return {
           id: String(item.id),
           url: String(item.url),
@@ -228,6 +268,8 @@
           favorite: Boolean(item.favorite),
           hd: Boolean(item.hd),
           size: Math.max(0, Math.floor(Number(item.size) || 0)),
+          mediaKind: normalizeStoredMediaKind(item),
+          mediaKindCheckedAt: Math.max(0, Math.floor(Number(item.mediaKindCheckedAt) || 0)),
           addedAt,
           updatedAt
         };
@@ -248,9 +290,14 @@
         .map(([id, time]) => [id, Number(time)]))
       : {};
 
-    if (data.items.length !== rawItems.length) {
+    if (data.items.length !== rawItems.length || needsMediaMetadataMigration) {
       GM_setValue(DATA_KEY, sortData(data));
-      logDebug('Removed duplicate local gallery items', { before: rawItems.length, after: data.items.length });
+      if (data.items.length !== rawItems.length) {
+        logDebug('Removed duplicate local gallery items', { before: rawItems.length, after: data.items.length });
+      }
+      if (needsMediaMetadataMigration) {
+        logDebug('Migrated persistent media classification metadata', { count: data.items.length });
+      }
     }
     return data;
   }
@@ -349,7 +396,15 @@
     const data = value && typeof value === 'object' ? value : EMPTY_DATA();
     const normalized = {
       version: VERSION,
-      items: Array.isArray(data.items) ? data.items.slice() : [],
+      // Keep the common case cheap: reuse records that already have normalized metadata.
+      items: Array.isArray(data.items) ? data.items.map(item => {
+        if (!item || typeof item !== 'object') return item;
+        const mediaKind = normalizeStoredMediaKind(item);
+        const mediaKindCheckedAt = Math.max(0, Math.floor(Number(item.mediaKindCheckedAt) || 0));
+        return item.mediaKind === mediaKind && item.mediaKindCheckedAt === mediaKindCheckedAt
+          ? item
+          : { ...item, mediaKind, mediaKindCheckedAt };
+      }) : [],
       deleted: data.deleted && typeof data.deleted === 'object' ? { ...data.deleted } : {}
     };
     normalized.items.sort(compareGalleryItems);
@@ -376,7 +431,35 @@
     const byId = new Map();
     for (const item of [...(left.items || []), ...(right.items || [])]) {
       const old = byId.get(item.id);
-      if (!old || (Number(item.updatedAt) || 0) > (Number(old.updatedAt) || 0)) byId.set(item.id, item);
+      if (!old) {
+        byId.set(item.id, item);
+        continue;
+      }
+
+      // Media classification is derived metadata, not a user edit. Merge it
+      // independently of updatedAt so sync cannot silently erase a verified result.
+      const selected = (Number(item.updatedAt) || 0) > (Number(old.updatedAt) || 0) ? item : old;
+      const metadataCandidates = [selected, old, item];
+      const rankMediaKind = record => {
+        const kind = normalizeStoredMediaKind(record);
+        return kind === 'photo' || kind === 'animated' ? 2 : kind === 'unavailable' ? 1 : 0;
+      };
+      let classification = metadataCandidates[0];
+      for (const candidate of metadataCandidates.slice(1)) {
+        const candidateRank = rankMediaKind(candidate);
+        const selectedRank = rankMediaKind(classification);
+        const candidateCheckedAt = Number(candidate.mediaKindCheckedAt) || 0;
+        const selectedCheckedAt = Number(classification.mediaKindCheckedAt) || 0;
+        if (candidateRank > selectedRank ||
+            (candidateRank === selectedRank && candidateCheckedAt > selectedCheckedAt)) {
+          classification = candidate;
+        }
+      }
+      byId.set(item.id, {
+        ...selected,
+        mediaKind: normalizeStoredMediaKind(classification),
+        mediaKindCheckedAt: Math.max(0, Math.floor(Number(classification.mediaKindCheckedAt) || 0))
+      });
     }
     const alive = [...byId.values()].filter(item => (deleted[item.id] || 0) < (Number(item.updatedAt) || 0));
     const deduped = new Map();
@@ -2399,6 +2482,14 @@
     return [item?.previewUrl, item?.url].map(value => String(value || '').trim()).find(isWebPResource) || '';
   }
 
+  function getCachedWebPMediaKind(url) {
+    if (animatedWebPStatusCache.has(url)) {
+      return animatedWebPStatusCache.get(url) ? 'animated' : 'photo';
+    }
+    if (Number(videoDurationCache.get(url)) > 0) return 'animated';
+    return '';
+  }
+
   function isAnimatedMediaItem(item) {
     const type = String(item?.type || '').toLowerCase();
     if (type === 'video' || type === 'gif' || item?.animated === true) return true;
@@ -2409,27 +2500,87 @@
     for (const rawUrl of candidates) {
       let pathname = rawUrl;
       try { pathname = new URL(rawUrl, location.href).pathname; } catch (_) {}
-
       if (/\.(?:gif|apng|webm|mp4|mov|m4v|mkv|avi|ogv|mpg|mpeg)$/i.test(pathname)) return true;
-      if (isWebPResource(rawUrl)) {
-        if (animatedWebPStatusCache.get(rawUrl) === true || Number(videoDurationCache.get(rawUrl)) > 0) return true;
-      }
     }
-    return false;
+
+    // Positive duration confirms animation; zero/unknown duration is not proof of a still.
+    let hasVerifiedStaticWebP = false;
+    for (const rawUrl of candidates) {
+      if (!isWebPResource(rawUrl)) continue;
+      const cachedKind = getCachedWebPMediaKind(rawUrl);
+      if (cachedKind === 'animated') return true;
+      if (cachedKind === 'photo') hasVerifiedStaticWebP = true;
+    }
+    if (hasVerifiedStaticWebP) return false;
+
+    return normalizeStoredMediaKind(item) === 'animated';
   }
 
-  // When "Видео" is selected, inspect uncached WebPs without blocking the UI.
-  // A small worker pool avoids flooding the network when a collection has many items.
+  function persistMediaKindClassifications(classifications) {
+    if (!(classifications instanceof Map) || !classifications.size) return false;
+    const data = loadData();
+    const now = Date.now();
+    let changed = false;
+
+    for (const item of data.items) {
+      const url = getItemWebPUrl(item);
+      const mediaKind = url ? classifications.get(url) : '';
+      if (!mediaKind || !PERSISTED_MEDIA_KINDS.has(mediaKind)) continue;
+      const kindChanged = item.mediaKind !== mediaKind;
+      const retryResult = mediaKind === 'unavailable';
+      if (!kindChanged && !retryResult) continue;
+
+      item.mediaKind = mediaKind;
+      item.mediaKindCheckedAt = now;
+      changed = true;
+    }
+
+    // Classification is cache metadata, so it must not bump an item's edit timestamp.
+    // mergeData retains it independently during Gist synchronization.
+    if (changed) persistData(data);
+    return changed;
+  }
+
+  // Inspect only unknown WebPs. Persist the result with the item so reloads reuse it.
   function scheduleAnimatedWebPClassification(items) {
     const candidates = [];
+    const seenUrls = new Set();
+    const classifications = new Map();
+    const now = Date.now();
+
     for (const item of items) {
       const url = getItemWebPUrl(item);
-      if (!url || animatedWebPStatusCache.has(url) ||
-          animatedWebPCheckFailed.has(url) || animatedWebPClassificationPending.has(url)) continue;
+      if (!url) continue;
+
+      const retryAt = Number(item.mediaKindCheckedAt) || 0;
+      const eligible = item.mediaKind === 'unknown' ||
+        (item.mediaKind === 'unavailable' && now - retryAt >= MEDIA_KIND_RETRY_INTERVAL_MS);
+      if (!eligible) continue;
+
+      const cachedKind = getCachedWebPMediaKind(url);
+      if (cachedKind) {
+        classifications.set(url, cachedKind);
+        continue;
+      }
+      if (seenUrls.has(url) || animatedWebPClassificationPending.has(url)) continue;
+      if (animatedWebPCheckFailed.has(url)) animatedWebPCheckFailed.delete(url);
+
       animatedWebPClassificationPending.add(url);
+      seenUrls.add(url);
       candidates.push({ item, url });
     }
-    if (!candidates.length) return;
+
+    const finish = () => {
+      const changed = persistMediaKindClassifications(classifications);
+      if (!changed && galleryMediaType === 'videos' && isPanelOpen() && panelView === 'gallery') {
+        renderGalleryItems();
+      }
+    };
+
+    if (!candidates.length) {
+      if (classifications.size) Promise.resolve().then(finish);
+      return;
+    }
 
     let nextIndex = 0;
     const worker = async () => {
@@ -2437,16 +2588,17 @@
         const candidate = candidates[nextIndex++];
         try {
           await resolveAnimatedWebPDuration(candidate.item, candidate.url);
-          if (!animatedWebPStatusCache.has(candidate.url)) {
-            if (Number(videoDurationCache.get(candidate.url)) > 0) {
-              animatedWebPStatusCache.set(candidate.url, true);
-            } else {
-              // No readable bytes (e.g. inaccessible/oversized remote media): avoid retry loops.
-              animatedWebPCheckFailed.add(candidate.url);
-            }
+          const knownKind = getCachedWebPMediaKind(candidate.url);
+          if (knownKind) {
+            classifications.set(candidate.url, knownKind);
+          } else {
+            // Failed probes persist as unavailable and are retried only after one day.
+            animatedWebPCheckFailed.add(candidate.url);
+            classifications.set(candidate.url, 'unavailable');
           }
         } catch (error) {
           animatedWebPCheckFailed.add(candidate.url);
+          classifications.set(candidate.url, 'unavailable');
           logDebug('Could not inspect WebP for gallery filter', {
             url: candidate.url,
             error: error?.message || String(error)
@@ -2458,12 +2610,14 @@
     };
 
     Promise.all(Array.from({ length: Math.min(3, candidates.length) }, () => worker()))
-      .then(() => {
-        if (galleryMediaType === 'videos' && isPanelOpen() && panelView === 'gallery') {
-          renderGalleryItems();
+      .then(finish)
+      .catch(error => {
+        for (const candidate of candidates) {
+          animatedWebPClassificationPending.delete(candidate.url);
+          animatedWebPCheckFailed.add(candidate.url);
         }
-      })
-      .catch(error => logDebug('WebP classification queue failed', error));
+        logDebug('WebP classification queue failed', error);
+      });
   }
 
   async function resolve7TVEmote(url) {
