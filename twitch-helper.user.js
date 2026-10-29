@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.64
+// @version      5.9.65
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,8 +37,8 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.64';
-  const VERSION = 19;
+  const APP_VERSION = '5.9.65';
+  const VERSION = 20;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
@@ -1945,9 +1945,15 @@
       }
     }
     const videoFiltersWithCompression = extra => videoTransformFilters.concat(extra || []);
-    // GIF muxer uses -1 for a single play; WebP muxer uses 1 for a single play.
-    const outputLoopCount = editOptions && editOptions.loop === false ? '-1' : '0';
-    const webpLoopCount = editOptions && editOptions.loop === false ? '1' : '0';
+    const pingPongEnabled = Boolean(editOptions && editOptions.loop);
+    // Animated exports loop indefinitely; ping-pong is encoded as forward + reversed frames.
+    const outputLoopCount = '0';
+    const webpLoopCount = '0';
+    if (pingPongEnabled && outputIsVideo && !sourceIsStillImage) {
+      const selectedDuration = Math.max(0, editOptions.end - editOptions.start) / editOptions.speed;
+      if (!audioTransformFilters.length) audioTransformFilters.push('asetpts=PTS-STARTPTS');
+      audioTransformFilters.push('apad=pad_dur=' + selectedDuration.toFixed(3));
+    }
 
     // When a still image is sent to a video container, create a short 2s clip.
     if (outputIsVideo && sourceIsStillImage) {
@@ -1958,8 +1964,11 @@
 
     if (outputFormat === 'gif') {
       const gifFilters = videoFiltersWithCompression(compressEnabled ? ['fps=' + animationFps, scaleFilter] : []);
-      const gifFilter = '[0:v]' + gifFilters.concat(['split[s0][s1]']).join(',') +
-        ';[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:diff_mode=rectangle';
+      const gifBase = gifFilters.join(',');
+      const gifFilter = pingPongEnabled
+        ? '[0:v]' + gifBase + ',split[forward][reverseSource];[reverseSource]reverse[reverse];[forward][reverse]concat=n=2:v=1:a=0,split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:diff_mode=rectangle'
+        : '[0:v]' + gifFilters.concat(['split[s0][s1]']).join(',') +
+          ';[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:diff_mode=rectangle';
       args.push('-filter_complex', gifFilter, '-loop', outputLoopCount, outputPath);
     } else if (outputFormat === 'webp') {
       if (sourceIsStillImage) {
@@ -1971,8 +1980,11 @@
         );
       } else {
         const webpFilters = videoFiltersWithCompression(compressEnabled ? ['fps=' + animationFps, scaleFilter] : []);
+        const webpArgs = pingPongEnabled
+          ? ['-filter_complex', '[0:v]' + webpFilters.join(',') + ',split[forward][reverseSource];[reverseSource]reverse[reverse];[forward][reverse]concat=n=2:v=1:a=0[outv]', '-map', '[outv]']
+          : (webpFilters.length ? ['-vf', webpFilters.join(',')] : []);
         args.push(
-          ...(webpFilters.length ? ['-vf', webpFilters.join(',')] : []),
+          ...webpArgs,
           '-an', '-c:v', 'libwebp',
           ...(compressEnabled ? ['-quality', String(animationQuality)] : ['-lossless', '1']),
           '-compression_level', String(webpCompressionLevel), '-loop', webpLoopCount, outputPath
@@ -1990,9 +2002,14 @@
       args.push(...(pngFilters.length ? ['-vf', pngFilters.join(',')] : []), '-frames:v', '1', outputPath);
     } else if (outputFormat === 'mp4') {
       const videoFilters = videoFiltersWithCompression(compressEnabled ? ['fps=' + videoFps, scaleFilter] : []);
+      const pingPongGraph = '[0:v]' + videoFilters.join(',') +
+        ',split[forward][reverseSource];[reverseSource]reverse[reverse];[forward][reverse]concat=n=2:v=1:a=0[outv]';
       args.push(
-        ...(videoFilters.length ? ['-vf', videoFilters.join(',')] : []),
-        ...(audioTransformFilters.length ? ['-af', audioTransformFilters.join(',')] : []),
+        ...(pingPongEnabled && !sourceIsStillImage
+          ? ['-filter_complex', pingPongGraph, '-map', '[outv]', '-map', '0:a?']
+          : (videoFilters.length ? ['-vf', videoFilters.join(',')] : [])),
+        ...(!pingPongEnabled && audioTransformFilters.length ? ['-af', audioTransformFilters.join(',')] : []),
+        ...(pingPongEnabled && audioTransformFilters.length ? ['-af', audioTransformFilters.join(',')] : []),
         '-c:v', 'libx264', '-preset', compressEnabled ? speedPreset : 'medium',
         ...videoRateArgs,
         '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
@@ -2000,9 +2017,14 @@
       );
     } else if (outputFormat === 'webm') {
       const videoFilters = videoFiltersWithCompression(compressEnabled ? ['fps=' + videoFps, scaleFilter] : []);
+      const pingPongGraph = '[0:v]' + videoFilters.join(',') +
+        ',split[forward][reverseSource];[reverseSource]reverse[reverse];[forward][reverse]concat=n=2:v=1:a=0[outv]';
       args.push(
-        ...(videoFilters.length ? ['-vf', videoFilters.join(',')] : []),
-        ...(audioTransformFilters.length ? ['-af', audioTransformFilters.join(',')] : []),
+        ...(pingPongEnabled && !sourceIsStillImage
+          ? ['-filter_complex', pingPongGraph, '-map', '[outv]', '-map', '0:a?']
+          : (videoFilters.length ? ['-vf', videoFilters.join(',')] : [])),
+        ...(!pingPongEnabled && audioTransformFilters.length ? ['-af', audioTransformFilters.join(',')] : []),
+        ...(pingPongEnabled && audioTransformFilters.length ? ['-af', audioTransformFilters.join(',')] : []),
         '-c:v', 'libvpx', '-deadline', compressEnabled ? 'realtime' : 'good',
         '-cpu-used', String(compressEnabled ? cpuUsed : 0),
         ...webmRateArgs,
@@ -2468,9 +2490,10 @@
 
   function mediaEditHasChanges(raw, outputFormat) {
     const e = normalizeMediaEditOptions(raw), c = e.crop;
+    const pingPongChanged = e.loop === true && ['gif', 'webp', 'mp4', 'webm'].includes(outputFormat);
     return c.x > .5 || c.y > .5 || c.w < 99.5 || c.h < 99.5 ||
       (e.duration > 0 && (e.start > .03 || e.end < e.duration - .03)) ||
-      Math.abs(e.speed - 1) > .001 || (e.loop === false && ['gif', 'webp'].includes(outputFormat));
+      Math.abs(e.speed - 1) > .001 || pingPongChanged;
   }
 
   function ensureMediaEditorStyles() {
@@ -2884,12 +2907,18 @@
         animationTimer = window.setTimeout(() => {
           animationTimer = 0;
           if (!animationPlaying || !animationDecoder || done || generation !== animationGeneration) return;
-          const nextIndex = animationFrameIndex + 1;
-          const nextTime = nextIndex < animationFrameStarts.length ? animationFrameStarts[nextIndex] : duration;
-          if (nextIndex >= animationFrameStarts.length || nextTime >= end - 0.005) {
-            if (loop && end > start + 0.02) animationFrameIndex = findAnimationFrameAt(start);
+          const firstFrame = findAnimationFrameAt(start);
+          const lastFrame = Math.max(firstFrame, findAnimationFrameAt(Math.max(start, end - 0.001)));
+          let nextIndex = animationFrameIndex + animationDirection;
+          if (nextIndex > lastFrame) {
+            if (loop && lastFrame > firstFrame) { animationDirection = -1; nextIndex = lastFrame - 1; }
             else { pauseAnimationPreview(); return; }
-          } else animationFrameIndex = nextIndex;
+          } else if (nextIndex < firstFrame) {
+            if (loop && lastFrame > firstFrame) { animationDirection = 1; nextIndex = firstFrame + 1; }
+            else { pauseAnimationPreview(); return; }
+          }
+          if (nextIndex < firstFrame || nextIndex > lastFrame) { pauseAnimationPreview(); return; }
+          animationFrameIndex = nextIndex;
           runAnimationPreview(generation).catch(() => pauseAnimationPreview());
         }, Math.max(10, Math.min(10000, frameDuration / speed * 1000)));
       };
@@ -2898,6 +2927,7 @@
         if (!animationDecoder || done) return;
         if (duration > 0 && (animationFrameStarts[animationFrameIndex] < start ||
             animationFrameStarts[animationFrameIndex] >= end)) animationFrameIndex = findAnimationFrameAt(start);
+        animationDirection = 1;
         animationPlaying = true;
         playButton.textContent = 'Ⅱ';
         playButton.setAttribute('aria-label', 'Приостановить анимацию');
@@ -2922,12 +2952,18 @@
           animationTimer = window.setTimeout(() => {
             animationTimer = 0;
             if (generation !== animationGeneration || !animationPlaying) return;
-            const nextIndex = animationFrameIndex + 1;
-            const nextTime = nextIndex < animationFrameStarts.length ? animationFrameStarts[nextIndex] : duration;
-            if (nextIndex >= animationFrameStarts.length || nextTime >= end - 0.005) {
-              if (loop && end > start + 0.02) animationFrameIndex = findAnimationFrameAt(start);
+            const firstFrame = findAnimationFrameAt(start);
+            const lastFrame = Math.max(firstFrame, findAnimationFrameAt(Math.max(start, end - 0.001)));
+            let nextIndex = animationFrameIndex + animationDirection;
+            if (nextIndex > lastFrame) {
+              if (loop && lastFrame > firstFrame) { animationDirection = -1; nextIndex = lastFrame - 1; }
               else { pauseAnimationPreview(); return; }
-            } else animationFrameIndex = nextIndex;
+            } else if (nextIndex < firstFrame) {
+              if (loop && lastFrame > firstFrame) { animationDirection = 1; nextIndex = firstFrame + 1; }
+              else { pauseAnimationPreview(); return; }
+            }
+            if (nextIndex < firstFrame || nextIndex > lastFrame) { pauseAnimationPreview(); return; }
+            animationFrameIndex = nextIndex;
             runAnimationPreview(generation).catch(() => pauseAnimationPreview());
           }, Math.max(10, Math.min(10000, frameDuration / speed * 1000)));
         }).catch(() => fallbackAnimationPreview());
@@ -3006,8 +3042,9 @@
       };
 
       const onPlayState = () => {
-        $('[data-play]').textContent = media.paused ? '▶' : 'Ⅱ';
-        $('[data-play]').setAttribute('aria-label', media.paused ? 'Воспроизвести' : 'Пауза');
+        const playing = !media.paused || Boolean(videoReverseTimer);
+        playButton.textContent = playing ? 'Ⅱ' : '▶';
+        playButton.setAttribute('aria-label', playing ? 'Пауза' : 'Воспроизвести');
       };
       const onVideoMeta = () => {
         if (Number.isFinite(media.duration) && media.duration > 0) {
@@ -3019,16 +3056,41 @@
         }
         width = media.videoWidth || width; height = media.videoHeight || height; updateFrame();
       };
+      const startVideoReverse = () => {
+        if (!loop || end <= start + .05 || done || videoReverseTimer) return;
+        media.pause();
+        videoPingPongDirection = -1;
+        playButton.textContent = 'Ⅱ';
+        playButton.setAttribute('aria-label', 'Пауза');
+        const reverseStep = () => {
+          if (done || !loop || videoPingPongDirection !== -1) { videoReverseTimer = 0; return; }
+          const nextTime = (Number(media.currentTime) || end) - Math.max(.02, .04 * speed);
+          if (nextTime <= start + .01) {
+            videoReverseTimer = 0;
+            videoPingPongDirection = 1;
+            try { media.currentTime = start; } catch (_) {}
+            media.playbackRate = speed;
+            media.play().catch(() => { playButton.textContent = '▶'; });
+            return;
+          }
+          try { media.currentTime = nextTime; } catch (_) {}
+          videoReverseTimer = window.setTimeout(reverseStep, 40);
+          updateTimelineControls();
+        };
+        reverseStep();
+      };
       const onVideoTime = () => {
         if (!Number.isFinite(media.currentTime)) return;
-        $('[data-current]').textContent = formatEditorTime(media.currentTime); scrub.value = String(media.currentTime);
-        if (duration > 0 && media.currentTime >= end - .035) {
-          if (loop && end > start + .05) { try { media.currentTime = start; } catch (_) {} if (media.paused) media.play().catch(() => {}); }
+        currentLabel.textContent = formatEditorTime(media.currentTime);
+        scrub.value = String(media.currentTime);
+        updateTimelineControls();
+        if (duration > 0 && media.currentTime >= end - .035 && videoPingPongDirection === 1) {
+          if (loop && end > start + .05) startVideoReverse();
           else { media.pause(); try { media.currentTime = end; } catch (_) {} }
         }
       };
       const onVideoEnd = () => {
-        if (loop && end > start + .05) { try { media.currentTime = start; } catch (_) {} media.play().catch(() => {}); }
+        if (loop && end > start + .05 && videoPingPongDirection === 1) startVideoReverse();
         else media.pause();
       };
       const onKey = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); } };
@@ -3159,6 +3221,14 @@
           if (!animationDecoder) return;
           if (animationPlaying) pauseAnimationPreview();
           else playAnimationPreview();
+          return;
+        }
+        if (videoReverseTimer) {
+          clearTimeout(videoReverseTimer);
+          videoReverseTimer = 0;
+          videoPingPongDirection = 1;
+          playButton.textContent = '▶';
+          playButton.setAttribute('aria-label', 'Воспроизвести');
           return;
         }
         if (media.paused) {
