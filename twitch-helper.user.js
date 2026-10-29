@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.50
+// @version      5.9.51
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.50';
+  const APP_VERSION = '5.9.51';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -125,6 +125,10 @@
   const mediaSizeLookupPending = new Map();
   const videoDurationCache = new Map();
   const videoDurationLookupPending = new Map();
+  // WebP animation state is separate from duration: some valid animations have zero frame delays.
+  const animatedWebPStatusCache = new Map();
+  const animatedWebPCheckFailed = new Set();
+  const animatedWebPClassificationPending = new Set();
   let localFfmpegAssetsPromise = null;
   let localFfmpegAssets = null;
   let localFfmpegWorker = null;
@@ -1979,6 +1983,14 @@
     return lookup;
   }
 
+  function isWebPResource(rawUrl) {
+    const value = String(rawUrl || '').trim();
+    if (!value) return false;
+    if (/^data:image\/webp[;,]/i.test(value)) return true;
+    try { return /\.webp$/i.test(new URL(value, location.href).pathname); }
+    catch (_) { return /\.webp(?:$|[?#])/i.test(value); }
+  }
+
   function isLikelyWebPItem(item, rawUrl) {
     return [rawUrl, item?.url, item?.previewUrl, item?.name].some(value => {
       const text = String(value || '').trim();
@@ -2008,7 +2020,12 @@
   async function resolveAnimatedWebPDuration(item, rawUrl) {
     const url = String(rawUrl || '').trim();
     if (!url) return 0;
-    if (videoDurationCache.has(url)) return videoDurationCache.get(url);
+    if (animatedWebPStatusCache.get(url) === false) return 0;
+    if (videoDurationCache.has(url)) {
+      const knownDuration = videoDurationCache.get(url);
+      if (knownDuration > 0) animatedWebPStatusCache.set(url, true);
+      return knownDuration;
+    }
     if (videoDurationLookupPending.has(url)) return videoDurationLookupPending.get(url);
 
     const lookup = (async () => {
@@ -2019,8 +2036,8 @@
         String(item?.previewUrl || '').trim()
       ].filter(Boolean)));
 
-      // Prefer blobs already stored by gallery imports; this avoids re-downloading
-      // the same animation just to read its frame timings.
+      // Prefer cached bytes. The animation flag is a property of the WebP container,
+      // not its extension and not whether its frame durations happen to be non-zero.
       for (const candidate of candidateUrls) {
         try {
           blob = await getCachedMediaBlob(candidate);
@@ -2039,8 +2056,7 @@
         }
       }
 
-      // For an uncached remote WebP, download only when the server reports a
-      // reasonable size; do not unexpectedly fetch a huge file on hover.
+      // Avoid unexpectedly downloading huge images just to classify them.
       if (!blob && /^https?:\/\//i.test(url)) {
         try {
           const head = await request({ method: 'HEAD', url, timeout: 10000, acceptHttpErrors: true });
@@ -2054,7 +2070,20 @@
       }
 
       if (!blob) return 0;
-      const duration = await getAnimatedWebPDurationSeconds(blob);
+      // Some servers return WebP data as application/octet-stream. Normalize the
+      // MIME for the signature parser; this does not modify the original media.
+      const webpBlob = String(blob.type || '').toLowerCase() === 'image/webp'
+        ? blob
+        : new Blob([blob], { type: 'image/webp' });
+      const containerIsAnimated = await isAnimatedWebP(webpBlob);
+      const duration = await getAnimatedWebPDurationSeconds(webpBlob);
+      const isAnimated = containerIsAnimated || duration > 0;
+
+      // Cache both true and false results, including alternate URLs for the same item.
+      for (const candidate of candidateUrls) {
+        if (isWebPResource(candidate)) animatedWebPStatusCache.set(candidate, isAnimated);
+      }
+      animatedWebPStatusCache.set(url, isAnimated);
       if (duration > 0) videoDurationCache.set(url, duration);
       return duration;
     })().finally(() => {
@@ -2364,8 +2393,12 @@
     }
   }
 
-  // The "Видео" filter includes actual videos plus image-based animations such as GIF.
-  // Animated WebP is included once its frame timing has been detected by the existing parser.
+  // Video mode includes video containers and image animations such as GIF/APNG.
+  // WebP is different: inspect its container flags/chunks to distinguish animation from still images.
+  function getItemWebPUrl(item) {
+    return [item?.previewUrl, item?.url].map(value => String(value || '').trim()).find(isWebPResource) || '';
+  }
+
   function isAnimatedMediaItem(item) {
     const type = String(item?.type || '').toLowerCase();
     if (type === 'video' || type === 'gif' || item?.animated === true) return true;
@@ -2373,13 +2406,64 @@
     const candidates = [item?.previewUrl, item?.url, item?.name]
       .map(value => String(value || '').trim())
       .filter(Boolean);
-    return candidates.some(rawUrl => {
+    for (const rawUrl of candidates) {
       let pathname = rawUrl;
       try { pathname = new URL(rawUrl, location.href).pathname; } catch (_) {}
 
       if (/\.(?:gif|apng|webm|mp4|mov|m4v|mkv|avi|ogv|mpg|mpeg)$/i.test(pathname)) return true;
-      return /\.webp$/i.test(pathname) && Number(videoDurationCache.get(rawUrl)) > 0;
-    });
+      if (isWebPResource(rawUrl)) {
+        if (animatedWebPStatusCache.get(rawUrl) === true || Number(videoDurationCache.get(rawUrl)) > 0) return true;
+      }
+    }
+    return false;
+  }
+
+  // When "Видео" is selected, inspect uncached WebPs without blocking the UI.
+  // A small worker pool avoids flooding the network when a collection has many items.
+  function scheduleAnimatedWebPClassification(items) {
+    const candidates = [];
+    for (const item of items) {
+      const url = getItemWebPUrl(item);
+      if (!url || animatedWebPStatusCache.has(url) ||
+          animatedWebPCheckFailed.has(url) || animatedWebPClassificationPending.has(url)) continue;
+      animatedWebPClassificationPending.add(url);
+      candidates.push({ item, url });
+    }
+    if (!candidates.length) return;
+
+    let nextIndex = 0;
+    const worker = async () => {
+      while (nextIndex < candidates.length) {
+        const candidate = candidates[nextIndex++];
+        try {
+          await resolveAnimatedWebPDuration(candidate.item, candidate.url);
+          if (!animatedWebPStatusCache.has(candidate.url)) {
+            if (Number(videoDurationCache.get(candidate.url)) > 0) {
+              animatedWebPStatusCache.set(candidate.url, true);
+            } else {
+              // No readable bytes (e.g. inaccessible/oversized remote media): avoid retry loops.
+              animatedWebPCheckFailed.add(candidate.url);
+            }
+          }
+        } catch (error) {
+          animatedWebPCheckFailed.add(candidate.url);
+          logDebug('Could not inspect WebP for gallery filter', {
+            url: candidate.url,
+            error: error?.message || String(error)
+          });
+        } finally {
+          animatedWebPClassificationPending.delete(candidate.url);
+        }
+      }
+    };
+
+    Promise.all(Array.from({ length: Math.min(3, candidates.length) }, () => worker()))
+      .then(() => {
+        if (galleryMediaType === 'videos' && isPanelOpen() && panelView === 'gallery') {
+          renderGalleryItems();
+        }
+      })
+      .catch(error => logDebug('WebP classification queue failed', error));
   }
 
   async function resolve7TVEmote(url) {
@@ -2789,9 +2873,9 @@
         if (type !== 'video') await waitForImage(originalUrl);
         // Inspect WebP links during import so animated WebP is classified as animation
         // even if the item has never been hovered in the gallery.
-        if (type === 'image' && /\.webp$/i.test(pathName) &&
-            await resolveAnimatedWebPDuration({ url: originalUrl, previewUrl: originalUrl, name: hintedName }, originalUrl) > 0) {
-          type = 'gif';
+        if (type === 'image' && /\.webp$/i.test(pathName)) {
+          await resolveAnimatedWebPDuration({ url: originalUrl, previewUrl: originalUrl, name: hintedName }, originalUrl);
+          if (animatedWebPStatusCache.get(originalUrl) === true) type = 'gif';
         }
         ensureProcessingRun(runId);
         return addItem(originalUrl, hintedName, type, sourceKey, originalUrl, null, !compressEnabled);
@@ -4492,7 +4576,7 @@
       </div>
       <div class="twgif-media-filter">
         <button id="twgif-media-filter-toggle" class="twgif-media-filter-button" type="button"
-          aria-label="Фильтр медиа: Всё" title="Переключить фильтр: Всё → Фото → Видео">Всё</button>
+          aria-label="Фильтр медиа: Фото/Видео" title="Переключить фильтр: Фото/Видео → Фото → Видео">Фото/Видео</button>
       </div>
       <div class="twgif-gallery-tabs" role="tablist" aria-label="Категория медиа">
         <button class="twgif-gallery-tab" type="button" data-gallery-tab="all" role="tab" aria-selected="true">Все <span id="twgif-all-count" class="twgif-gallery-tab-count">0</span></button>
@@ -5111,14 +5195,15 @@
       : allItems;
     const mediaFilterButton = body.querySelector('#twgif-media-filter-toggle');
     if (mediaFilterButton) {
-      const labels = { all: 'Всё', photos: 'Фото', videos: 'Видео' };
+      const labels = { all: 'Фото/Видео', photos: 'Фото', videos: 'Видео' };
       const label = labels[galleryMediaType] || labels.all;
       mediaFilterButton.textContent = label;
       mediaFilterButton.dataset.filterMode = galleryMediaType;
       mediaFilterButton.setAttribute('aria-label', 'Фильтр медиа: ' + label);
       mediaFilterButton.title = 'Следующий фильтр: ' +
-        (galleryMediaType === 'all' ? 'Фото' : galleryMediaType === 'photos' ? 'Видео' : 'Всё');
+        (galleryMediaType === 'all' ? 'Фото' : galleryMediaType === 'photos' ? 'Видео' : 'Фото/Видео');
     }
+    if (galleryMediaType === 'videos') scheduleAnimatedWebPClassification(categoryItems);
     const items = galleryMediaType === 'all'
       ? categoryItems
       : categoryItems.filter(item => galleryMediaType === 'videos'
@@ -5195,10 +5280,17 @@
 
     masonry.hidden = visible.length === 0;
     empty.hidden = visible.length > 0;
-    empty.textContent = galleryMediaType === 'photos'
-      ? 'В выбранной категории нет статичных изображений.'
-      : galleryMediaType === 'videos'
-        ? 'В выбранной категории нет видео или анимаций.'
+    const webpClassificationPending = galleryMediaType === 'videos' &&
+      categoryItems.some(item => {
+        const url = getItemWebPUrl(item);
+        return url && animatedWebPClassificationPending.has(url);
+      });
+    empty.textContent = webpClassificationPending
+      ? 'Проверяю WebP на анимацию…'
+      : galleryMediaType === 'photos'
+        ? 'В выбранной категории нет статичных изображений.'
+        : galleryMediaType === 'videos'
+          ? 'В выбранной категории нет видео или анимаций.'
         : galleryTab === '7tv'
           ? 'В коллекции пока нет ссылок 7TV.'
           : galleryTab === 'hd'
@@ -5704,7 +5796,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.50 started', { href: location.href });
+    logDebug('Userscript v5.9.51 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
