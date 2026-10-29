@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.47
+// @version      5.9.48
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.47';
+  const APP_VERSION = '5.9.48';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -551,6 +551,7 @@
     const cancelledRun = activeProcessingRunId;
     processingRunId++;
     activeProcessingRunId = 0;
+    syncTriggerUploadIndicator();
 
     const uploadRequest = activeUploadRequest;
     activeUploadRequest = null;
@@ -2235,10 +2236,10 @@
     playTriggerResult(result);
   }
 
-  function syncPortalImportIndicator() {
-    // Twitch can replace its chat toolbar while a dropped file is processing.
-    // Keep the loading pulse on whichever picker button is currently mounted.
-    const shouldPulse = portalImportDepth > 0;
+  function syncTriggerUploadIndicator() {
+    // The pulse represents active work, not the method used to start the import.
+    // Never distract the user with it while the gallery panel is visible.
+    const shouldPulse = !isPanelOpen() && (portalImportDepth > 0 || activeProcessingRunId > 0);
     const triggers = new Set([document.getElementById('twgif-trigger'), activeTrigger]);
     for (const trigger of triggers) {
       if (trigger) trigger.classList.toggle('twgif-uploading', shouldPulse);
@@ -2662,6 +2663,7 @@
     }
     const ownedRunId = ++processingRunId;
     activeProcessingRunId = ownedRunId;
+    syncTriggerUploadIndicator();
     setProgressCancelable(true);
     try {
       return await addUrlCore(rawUrl, customName, ownedRunId, '', compressEnabled);
@@ -2674,6 +2676,7 @@
     } finally {
       if (activeProcessingRunId === ownedRunId) {
         activeProcessingRunId = 0;
+        syncTriggerUploadIndicator();
         setProgressCancelable(false);
       }
       if (isProcessingRunCurrent(ownedRunId)) finishProgress(1000);
@@ -2882,6 +2885,7 @@
     const compressEnabled = isCompressionEnabled();
     const runId = ++processingRunId;
     activeProcessingRunId = runId;
+    syncTriggerUploadIndicator();
     setProgressCancelable(true);
     try {
       for (const file of files) {
@@ -2922,6 +2926,7 @@
     } finally {
       if (activeProcessingRunId === runId) {
         activeProcessingRunId = 0;
+        syncTriggerUploadIndicator();
         setProgressCancelable(false);
       }
       if (isProcessingRunCurrent(runId)) finishProgress(1000);
@@ -3803,7 +3808,8 @@
     return true;
   }
 
-  // The toolbar trigger is also the file-drop portal; portalImportDepth controls only its loading pulse.
+  // The toolbar trigger is also the file-drop portal; the shared upload indicator
+  // covers portal drops, window drops, and URL imports while the panel is closed.
   function createTrigger() {
     const button = document.createElement('button');
     button.id = 'twgif-trigger';
@@ -3883,12 +3889,12 @@
       closePortal(true);
       if (files.length) {
         portalImportDepth++;
-        syncPortalImportIndicator();
+        syncTriggerUploadIndicator();
         try {
           await processFiles(files);
         } finally {
           portalImportDepth = Math.max(0, portalImportDepth - 1);
-          syncPortalImportIndicator();
+          syncTriggerUploadIndicator();
         }
       }
     });
@@ -4116,7 +4122,7 @@
     let button = document.getElementById('twgif-trigger');
     if (!button) button = createTrigger();
     activeTrigger = button;
-    syncPortalImportIndicator();
+    syncTriggerUploadIndicator();
 
     hideDropsToolbarButtons(toolbar);
     // Placement is inline for Kick/w.tv and independent for Twitch/other sites.
@@ -4393,6 +4399,7 @@
     panelView = 'gallery';
     const panel = document.getElementById('twgif-panel');
     panel.hidden = false;
+    syncTriggerUploadIndicator();
     activeTrigger?.setAttribute('aria-expanded', 'true');
     renderPanelView();
     repositionPanel();
@@ -4408,6 +4415,7 @@
       savePanelSize(panel);
       panel.hidden = true;
     }
+    syncTriggerUploadIndicator();
     activeTrigger?.setAttribute('aria-expanded', 'false');
     logDebug('Panel closed');
   }
@@ -4490,6 +4498,7 @@
       const compressEnabled = isCompressionEnabled();
       const runId = ++processingRunId;
       activeProcessingRunId = runId;
+      syncTriggerUploadIndicator();
       setProgressCancelable(true);
       addButton.disabled = true;
       let added = 0;
@@ -4521,6 +4530,7 @@
       } finally {
         if (activeProcessingRunId === runId) {
           activeProcessingRunId = 0;
+          syncTriggerUploadIndicator();
           setProgressCancelable(false);
         }
         if (isProcessingRunCurrent(runId)) finishProgress(1000);
@@ -5663,7 +5673,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.47 started', { href: location.href });
+    logDebug('Userscript v5.9.48 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
