@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.53
+// @version      5.9.54
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,8 +37,8 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.53';
-  const VERSION = 8;
+  const APP_VERSION = '5.9.54';
+  const VERSION = 9;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
@@ -283,10 +283,10 @@
           favorite: Boolean(item.favorite),
           hd: Boolean(item.hd),
           size: Math.max(0, Math.floor(Number(item.size) || 0)),
-          mediaKind: normalizeStoredMediaKind(item),
-          mediaKindCheckedAt: Math.max(0, Math.floor(Number(item.mediaKindCheckedAt) || 0)),
           addedAt,
-          updatedAt
+          updatedAt,
+          mediaKind: normalizeStoredMediaKind(item),
+          mediaKindCheckedAt: Math.max(0, Math.floor(Number(item.mediaKindCheckedAt) || 0))
         };
       });
 
