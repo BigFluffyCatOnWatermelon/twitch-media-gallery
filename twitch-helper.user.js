@@ -2549,7 +2549,7 @@
       '.twgif-editor-output{display:flex;justify-content:space-between;gap:10px;padding:11px;border:1px solid #a970ff33;border-radius:11px;background:#9147ff12}.twgif-editor-output-label{color:#a4a4b0;font-size:10px}.twgif-editor-output-value{color:#eee2ff;font-size:12px}',
       '.twgif-editor-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 22px;border-top:1px solid #ffffff12}.twgif-editor-summary{color:#aaaab5;font-size:11px}.twgif-editor-summary strong{color:#eee}.twgif-editor-actions{display:flex;gap:8px}.twgif-editor-btn{padding:10px 14px;border:1px solid #3b3b46;border-radius:9px;background:#ffffff08;color:#ddd;font:inherit;font-size:12px;font-weight:650;cursor:pointer}.twgif-editor-btn-primary{border-color:#9147ff;background:linear-gradient(135deg,#9c5bff,#7a32e5);color:white}',
       '@media(max-width:760px){#twgif-media-editor-overlay{padding:7px;align-items:flex-start}#twgif-media-editor{max-height:calc(100vh - 14px)}.twgif-editor-body{grid-template-columns:1fr;padding:10px;gap:10px}.twgif-editor-stage{height:34vh;min-height:175px}.twgif-editor-footer{align-items:flex-start;flex-direction:column;padding:12px 14px}.twgif-editor-actions{width:100%}.twgif-editor-actions .twgif-editor-btn{flex:1}}',
-      '#twgif-media-editor{display:flex;flex-direction:column;width:min(1180px,calc(100vw - 32px));height:min(820px,calc(100vh - 32px));max-height:calc(100vh - 32px)}.twgif-editor-header{flex:0 0 auto;align-items:center;padding:10px 16px;gap:10px}.twgif-editor-title{font-size:18px;margin:3px 0}.twgif-editor-subtitle{margin:3px 0}.twgif-editor-safe{margin-top:4px}.twgif-editor-close{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:34px;height:34px;flex:0 0 34px;padding:0;border:1px solid #ffffff18;border-radius:9px;background:#ffffff08;color:#ddd;font-size:22px;line-height:1;cursor:pointer}.twgif-editor-body{display:grid;flex:1 1 auto;grid-template-columns:minmax(0,1.55fr) minmax(275px,.85fr);grid-template-rows:minmax(180px,1fr) auto;align-content:start;gap:10px 12px;min-height:0;padding:10px 16px;overflow:auto}.twgif-editor-preview-column{grid-column:1;grid-row:1;display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0}.twgif-editor-stage{height:clamp(150px,31vh,320px);min-height:140px;flex:0 1 auto}.twgif-editor-body>aside{grid-column:2;grid-row:1;display:flex;flex-direction:column;gap:6px;min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden}.twgif-editor-body>aside>.twgif-editor-section{padding:8px;margin:0;flex:0 0 auto}.twgif-editor-section+.twgif-editor-section{margin-top:0}.twgif-editor-section-head{align-items:center;margin-bottom:5px}.twgif-editor-help{margin-top:4px;font-size:9px;line-height:1.35}.twgif-editor-speed-ends{font-size:9px}.twgif-editor-crop-readout{margin-bottom:5px}.twgif-editor-output{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px;flex:0 0 auto}.twgif-editor-footer{flex:0 0 auto;padding:10px 16px}.twgif-editor-btn{padding:9px 12px}.twgif-editor-play{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:34px;height:34px;flex:0 0 34px;padding:0;border:1px solid #a970ff66;border-radius:9px;background:#9147ff24;color:#eadcff;line-height:1;cursor:pointer}.twgif-editor-timeline-wrap{grid-column:1/-1;grid-row:2;min-width:0;margin:0;padding:9px 10px;border:1px solid #ffffff12;border-radius:12px;background:linear-gradient(135deg,#ffffff07,#ffffff02)}.twgif-editor-timeline-head{margin-bottom:24px}.twgif-editor-timeline-visual{height:76px;touch-action:none;cursor:crosshair;overflow:hidden}.twgif-editor-storyboard{position:absolute;inset:0;display:flex;align-items:stretch;gap:0;overflow:hidden;border-radius:8px;pointer-events:none}.twgif-editor-frame-thumb{display:block;flex:0 0 auto;width:auto;height:100%;max-width:none;object-fit:contain;background:#0c0c10;opacity:.9;user-select:none;-webkit-user-select:none;-webkit-user-drag:none;pointer-events:none;cursor:default}.twgif-editor-playhead{left:0;will-change:transform}.twgif-editor-playhead-label{position:absolute;z-index:7;top:-25px;left:0;transform:translate3d(0,0,0) translateX(-50%);padding:2px 5px;border:1px solid #604783;border-radius:5px;background:#20162d;color:#f0e2ff;font-size:10px;font-variant-numeric:tabular-nums;line-height:1.2;white-space:nowrap;pointer-events:none;will-change:transform}.twgif-editor-timeline-wrap .twgif-editor-player{display:flex;align-items:center;gap:8px;padding:5px 0 0;border:0;background:transparent}.twgif-editor-player-time[hidden],.twgif-editor-player-range[hidden]{display:none!important}.twgif-editor-timeline-wrap .twgif-editor-help{margin-top:5px}.twgif-editor-close:focus-visible,.twgif-editor-play:focus-visible{outline:2px solid #e2c5ff;outline-offset:2px}@media(max-width:760px){#twgif-media-editor-overlay{padding:7px;align-items:flex-start}#twgif-media-editor{height:auto;max-height:calc(100vh - 14px)}.twgif-editor-body{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto auto;padding:10px;gap:10px;overflow:auto}.twgif-editor-preview-column{grid-column:1;grid-row:1}.twgif-editor-body>aside{grid-column:1;grid-row:2;overflow:visible}.twgif-editor-timeline-wrap{grid-column:1;grid-row:3}.twgif-editor-stage{height:34vh;min-height:175px}.twgif-editor-footer{align-items:flex-start;flex-direction:column;padding:12px 14px}.twgif-editor-actions{width:100%}.twgif-editor-actions .twgif-editor-btn{flex:1}}',
+      '#twgif-media-editor{display:flex;flex-direction:column;width:min(1180px,calc(100vw - 32px));height:min(820px,calc(100vh - 32px));max-height:calc(100vh - 32px)}.twgif-editor-header{flex:0 0 auto;align-items:center;padding:10px 16px;gap:10px}.twgif-editor-title{font-size:18px;margin:3px 0}.twgif-editor-subtitle{margin:3px 0}.twgif-editor-safe{margin-top:4px}.twgif-editor-close{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:34px;height:34px;flex:0 0 34px;padding:0;border:1px solid #ffffff18;border-radius:9px;background:#ffffff08;color:#ddd;font-size:22px;line-height:1;cursor:pointer}.twgif-editor-body{display:grid;flex:1 1 auto;grid-template-columns:minmax(0,1.55fr) minmax(275px,.85fr);grid-template-rows:minmax(180px,1fr) auto;align-content:start;gap:10px 12px;min-height:0;padding:10px 16px;overflow:auto}.twgif-editor-preview-column{grid-column:1;grid-row:1;display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0}.twgif-editor-stage{height:clamp(150px,31vh,320px);min-height:140px;flex:0 1 auto}.twgif-editor-body>aside{grid-column:2;grid-row:1;display:flex;flex-direction:column;gap:6px;min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden}.twgif-editor-body>aside>.twgif-editor-section{padding:8px;margin:0;flex:0 0 auto}.twgif-editor-section+.twgif-editor-section{margin-top:0}.twgif-editor-section-head{align-items:center;margin-bottom:5px}.twgif-editor-help{margin-top:4px;font-size:9px;line-height:1.35}.twgif-editor-speed-ends{font-size:9px}.twgif-editor-crop-readout{margin-bottom:5px}.twgif-editor-output{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px;flex:0 0 auto}.twgif-editor-footer{flex:0 0 auto;padding:10px 16px}.twgif-editor-btn{padding:9px 12px}.twgif-editor-play{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:34px;height:34px;flex:0 0 34px;padding:0;border:1px solid #a970ff66;border-radius:9px;background:#9147ff24;color:#eadcff;line-height:1;cursor:pointer}.twgif-editor-timeline-wrap{grid-column:1/-1;grid-row:2;min-width:0;margin:0;padding:9px 10px;border:1px solid #ffffff12;border-radius:12px;background:linear-gradient(135deg,#ffffff07,#ffffff02)}.twgif-editor-timeline-head{margin-bottom:24px}.twgif-editor-timeline-visual{height:76px;touch-action:none;cursor:crosshair;overflow:visible}.twgif-editor-storyboard{position:absolute;inset:0;display:flex;align-items:stretch;gap:0;overflow:hidden;border-radius:8px;pointer-events:none}.twgif-editor-frame-thumb{display:block;flex:0 0 auto;width:auto;height:100%;max-width:none;object-fit:contain;background:#0c0c10;opacity:.9;user-select:none;-webkit-user-select:none;-webkit-user-drag:none;pointer-events:none;cursor:default}.twgif-editor-playhead{left:0;will-change:transform}.twgif-editor-playhead-label{position:absolute;z-index:7;top:-25px;left:0;transform:translate3d(0,0,0) translateX(-50%);padding:2px 5px;border:1px solid #604783;border-radius:5px;background:#20162d;color:#f0e2ff;font-size:10px;font-variant-numeric:tabular-nums;line-height:1.2;white-space:nowrap;pointer-events:none;will-change:transform}.twgif-editor-timeline-wrap .twgif-editor-player{display:flex;align-items:center;gap:8px;padding:5px 0 0;border:0;background:transparent}.twgif-editor-player-time[hidden],.twgif-editor-player-range[hidden]{display:none!important}.twgif-editor-timeline-wrap .twgif-editor-help{margin-top:5px}.twgif-editor-close:focus-visible,.twgif-editor-play:focus-visible{outline:2px solid #e2c5ff;outline-offset:2px}@media(max-width:760px){#twgif-media-editor-overlay{padding:7px;align-items:flex-start}#twgif-media-editor{height:auto;max-height:calc(100vh - 14px)}.twgif-editor-body{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto auto;padding:10px;gap:10px;overflow:auto}.twgif-editor-preview-column{grid-column:1;grid-row:1}.twgif-editor-body>aside{grid-column:1;grid-row:2;overflow:visible}.twgif-editor-timeline-wrap{grid-column:1;grid-row:3}.twgif-editor-stage{height:34vh;min-height:175px}.twgif-editor-footer{align-items:flex-start;flex-direction:column;padding:12px 14px}.twgif-editor-actions{width:100%}.twgif-editor-actions .twgif-editor-btn{flex:1}}',
     ].join('\n');
     (document.head || document.documentElement).appendChild(st);
   }
@@ -2637,6 +2637,7 @@
       let animationDecoder = null, animationFrameDurations = [], animationFrameStarts = [];
       let animationFrameIndex = 0, animationDirection = 1, animationPlaying = false, animationTimer = 0, animationGeneration = 0;
       let animationSeekBusy = false, pendingAnimationSeek = null;
+      let animationDecodeQueue = Promise.resolve();
       let storyboardRun = 0;
       const storyboardObjectUrls = [];
       const cleanup = () => {
@@ -2767,6 +2768,9 @@
         if (info.kind === 'video' && !media.paused) {
           await new Promise(resolve => media.addEventListener('pause', resolve, { once: true }));
         }
+        while (info.kind === 'animation' && animationPlaying && !done) {
+          await new Promise(resolve => window.setTimeout(resolve, 40));
+        }
         if (!done) await new Promise(resolve => window.setTimeout(resolve, 0));
       };
       const addStoryboardThumb = (dataUrl, time, index, run) => {
@@ -2860,9 +2864,11 @@
         const count = Math.max(1, Math.min(36, Math.floor((timelineTrack.clientWidth || 840) / thumbWidth)));
         for (let i = 0; i < count; i++) {
           if (done || run !== storyboardRun || !animationDecoder) return;
+          await waitForPreviewIdle();
+          if (done || run !== storyboardRun || animationPlaying || !animationDecoder) continue;
           const index = Math.round(i * (animationFrameStarts.length - 1) / Math.max(1, count - 1));
           try {
-            const result = await animationDecoder.decode({ frameIndex: index });
+            const result = await decodeAnimationFrame(index);
             const image = result && result.image;
             if (!image) continue;
             const imageAspect = image.displayWidth && image.displayHeight ? image.displayWidth / image.displayHeight : aspect;
@@ -2884,6 +2890,7 @@
 
       const pauseAnimationPreview = () => {
         animationPlaying = false;
+        animationGeneration++;
         pendingAnimationSeek = null;
         if (animationTimer) clearTimeout(animationTimer);
         animationTimer = 0;
@@ -2924,10 +2931,23 @@
         return index;
       };
 
+      const decodeAnimationFrame = async index => {
+        const previous = animationDecodeQueue;
+        let release;
+        animationDecodeQueue = new Promise(resolve => { release = resolve; });
+        await previous;
+        try {
+          if (!animationDecoder || done) return null;
+          return await animationDecoder.decode({ frameIndex: index });
+        } finally {
+          release();
+        }
+      };
+
       const drawAnimationFrame = async (index, generation) => {
         if (!animationDecoder || done || generation !== animationGeneration) return false;
         try {
-          const result = await animationDecoder.decode({ frameIndex: index });
+          const result = await decodeAnimationFrame(index);
           const image = result && result.image;
           if (!image) return false;
           if (done || generation !== animationGeneration || !animationCanvas) {
@@ -3110,8 +3130,10 @@
           $('[data-preview-help]').textContent =
             'Покадровый предпросмотр: диапазон, скорость и ping-pong можно проверить до обработки.';
           updateFrame();
-          populateAnimationStoryboard().catch(error => logDebug('Animation storyboard failed', error?.message || error));
           seekAnimationPreview(start);
+          window.setTimeout(() => {
+            if (!done && !animationPlaying) populateAnimationStoryboard().catch(error => logDebug('Animation storyboard failed', error?.message || error));
+          }, 180);
         } catch (error) {
           try { if (decoder) decoder.close(); } catch (_) {}
           if (animationDecoder === decoder) animationDecoder = null;
