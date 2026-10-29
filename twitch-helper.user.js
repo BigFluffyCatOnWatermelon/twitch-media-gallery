@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.72
+// @version      5.9.73
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.72';
+  const APP_VERSION = '5.9.73';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -2632,7 +2632,7 @@
       let done = false, duration = 0, width = 0, height = 0, start = 0, end = 0, speed = 1, loop = false;
       let crop = { x: 0, y: 0, w: 100, h: 100 }, cropMode = false, trimDrag = null;
       let drag = null, dragId = null, resizeObserver = null, resizeHandler = null;
-      let playheadDrag = null, seekTimer = 0, pendingSeekTime = null, playheadRaf = 0;
+      let playheadDrag = null, seekTimer = 0, pendingSeekTime = null, playheadRaf = 0, isTimelineScrubbing = false;
       let userChangedTrim = false, videoReverseTimer = 0, videoPingPongDirection = 1;
       let animationDecoder = null, animationFrameDurations = [], animationFrameStarts = [];
       let animationFrameIndex = 0, animationDirection = 1, animationPlaying = false, animationTimer = 0, animationGeneration = 0;
@@ -2768,7 +2768,7 @@
         if (info.kind === 'video' && !media.paused) {
           await new Promise(resolve => media.addEventListener('pause', resolve, { once: true }));
         }
-        while (info.kind === 'animation' && animationPlaying && !done) {
+        while ((isTimelineScrubbing || (info.kind === 'animation' && animationPlaying)) && !done) {
           await new Promise(resolve => window.setTimeout(resolve, 40));
         }
         if (!done) await new Promise(resolve => window.setTimeout(resolve, 0));
@@ -2833,6 +2833,9 @@
           if (!context) return;
           for (let i = 0; i < count; i++) {
             if (done || run !== storyboardRun) return;
+            await waitForPreviewIdle();
+            if (done || run !== storyboardRun) return;
+            if (isTimelineScrubbing) { i--; continue; }
             const time = duration <= 0 ? 0 : duration * i / Math.max(1, count - 1);
             if (Math.abs((Number(probe.currentTime) || 0) - time) > 0.015) {
               const seeked = waitForEvent('seeked', 2200);
@@ -2865,7 +2868,8 @@
         for (let i = 0; i < count; i++) {
           if (done || run !== storyboardRun || !animationDecoder) return;
           await waitForPreviewIdle();
-          if (done || run !== storyboardRun || animationPlaying || !animationDecoder) continue;
+          if (done || run !== storyboardRun || !animationDecoder) return;
+          if (isTimelineScrubbing || animationPlaying) { i--; continue; }
           const index = Math.round(i * (animationFrameStarts.length - 1) / Math.max(1, count - 1));
           try {
             const result = await decodeAnimationFrame(index);
@@ -3272,6 +3276,7 @@
       const startTrimDrag = (which, event) => {
         if (event.button !== 0 && event.pointerType !== 'touch') return;
         if (!duration) return;
+        isTimelineScrubbing = true;
         trimDrag = { which, pointerId: event.pointerId };
         try { event.currentTarget.setPointerCapture(event.pointerId); } catch (_) {}
         event.preventDefault();
@@ -3293,7 +3298,10 @@
       const finishTimelineDrag = event => {
         if (trimDrag && (!event || event.pointerId === trimDrag.pointerId)) trimDrag = null;
         if (playheadDrag && (!event || event.pointerId === playheadDrag.pointerId)) playheadDrag = null;
-        if (!trimDrag && !playheadDrag) flushPendingPreviewSeek(false);
+        if (!trimDrag && !playheadDrag) {
+          isTimelineScrubbing = false;
+          flushPendingPreviewSeek(false);
+        }
       };
       timelineTrack.addEventListener('pointerup', finishTimelineDrag);
       timelineTrack.addEventListener('pointercancel', finishTimelineDrag);
@@ -3319,6 +3327,7 @@
         if (!duration || (event.button !== 0 && event.pointerType !== 'touch')) return;
         const rect = timelineTrack.getBoundingClientRect();
         if (!rect.width) return;
+        isTimelineScrubbing = true;
         playheadDrag = { pointerId: event.pointerId };
         try { timelineTrack.setPointerCapture(event.pointerId); } catch (_) {}
         seekPreviewTime(Math.max(0, Math.min(duration, (event.clientX - rect.left) / rect.width * duration)));
