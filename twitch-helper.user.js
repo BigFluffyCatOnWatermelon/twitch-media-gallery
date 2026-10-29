@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.55
+// @version      5.9.56
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,8 +37,8 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.55';
-  const VERSION = 10;
+  const APP_VERSION = '5.9.56';
+  const VERSION = 11;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
@@ -790,7 +790,7 @@
     const ext = (String(file.name || '').match(/\.([a-z0-9]+)$/i) || ['', ''])[1].toLowerCase();
     const map = {
       jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp',
-      avif: 'image/avif', bmp: 'image/bmp', svg: 'image/svg+xml',
+      avif: 'image/avif', apng: 'image/png', bmp: 'image/bmp', svg: 'image/svg+xml',
       mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm',
       mkv: 'video/x-matroska', avi: 'video/x-msvideo', ogv: 'video/ogg', mpg: 'video/mpeg', mpeg: 'video/mpeg'
     };
@@ -1840,7 +1840,7 @@
     return worker;
   }
 
-  async function ffmpegMediaToFormat(file, outputFormat, maxWidth = loadConfig().maxWidth, compression = loadConfig().compression, runId = null, compressEnabled = true) {
+  async function ffmpegMediaToFormat(file, outputFormat, maxWidth = loadConfig().maxWidth, compression = loadConfig().compression, runId = null, compressEnabled = true, rawEditOptions = null) {
     if (!file || !file.size) throw new Error('Файл пустой.');
     const inputExt = fileExtension(file).replace(/[^a-z0-9]/gi, '') || 'bin';
     const validFormats = ['webp', 'gif', 'jpg', 'png', 'mp4', 'webm'];
@@ -1871,8 +1871,14 @@
     const inputName = 'input_' + id + '.' + inputExt;
     const outputPath = 'output_' + id + '.' + outputFormat;
     const mime = mimeFromFile(file);
-    const sourceIsGif = mime === 'image/gif' || originalName.toLowerCase().endsWith('.gif');
-    const sourceIsStillImage = mime.startsWith('image/') && !sourceIsGif;
+    const extension = fileExtension(file).toLowerCase();
+    const sourceIsGif = mime === 'image/gif' || extension === 'gif';
+    const sourceIsAnimatedWebP = await isAnimatedWebP(file);
+    const sourceIsAnimatedPng = (mime === 'image/png' || extension === 'apng' || extension === 'png')
+      ? await isAnimatedPng(file) : false;
+    const sourceIsAnimation = sourceIsGif || sourceIsAnimatedWebP || sourceIsAnimatedPng;
+    const sourceIsStillImage = mime.startsWith('image/') && !sourceIsAnimation;
+    const editOptions = rawEditOptions ? normalizeMediaEditOptions(rawEditOptions) : null;
     const outputIsVideo = outputFormat === 'mp4' || outputFormat === 'webm';
     const scaleFilter = compressEnabled
       ? 'scale=' + width + ':' + width + ':force_original_aspect_ratio=decrease:force_divisible_by=2:flags=' + scaleMethod
@@ -1888,6 +1894,45 @@
         ? ['-b:v', videoBitrate + 'k', '-maxrate', Math.round(videoBitrate * 1.25) + 'k', '-bufsize', (videoBitrate * 2) + 'k']
         : ['-crf', String(videoCrf), '-b:v', '0']);
     const args = [];
+    const videoTransformFilters = [];
+    const audioTransformFilters = [];
+    if (editOptions) {
+      const selectedDuration = Math.max(0, editOptions.end - editOptions.start);
+      if (editOptions.duration > 0 && selectedDuration > 0 &&
+          (editOptions.start > 0.03 || editOptions.end < editOptions.duration - 0.03)) {
+        videoTransformFilters.push('trim=start=' + editOptions.start.toFixed(3) + ':duration=' + selectedDuration.toFixed(3));
+        audioTransformFilters.push('atrim=start=' + editOptions.start.toFixed(3) + ':duration=' + selectedDuration.toFixed(3));
+      }
+      videoTransformFilters.push('setpts=(PTS-STARTPTS)/' + editOptions.speed.toFixed(3));
+      if (editOptions.crop.x > 0.5 || editOptions.crop.y > 0.5 ||
+          editOptions.crop.w < 99.5 || editOptions.crop.h < 99.5) {
+        const x = (editOptions.crop.x / 100).toFixed(5);
+        const y = (editOptions.crop.y / 100).toFixed(5);
+        const w = (editOptions.crop.w / 100).toFixed(5);
+        const h = (editOptions.crop.h / 100).toFixed(5);
+        videoTransformFilters.push(
+          'crop=trunc(iw*' + w + '/2)*2:trunc(ih*' + h + '/2)*2:' +
+          'trunc(iw*' + x + '/2)*2:trunc(ih*' + y + '/2)*2'
+        );
+      }
+      if (editOptions.speed !== 1) {
+        audioTransformFilters.push('asetpts=PTS-STARTPTS');
+        let tempo = editOptions.speed;
+        while (tempo < 0.5 - 0.0001) {
+          audioTransformFilters.push('atempo=0.5');
+          tempo /= 0.5;
+        }
+        while (tempo > 2 + 0.0001) {
+          audioTransformFilters.push('atempo=2');
+          tempo /= 2;
+        }
+        audioTransformFilters.push('atempo=' + tempo.toFixed(3));
+      } else if (audioTransformFilters.length) {
+        audioTransformFilters.push('asetpts=PTS-STARTPTS');
+      }
+    }
+    const videoFiltersWithCompression = extra => videoTransformFilters.concat(extra || []);
+    const outputLoopCount = editOptions && editOptions.loop === false ? '-1' : '0';
 
     // When a still image is sent to a video container, create a short 2s clip.
     if (outputIsVideo && sourceIsStillImage) {
@@ -1897,10 +1942,10 @@
     }
 
     if (outputFormat === 'gif') {
-      const gifFilter = compressEnabled
-        ? '[0:v]fps=' + animationFps + ',' + scaleFilter + ',split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:diff_mode=rectangle'
-        : '[0:v]split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:diff_mode=rectangle';
-      args.push('-filter_complex', gifFilter, '-loop', '0', outputPath);
+      const gifFilters = videoFiltersWithCompression(compressEnabled ? ['fps=' + animationFps, scaleFilter] : []);
+      const gifFilter = '[0:v]' + gifFilters.concat(['split[s0][s1]']).join(',') +
+        ';[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:diff_mode=rectangle';
+      args.push('-filter_complex', gifFilter, '-loop', outputLoopCount, outputPath);
     } else if (outputFormat === 'webp') {
       if (sourceIsStillImage) {
         args.push(
@@ -1910,11 +1955,12 @@
           '-compression_level', String(webpCompressionLevel), outputPath
         );
       } else {
+        const webpFilters = videoFiltersWithCompression(compressEnabled ? ['fps=' + animationFps, scaleFilter] : []);
         args.push(
-          ...(compressEnabled ? ['-vf', 'fps=' + animationFps + ',' + scaleFilter] : []),
+          ...(webpFilters.length ? ['-vf', webpFilters.join(',')] : []),
           '-an', '-c:v', 'libwebp',
           ...(compressEnabled ? ['-quality', String(animationQuality)] : ['-lossless', '1']),
-          '-compression_level', String(webpCompressionLevel), '-loop', '0', outputPath
+          '-compression_level', String(webpCompressionLevel), '-loop', outputLoopCount, outputPath
         );
       }
     } else if (outputFormat === 'jpg') {
@@ -1926,16 +1972,20 @@
     } else if (outputFormat === 'png') {
       args.push(...(compressEnabled ? ['-vf', scaleFilter] : []), '-frames:v', '1', outputPath);
     } else if (outputFormat === 'mp4') {
+      const videoFilters = videoFiltersWithCompression(compressEnabled ? ['fps=' + videoFps, scaleFilter] : []);
       args.push(
-        ...(compressEnabled ? ['-vf', 'fps=' + videoFps + ',' + scaleFilter] : []),
+        ...(videoFilters.length ? ['-vf', videoFilters.join(',')] : []),
+        ...(audioTransformFilters.length ? ['-af', audioTransformFilters.join(',')] : []),
         '-c:v', 'libx264', '-preset', compressEnabled ? speedPreset : 'medium',
         ...videoRateArgs,
         '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
         '-c:a', 'aac', '-b:a', (compressEnabled ? audioBitrate : 320) + 'k', outputPath
       );
     } else if (outputFormat === 'webm') {
+      const videoFilters = videoFiltersWithCompression(compressEnabled ? ['fps=' + videoFps, scaleFilter] : []);
       args.push(
-        ...(compressEnabled ? ['-vf', 'fps=' + videoFps + ',' + scaleFilter] : []),
+        ...(videoFilters.length ? ['-vf', videoFilters.join(',')] : []),
+        ...(audioTransformFilters.length ? ['-af', audioTransformFilters.join(',')] : []),
         '-c:v', 'libvpx', '-deadline', compressEnabled ? 'realtime' : 'good',
         '-cpu-used', String(compressEnabled ? cpuUsed : 0),
         ...webmRateArgs,
@@ -2641,23 +2691,49 @@
     return info ? openMediaEditor(file, runId, info) : undefined;
   }
 
-  async function prepareUpload(file, runId = null, compressEnabled = isCompressionEnabled()) {
+  async function prepareUpload(file, runId = null, compressEnabled = isCompressionEnabled(), suppliedEditOptions = undefined) {
     ensureProcessingRun(runId);
     if (!file || !file.size) throw new Error('Файл пустой.');
     if (file.size > MAX_FILE_BYTES) throw new Error('Файл больше ' + formatBytes(MAX_FILE_BYTES) + '. Уменьши его перед загрузкой.');
     const mime = mimeFromFile(file);
     if (!mime || (!mime.startsWith('image/') && !mime.startsWith('video/'))) throw new Error('Поддерживаются изображения, GIF и видео.');
+
+    const extension = fileExtension(file).toLowerCase();
     const animatedWebP = await isAnimatedWebP(file);
+    const animatedPng = !animatedWebP && (mime === 'image/png' || extension === 'apng' || extension === 'png')
+      ? await isAnimatedPng(file) : false;
     ensureProcessingRun(runId);
+
     const config = loadConfig();
     const category = mime.startsWith('video/') ? 'video'
-      : (mime === 'image/gif' || animatedWebP || String(file.name || '').toLowerCase().endsWith('.gif') ? 'gif' : 'image');
-    const target = config.conversionRules[category] || 'keep';
+      : (mime === 'image/gif' || animatedWebP || animatedPng || ['gif', 'apng'].includes(extension) ? 'gif' : 'image');
+    const configuredTarget = config.conversionRules[category] || 'keep';
+    let editOptions = suppliedEditOptions;
+
+    if (editOptions === undefined) {
+      editOptions = await requestMediaEditIfEnabled(file, runId);
+      ensureProcessingRun(runId);
+      if (editOptions === null) {
+        setStatus('Редактирование отменено — текущий файл пропущен.', 'info');
+        return null;
+      }
+    }
+
+    let target = configuredTarget;
+    if (editOptions) {
+      const editedFormat = getEditedOutputFormat(file, category, animatedWebP, configuredTarget);
+      if (mediaEditHasChanges(editOptions, editedFormat)) {
+        target = editedFormat;
+      } else {
+        // Accepting without edits does not force a lossy transcode.
+        editOptions = null;
+      }
+    }
     if (target === 'keep') return file;
 
-    // Preserve animation but re-encode its individual frame patches in-browser.
-    // This avoids the static-image Canvas path that would keep only frame one.
-    if (animatedWebP) {
+    // The animated-WebP size optimizer cannot apply temporal transforms. Only use it
+    // when the editor is off or the user accepted without changing anything.
+    if (animatedWebP && !editOptions) {
       if (target === 'webp') {
         if (!compressEnabled) {
           setStatus('Анимированный WebP: исходный размер сохранён (сжатие отключено).', 'info');
@@ -2687,9 +2763,7 @@
       throw new Error('Это анимированный WebP. Чтобы сохранить анимацию, выбери целевой формат WebP или «Оставить исходный формат».');
     }
 
-    // Still images use the browser's native Canvas encoder (usually much faster than WASM).
-    // Animated GIFs and videos remain on FFmpeg to preserve animation and time-based output.
-    if (compressEnabled && category === 'image' && ['webp', 'png', 'jpg'].includes(target)) {
+    if (!editOptions && compressEnabled && category === 'image' && ['webp', 'png', 'jpg'].includes(target)) {
       try {
         setStatus('Конвертирую изображение встроенными средствами браузера…', 'info', true);
         setProgress(null, true);
@@ -2702,7 +2776,7 @@
       }
     }
     const conversionWidth = category === 'video' ? config.compression.videoMaxWidth : config.maxWidth;
-    return ffmpegMediaToFormat(file, target, conversionWidth, config.compression, runId, compressEnabled);
+    return ffmpegMediaToFormat(file, target, conversionWidth, config.compression, runId, compressEnabled, editOptions);
   }
 
 
@@ -3417,7 +3491,33 @@
 
     if (sevenTvHost) {
       const previewUrl = sevenTv ? sevenTv.url : originalUrl;
-      const type = sevenTv ? sevenTv.type : mediaTypeFromUrl(originalUrl);
+      let type = sevenTv ? sevenTv.type : mediaTypeFromUrl(originalUrl);
+      if (isMediaEditorEnabled() && /\.(?:gif|apng|webp|mp4|webm|mov|m4v|mkv|avi|ogv|mpg|mpeg)(?:$|[?#])/i.test(previewUrl)) {
+        try {
+          const blob = await requestBlob(previewUrl, 180000, true);
+          ensureProcessingRun(runId);
+          if (!blob || !blob.size) throw new Error('Ссылка вернула пустой файл.');
+          if (blob.size > MAX_FILE_BYTES) throw new Error('Файл больше ' + formatBytes(MAX_FILE_BYTES) + '.');
+          const file = createLinkedMediaFile(previewUrl, blob, hintedName);
+          const info = await getEditableMediaInfo(file);
+          ensureProcessingRun(runId);
+          if (info) {
+            const edits = await openMediaEditor(file, runId, info);
+            ensureProcessingRun(runId);
+            if (edits === null) return false;
+            const config = loadConfig();
+            const category = info.kind === 'video' ? 'video' : 'gif';
+            const outFormat = getEditedOutputFormat(file, category, info.animationFormat === 'webp', config.conversionRules[category] || 'keep');
+            if (edits && mediaEditHasChanges(edits, outFormat)) {
+              return processSingleFile(file, '', runId, compressEnabled, edits);
+            }
+            if (info.kind === 'animation') type = 'gif';
+          }
+        } catch (error) {
+          if (error?.name === 'AbortError' || !isProcessingRunCurrent(runId)) throw error;
+          logDebug('Could not prepare 7TV media editor preview; keeping direct URL', error.message || error);
+        }
+      }
       if (type !== 'video') await waitForImage(previewUrl);
       ensureProcessingRun(runId);
       return addItem(originalUrl, hintedName, type, '', previewUrl);
@@ -3432,9 +3532,29 @@
       const config = loadConfig();
       if ((config.conversionRules[pathCategory] || 'keep') === 'keep') {
         let type = mediaTypeFromMime(pathMime);
+        const editorCandidate = isMediaEditorEnabled() &&
+          (pathCategory === 'video' || pathCategory === 'gif' || /\.(?:webp|apng)(?:$|[?#])/i.test(originalUrl));
+        if (editorCandidate) {
+          const blob = await requestBlob(originalUrl, 180000, true);
+          ensureProcessingRun(runId);
+          if (!blob || !blob.size) throw new Error('Ссылка вернула пустой файл.');
+          if (blob.size > MAX_FILE_BYTES) throw new Error('Файл больше ' + formatBytes(MAX_FILE_BYTES) + '. Используй ссылку на файл меньшего размера.');
+          const file = createLinkedMediaFile(originalUrl, blob, hintedName);
+          const info = await getEditableMediaInfo(file);
+          ensureProcessingRun(runId);
+          if (info) {
+            const edits = await openMediaEditor(file, runId, info);
+            ensureProcessingRun(runId);
+            if (edits === null) return false;
+            const outFormat = getEditedOutputFormat(file, info.kind === 'video' ? 'video' : 'gif',
+              info.animationFormat === 'webp', config.conversionRules[pathCategory] || 'keep');
+            if (edits && mediaEditHasChanges(edits, outFormat)) {
+              return processSingleFile(file, sourceKey, runId, compressEnabled, edits);
+            }
+            if (info.kind === 'animation') type = 'gif';
+          }
+        }
         if (type !== 'video') await waitForImage(originalUrl);
-        // Inspect WebP links during import so animated WebP is classified as animation
-        // even if the item has never been hovered in the gallery.
         if (type === 'image' && /\.webp$/i.test(pathName)) {
           await resolveAnimatedWebPDuration({ url: originalUrl, previewUrl: originalUrl, name: hintedName }, originalUrl);
           if (animatedWebPStatusCache.get(originalUrl) === true) type = 'gif';
@@ -3471,6 +3591,7 @@
     setProgress(8, true);
     const prepared = await prepareUpload(file, runId, compressEnabled);
     ensureProcessingRun(runId);
+    if (!prepared) return false;
     setProgress(65, true);
     setStatus('Загружаю обработанное медиа на kappa.lol…', 'info', true);
     setProgress(null, true);
@@ -3493,14 +3614,18 @@
     return [String(file.name || ''), String(file.size || 0), String(file.lastModified || 0), String(file.type || '')].join('|');
   }
 
-  async function processSingleFile(file, sourceKey, runId, compressEnabled = isCompressionEnabled()) {
+  async function processSingleFile(file, sourceKey, runId, compressEnabled = isCompressionEnabled(), suppliedEditOptions = undefined) {
     setProgress(0, true);
     try {
       ensureProcessingRun(runId);
       setStatus('Подготавливаю «' + (file.name || 'медиа') + '»…', 'info', true);
       setProgress(4, true);
-      const prepared = await prepareUpload(file, runId, compressEnabled);
+      const prepared = await prepareUpload(file, runId, compressEnabled, suppliedEditOptions);
       ensureProcessingRun(runId);
+      if (!prepared) {
+        setStatus('Медиа пропущено: редактирование отменено.', 'info');
+        return false;
+      }
       setProgress(65, true);
       setStatus('Загружаю «' + (prepared.name || file.name) + '» на kappa.lol…', 'info', true);
       // Upload byte progress is not consistently exposed by userscript managers,
