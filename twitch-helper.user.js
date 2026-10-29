@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.60
+// @version      5.9.61
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,8 +37,8 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.60';
-  const VERSION = 15;
+  const APP_VERSION = '5.9.61';
+  const VERSION = 16;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
@@ -196,6 +196,7 @@
   }
 
   const SVG_GALLERY = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="13" height="14" rx="2"></rect><path d="M8 6V4.8A1.8 1.8 0 0 1 9.8 3h9.4A1.8 1.8 0 0 1 21 4.8v10.4a1.8 1.8 0 0 1-1.8 1.8H16"></path><circle cx="7.5" cy="10.5" r="1.3"></circle><path d="m4 17 4.2-4 2.5 2 1.8-1.5 1.5 1.4"></path></svg>';
+  const SVG_CROP = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v13a2 2 0 0 0 2 2h13"></path><path d="M18 21V8a2 2 0 0 0-2-2H3"></path><path d="M8 3v5M3 8h5M16 16h5M16 16v5"></path></svg>';
   const SVG_SETTINGS = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33h-.08a1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82v-.08a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1v-.08a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.08a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>';
   const SVG_CLOSE = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>';
   const SVG_SEARCH = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m16 16 4.2 4.2"></path></svg>';
@@ -2318,7 +2319,9 @@
   }
 
   function isMediaEditorEnabled() {
-    try { return GM_getValue(MEDIA_EDITOR_ENABLED_KEY, false) === true; } catch (_) { return false; }
+    // Editor is now launched explicitly from its toolbar icon, never as a surprise
+    // side effect of importing files through the normal gallery workflow.
+    return false;
   }
 
   function isAnimatedPng(file) {
@@ -2475,7 +2478,16 @@
     const st = document.createElement('style');
     st.id = 'twgif-media-editor-styles';
     st.textContent = [
-      '#twgif-media-editor-overlay{position:fixed;inset:0;z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:20px;background:#07070acc;backdrop-filter:blur(12px);color:#f4f4f5;font:13px/1.45 Inter,system-ui,sans-serif}',
+      '#twgif-media-editor-overlay,#twgif-media-import-overlay{position:fixed;inset:0;z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:20px;background:#07070acc;backdrop-filter:blur(12px);color:#f4f4f5;font:13px/1.45 Inter,system-ui,sans-serif}',
+      '#twgif-media-import-overlay .twgif-media-import{width:min(760px,100%);max-height:92vh;overflow:auto;border:1px solid #373741;border-radius:18px;background:linear-gradient(145deg,#1b1b22,#101014);box-shadow:0 30px 100px #000b}',
+      '.twgif-media-import-body{padding:22px}.twgif-media-import-drop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-height:285px;padding:24px;border:1px dashed #65517f;border-radius:15px;background:radial-gradient(ellipse at 50% 35%,#9a53ff14,#ffffff03);text-align:center;cursor:pointer;transition:border-color .16s,background .16s,transform .16s}',
+      '.twgif-media-import-drop.is-dragging{border-color:#c4a2ff;background:#9147ff22;transform:scale(1.005)}.twgif-media-import-drop strong{font-size:15px;color:#f5f0ff}.twgif-media-import-drop>span{color:#a8a8b6;font-size:11px}',
+      '.twgif-media-import-icon{display:grid;place-items:center;width:68px;height:68px;border:1px solid #a970ff3d;border-radius:19px;background:#9147ff14;color:#c7a5ff}.twgif-media-import-limit{margin-top:3px;color:#7f7f8c;font-size:10px}',
+      '.twgif-media-import-divider{display:flex;align-items:center;gap:12px;margin:22px 0;color:#858591;font-size:10px}.twgif-media-import-divider:before,.twgif-media-import-divider:after{content:"";height:1px;flex:1;background:#ffffff14}',
+      '.twgif-media-import-url label{display:block;margin-bottom:7px;color:#c7c7d2;font-size:11px;font-weight:650}.twgif-media-import-url-row{display:flex;gap:8px}.twgif-media-import-url-row input{flex:1;min-width:0;padding:11px 12px;border:1px solid #3b3b46;border-radius:10px;background:#17171d;color:#f4f4f5;font:inherit;font-size:12px;outline:none}.twgif-media-import-url-row input:focus{border-color:#a970ff;box-shadow:0 0 0 3px #9147ff24}',
+      '.twgif-media-import-status{margin-top:9px;color:#8d8d9a;font-size:10px}.twgif-media-import-status.is-error{color:#ff8e9a}',
+      '#twgif-media-editor-overlay[hidden],#twgif-media-import-overlay[hidden]{display:none!important}',
+      '@media(max-width:650px){#twgif-media-import-overlay{padding:8px;align-items:flex-start}#twgif-media-import-overlay .twgif-media-import{max-height:calc(100vh - 16px)}.twgif-media-import-body{padding:12px}.twgif-media-import-drop{min-height:230px;padding:17px}.twgif-media-import-url-row{flex-direction:column}.twgif-media-import-url-row .twgif-editor-btn{width:100%}}',
       '#twgif-media-editor{width:min(1120px,100%);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;border:1px solid #373741;border-radius:18px;background:linear-gradient(145deg,#1b1b22,#101014);box-shadow:0 30px 100px #000b}',
       '.twgif-editor-header{display:flex;justify-content:space-between;gap:14px;padding:18px 22px;border-bottom:1px solid #ffffff12}.twgif-editor-eyebrow{color:#bd9bff;font-size:10px;font-weight:800;letter-spacing:.15em;text-transform:uppercase}',
       '.twgif-editor-title{margin:5px 0;font-size:21px;letter-spacing:-.03em}.twgif-editor-subtitle{margin:5px 0;color:#a3a3af;font-size:12px}.twgif-editor-safe{display:block;margin-top:8px;color:#8fe0b3;font-size:10px}',
@@ -2968,11 +2980,190 @@
     });
   }
 
+  function openMediaEditorImportDialog() {
+    if (activeProcessingRunId) {
+      setStatus('Сначала дождись завершения текущей обработки или отмени её значком стоп.', 'info');
+      return;
+    }
+    ensureMediaEditorStyles();
+    const overlay = document.createElement('div');
+    overlay.id = 'twgif-media-import-overlay';
+    overlay.innerHTML = [
+      '<section class="twgif-media-import" role="dialog" aria-modal="true" aria-labelledby="twgif-media-import-title">',
+      '<header class="twgif-editor-header"><div><span class="twgif-editor-eyebrow">Редактор · загрузка источника</span><h2 id="twgif-media-import-title" class="twgif-editor-title">Что будем редактировать?</h2>',
+      '<p class="twgif-editor-subtitle">Перетащи видео или анимацию сюда, выбери файл на компьютере или вставь прямую ссылку на медиафайл.</p></div>',
+      '<button class="twgif-editor-close" type="button" data-import-close aria-label="Закрыть">×</button></header>',
+      '<div class="twgif-media-import-body"><div class="twgif-media-import-drop" data-import-drop role="button" tabindex="0">',
+      '<div class="twgif-media-import-icon"><svg viewBox="0 0 48 48" width="42" height="42" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="34" height="34" rx="10"></rect><path d="M24 31V17M18 23l6-6 6 6"></path></svg></div>',
+      '<strong>Перетащи файл сюда</strong><span>Видео · GIF · анимированный WebP · APNG</span>',
+      '<button type="button" class="twgif-editor-btn twgif-editor-btn-primary" data-import-browse>Выбрать на компьютере</button>',
+      '<span class="twgif-media-import-limit">Файл обрабатывается локально до загрузки результата</span></div>',
+      '<div class="twgif-media-import-divider"><span>или открой по прямой ссылке</span></div>',
+      '<form class="twgif-media-import-url" data-import-url-form><label for="twgif-media-import-url">Ссылка на видео или анимацию</label>',
+      '<div class="twgif-media-import-url-row"><input id="twgif-media-import-url" data-import-url type="url" inputmode="url" placeholder="https://example.com/clip.mp4" autocomplete="url" required>',
+      '<button class="twgif-editor-btn twgif-editor-btn-primary" type="submit" data-import-url-submit>Открыть ссылку →</button></div>',
+      '<div class="twgif-media-import-status" data-import-status aria-live="polite">Поддерживаются прямые ссылки на файлы, не страницы сайтов.</div></form></div></section>'
+    ].join('');
+    document.body.appendChild(overlay);
+
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = 'video/*,image/gif,image/webp,image/png,.apng';
+    fileInput.hidden = true;
+    overlay.appendChild(fileInput);
+
+    const dropZone = overlay.querySelector('[data-import-drop]');
+    const browseButton = overlay.querySelector('[data-import-browse]');
+    const urlForm = overlay.querySelector('[data-import-url-form]');
+    const urlInput = overlay.querySelector('[data-import-url]');
+    const status = overlay.querySelector('[data-import-status]');
+    const submitButton = overlay.querySelector('[data-import-url-submit]');
+    let closed = false;
+    let busy = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      overlay.remove();
+    };
+    const setStatus = (message, isError = false) => {
+      status.textContent = message;
+      status.classList.toggle('is-error', Boolean(isError));
+    };
+    const looksLikeFile = event => {
+      const transfer = event.dataTransfer;
+      return Boolean(transfer && (
+        Array.from(transfer.types || []).some(type => String(type).toLowerCase() === 'files') ||
+        Array.from(transfer.items || []).some(item => item && item.kind === 'file')
+      ));
+    };
+    const handoffFile = async file => {
+      if (busy || closed) return;
+      if (!file || !file.size) {
+        setStatus('Файл пустой или не читается.', true);
+        return;
+      }
+      if (file.size > MAX_FILE_BYTES) {
+        setStatus('Файл больше ' + formatBytes(MAX_FILE_BYTES) + '. Выбери файл меньшего размера.', true);
+        return;
+      }
+      busy = true;
+      browseButton.disabled = true;
+      submitButton.disabled = true;
+      setStatus('Проверяю формат и подготавливаю предпросмотр…');
+      try {
+        const info = await getEditableMediaInfo(file);
+        if (closed) return;
+        if (!info) throw new Error('Нужен видеофайл или анимация: GIF, анимированный WebP либо APNG.');
+        close();
+        const editorRunId = processingRunId;
+        const edits = await openMediaEditor(file, editorRunId, info);
+        if (edits === null) return;
+        await processFiles([file], edits);
+      } catch (error) {
+        if (closed) {
+          logDebug('Editor import failed after dialog handoff', error?.message || error);
+          setStatus((error && error.message) || 'Не удалось открыть медиа.', true);
+          return;
+        }
+        setStatus((error && error.message) || 'Не удалось открыть медиа.', true);
+      } finally {
+        if (!closed) {
+          busy = false;
+          browseButton.disabled = false;
+          submitButton.disabled = false;
+        }
+      }
+    };
+    const loadUrl = async raw => {
+      if (busy || closed) return;
+      let parsed;
+      try {
+        parsed = new URL(String(raw || '').trim());
+      } catch (_) {
+        setStatus('Вставь корректную ссылку, начинающуюся с https:// или http://.', true);
+        return;
+      }
+      if (!/^https?:$/.test(parsed.protocol)) {
+        setStatus('Разрешены только HTTP- и HTTPS-ссылки.', true);
+        return;
+      }
+      busy = true;
+      submitButton.disabled = true;
+      browseButton.disabled = true;
+      setStatus('Скачиваю медиа по ссылке…');
+      try {
+        const blob = await requestBlob(parsed.href, 180000, false);
+        if (closed) return;
+        if (!blob || !blob.size) throw new Error('Ссылка вернула пустой файл.');
+        if (blob.size > MAX_FILE_BYTES) throw new Error('Файл больше ' + formatBytes(MAX_FILE_BYTES) + '.');
+        const file = createLinkedMediaFile(parsed.href, blob);
+        await handoffFile(file);
+      } catch (error) {
+        if (!closed) setStatus((error && error.message) || 'Не удалось скачать медиа по ссылке.', true);
+      } finally {
+        if (!closed) {
+          busy = false;
+          submitButton.disabled = false;
+          browseButton.disabled = false;
+        }
+      }
+    };
+
+    browseButton.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('click', event => {
+      if (event.target.closest('button')) return;
+      fileInput.click();
+    });
+    dropZone.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        fileInput.click();
+      }
+    });
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (file) handoffFile(file);
+      fileInput.value = '';
+    });
+    dropZone.addEventListener('dragenter', event => {
+      if (!looksLikeFile(event)) return;
+      event.preventDefault();
+      dropZone.classList.add('is-dragging');
+    });
+    dropZone.addEventListener('dragover', event => {
+      if (!looksLikeFile(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+      dropZone.classList.add('is-dragging');
+    });
+    dropZone.addEventListener('dragleave', event => {
+      if (event.relatedTarget && dropZone.contains(event.relatedTarget)) return;
+      dropZone.classList.remove('is-dragging');
+    });
+    dropZone.addEventListener('drop', event => {
+      if (!looksLikeFile(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      dropZone.classList.remove('is-dragging');
+      const file = event.dataTransfer.files && event.dataTransfer.files[0];
+      if (file) handoffFile(file);
+    });
+    urlForm.addEventListener('submit', event => {
+      event.preventDefault();
+      loadUrl(urlInput.value);
+    });
+    overlay.querySelectorAll('[data-import-close]').forEach(button => button.addEventListener('click', close));
+    overlay.addEventListener('pointerdown', event => { if (event.target === overlay) close(); });
+    document.addEventListener('keydown', function closeOnEscape(event) {
+      if (event.key === 'Escape' && !closed) {
+        document.removeEventListener('keydown', closeOnEscape, true);
+        close();
+      }
+    }, true);
+  }
+
   async function requestMediaEditIfEnabled(file, runId) {
-    if (!isMediaEditorEnabled()) return undefined;
-    const info = await getEditableMediaInfo(file);
-    ensureProcessingRun(runId);
-    return info ? openMediaEditor(file, runId, info) : undefined;
+    return undefined;
   }
 
   async function prepareUpload(file, runId = null, compressEnabled = isCompressionEnabled(), suppliedEditOptions = undefined) {
@@ -3953,7 +4144,7 @@
 
 
 
-  async function processFiles(fileList) {
+  async function processFiles(fileList, suppliedEditOptions = undefined) {
     const files = Array.from(fileList || []).filter(file => {
       const mime = mimeFromFile(file);
       return mime.startsWith('image/') || mime.startsWith('video/');
@@ -3999,7 +4190,7 @@
 
         // Register before the first await so a bubbling/duplicate event cannot
         // create a second converter job and a second Kappa upload.
-        const task = processSingleFile(file, key, runId, compressEnabled);
+        const task = processSingleFile(file, key, runId, compressEnabled, suppliedEditOptions);
         processingFiles.set(key, task);
         let succeeded = false;
         try {
@@ -4491,6 +4682,10 @@
     const style = document.createElement('style');
     style.id = 'twgif-style';
     style.textContent = `
+      #twgif-editor-trigger{appearance:none!important;border:0!important;background:transparent!important;color:var(--color-text-base,#efeff1)!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important;margin:0 2px!important;padding:0!important;align-self:center!important;vertical-align:middle!important;box-sizing:border-box!important;position:fixed!important;left:var(--twgif-editor-trigger-left,0px)!important;top:var(--twgif-editor-trigger-top,0px)!important;z-index:2147482500!important;transform:none!important;border-radius:50%!important;overflow:hidden!important;cursor:pointer!important;line-height:1!important}
+      #twgif-editor-trigger.twgif-editor-inline-trigger{position:relative!important;left:auto!important;top:auto!important;z-index:2!important;transform:none!important;align-self:center!important;margin:0 2px!important}
+      #twgif-editor-trigger:hover{background:var(--color-background-button-text-hover,#2b2b2f)!important;color:var(--color-text-link,#bf94ff)!important}
+      #twgif-editor-trigger svg{display:block;width:18px;height:18px;flex:0 0 18px;pointer-events:none}
       #twgif-trigger{appearance:none!important;border:0!important;background:transparent!important;color:var(--color-text-base,#efeff1)!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important;margin:0!important;padding:0!important;align-self:center!important;vertical-align:middle!important;box-sizing:border-box!important;position:fixed!important;left:var(--twgif-trigger-left,0px)!important;top:var(--twgif-trigger-top,0px)!important;z-index:2147482500!important;transform:none!important;border-radius:50%!important;overflow:hidden!important;cursor:pointer!important;line-height:1!important}
       #twgif-trigger.twgif-inline-trigger{position:relative!important;left:auto!important;top:auto!important;z-index:2!important;transform:none!important;align-self:center!important;margin:0 3px!important;border-radius:50%!important}
       #twgif-trigger.twgif-inline-twitch{flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important}
@@ -4995,6 +5190,51 @@
     return button;
   }
 
+  function createEditorTrigger() {
+    const button = document.createElement('button');
+    button.id = 'twgif-editor-trigger';
+    button.type = 'button';
+    button.className = 'twgif-editor-trigger';
+    button.setAttribute('aria-label', 'Открыть редактор видео и анимаций');
+    button.setAttribute('aria-haspopup', 'dialog');
+    button.setAttribute('title', 'Обрезка видео и анимаций');
+    button.innerHTML = SVG_CROP;
+    button.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      openMediaEditorImportDialog();
+    });
+    return button;
+  }
+
+  function ensureCropEditorTrigger(galleryButton, toolbar) {
+    if (!galleryButton) return;
+    let button = document.getElementById('twgif-editor-trigger');
+    if (!button) button = createEditorTrigger();
+
+    if (galleryButton.classList.contains('twgif-inline-trigger') && galleryButton.parentElement) {
+      const parent = galleryButton.parentElement;
+      if (button.parentElement !== parent || button.previousElementSibling !== galleryButton) {
+        parent.insertBefore(button, galleryButton.nextSibling);
+      }
+      button.classList.add('twgif-editor-inline-trigger');
+      button.style.removeProperty('--twgif-editor-trigger-left');
+      button.style.removeProperty('--twgif-editor-trigger-top');
+      return;
+    }
+
+    if (button.parentElement !== document.body) document.body.appendChild(button);
+    const rect = galleryButton.getBoundingClientRect();
+    const size = 32;
+    const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
+    const viewportHeight = Math.max(1, document.documentElement.clientHeight || innerHeight);
+    const left = Math.max(4, Math.min(viewportWidth - size - 4, rect.right + 3));
+    const top = Math.max(4, Math.min(viewportHeight - size - 4, rect.top + (rect.height - size) / 2));
+    button.classList.remove('twgif-editor-inline-trigger');
+    button.style.setProperty('--twgif-editor-trigger-left', Math.round(left) + 'px');
+    button.style.setProperty('--twgif-editor-trigger-top', Math.round(top) + 'px');
+  }
+
   function hideDropsToolbarButtons(toolbar) {
     if (!toolbar || !isTwitchSite()) return;
     const candidates = toolbar.querySelectorAll('button, [role="button"]');
@@ -5148,15 +5388,22 @@
       // the composer. If it is already inside a hidden toolbar it will follow that
       // toolbar naturally; if detached, the observers retry mounting it later.
       mountTwitchTrigger(button, input, toolbar);
+      ensureCropEditorTrigger(button, toolbar);
       return;
     }
 
     // For Kick and w.tv, insert into the actual control row so flex layout reserves
     // space for the icon and neighbouring buttons cannot overlap it.
     if (isWtvSite()) {
-      if (mountInlineTrigger(button, findInlineTriggerTarget(input, toolbar), 'twgif-inline-wtv')) return;
+      if (mountInlineTrigger(button, findInlineTriggerTarget(input, toolbar), 'twgif-inline-wtv')) {
+        ensureCropEditorTrigger(button, toolbar);
+        return;
+      }
     } else if (isKickSite()) {
-      if (mountInlineTrigger(button, findInlineTriggerTarget(input, toolbar), 'twgif-inline-kick')) return;
+      if (mountInlineTrigger(button, findInlineTriggerTarget(input, toolbar), 'twgif-inline-kick')) {
+        ensureCropEditorTrigger(button, toolbar);
+        return;
+      }
     }
 
     button.classList.remove('twgif-inline-trigger', 'twgif-inline-kick', 'twgif-inline-wtv');
@@ -5183,6 +5430,7 @@
     top = Math.max(4, Math.min(viewportHeight - size - 4, top));
     button.style.setProperty('--twgif-trigger-left', Math.round(left) + 'px');
     button.style.setProperty('--twgif-trigger-top', Math.round(top) + 'px');
+    ensureCropEditorTrigger(button, toolbar);
   }
 
   function repositionTrigger() {
@@ -5547,7 +5795,6 @@
       <div class="twgif-toolbar">
         <input id="twgif-url-input" class="twgif-input twgif-url-input" type="url" placeholder="Ссылка или несколько ссылок через пробел…" autocomplete="url" aria-label="Ссылка для добавления">
         <button id="twgif-add-url" class="twgif-small-btn twgif-primary twgif-toolbar-icon" type="button" title="Добавить ссылку" aria-label="Добавить ссылку">+</button>
-        <label class="twgif-compress-toggle" title="Перед добавлением открывать редактор видео и анимаций" for="twgif-media-editor-toggle"><input id="twgif-media-editor-toggle" type="checkbox" ${isMediaEditorEnabled() ? 'checked' : ''}>обрезка</label>
         <label class="twgif-compress-toggle" title="Отключить уменьшение разрешения и ограничение качества" for="twgif-compress-toggle"><input id="twgif-compress-toggle" type="checkbox" ${isCompressionEnabled() ? 'checked' : ''}>сжимать</label>
       </div>
       <div class="twgif-media-filter">
@@ -5568,11 +5815,6 @@
 
     const urlInput = body.querySelector('#twgif-url-input');
     const addButton = body.querySelector('#twgif-add-url');
-    const editorToggle = body.querySelector('#twgif-media-editor-toggle');
-    editorToggle.addEventListener('change', event => {
-      try { GM_setValue(MEDIA_EDITOR_ENABLED_KEY, Boolean(event.currentTarget.checked)); }
-      catch (error) { logDebug('Unable to save media editor preference', error); }
-    });
     const compressToggle = body.querySelector('#twgif-compress-toggle');
     compressToggle.addEventListener('change', event => {
       try { GM_setValue(COMPRESS_ENABLED_KEY, Boolean(event.currentTarget.checked)); }
