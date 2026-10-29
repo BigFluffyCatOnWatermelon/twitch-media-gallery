@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.66
+// @version      5.9.67
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,8 +37,8 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.66';
-  const VERSION = 21;
+  const APP_VERSION = '5.9.67';
+  const VERSION = 22;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
@@ -2944,7 +2944,7 @@
         const wasPlaying = animationPlaying;
         if (animationTimer) clearTimeout(animationTimer);
         animationTimer = 0;
-        animationFrameIndex = findAnimationFrameAt(Math.max(start, Math.min(end, Number(seconds) || 0)));
+        animationFrameIndex = findAnimationFrameAt(Math.max(0, Math.min(duration, Number(seconds) || 0)));
         const generation = ++animationGeneration;
         drawAnimationFrame(animationFrameIndex, generation).then(drawn => {
           if (!drawn) { pauseAnimationPreview(); return; }
@@ -3090,7 +3090,7 @@
         currentLabel.textContent = formatEditorTime(media.currentTime);
         scrub.value = String(media.currentTime);
         updateTimelineControls();
-        if (duration > 0 && media.currentTime >= end - .035 && videoPingPongDirection === 1) {
+        if (!media.paused && duration > 0 && media.currentTime >= end - .035 && videoPingPongDirection === 1) {
           if (loop && end > start + .05) startVideoReverse();
           else { media.pause(); try { media.currentTime = end; } catch (_) {} }
         }
@@ -3116,9 +3116,9 @@
           if (videoReverseTimer) clearTimeout(videoReverseTimer);
           videoReverseTimer = 0;
           videoPingPongDirection = 1;
-          try { media.currentTime = Math.max(start, Math.min(end, value)); } catch (_) {}
+          try { media.currentTime = value; } catch (_) {}
         } else if (animationDecoder) {
-          seekAnimationPreview(Math.max(start, Math.min(end, value)));
+          seekAnimationPreview(value);
         }
         currentLabel.textContent = formatEditorTime(value);
         scrub.value = String(value);
@@ -5505,7 +5505,7 @@
     button.className = 'twgif-editor-trigger';
     button.setAttribute('aria-label', 'Открыть редактор видео и анимаций');
     button.setAttribute('aria-haspopup', 'dialog');
-    button.setAttribute('title', 'Обрезка видео и анимаций');
+    button.removeAttribute('title');
     button.innerHTML = SVG_CROP;
     button.addEventListener('click', event => {
       event.preventDefault();
