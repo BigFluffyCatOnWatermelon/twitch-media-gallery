@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.68
+// @version      5.9.69
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,8 +37,8 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.67';
-  const VERSION = 22;
+  const APP_VERSION = '5.9.69';
+  const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
@@ -2496,12 +2496,21 @@
       Math.abs(e.speed - 1) > .001 || pingPongChanged;
   }
 
+  // A stale full-screen overlay can sit above every control if an earlier script run
+  // was interrupted. Remove orphaned layers before initializing or reopening the editor.
+  function clearStaleMediaEditorOverlays() {
+    document.getElementById('twgif-media-import-overlay')?.remove();
+    document.getElementById('twgif-media-editor-overlay')?.remove();
+  }
+
   function ensureMediaEditorStyles() {
     if (document.getElementById('twgif-media-editor-styles')) return;
     const st = document.createElement('style');
     st.id = 'twgif-media-editor-styles';
     st.textContent = [
-      '#twgif-media-editor-overlay,#twgif-media-import-overlay{position:fixed!important;inset:0!important;z-index:2147483647!important;display:flex;align-items:center;justify-content:center;padding:20px;background:#07070acc;backdrop-filter:blur(12px);color:#f4f4f5;font:13px/1.45 Inter,system-ui,sans-serif;pointer-events:auto!important}',
+      '#twgif-media-editor-overlay,#twgif-media-import-overlay{position:fixed!important;inset:0!important;z-index:2147483647!important;display:flex;align-items:center;justify-content:center;padding:20px;background:#07070acc;backdrop-filter:blur(12px);color:#f4f4f5;font:13px/1.45 Inter,system-ui,sans-serif;pointer-events:auto!important;isolation:isolate!important}',
+      '#twgif-media-editor-overlay > #twgif-media-editor,#twgif-media-import-overlay > .twgif-media-import{position:relative!important;z-index:1!important;pointer-events:auto!important}',
+      '#twgif-media-editor-overlay button,#twgif-media-editor-overlay input,#twgif-media-editor-overlay select,#twgif-media-editor-overlay textarea,#twgif-media-editor-overlay [role=slider],#twgif-media-import-overlay button,#twgif-media-import-overlay input,#twgif-media-import-overlay [role=button]{pointer-events:auto!important}',
       '#twgif-media-import-overlay .twgif-media-import{width:min(760px,100%);max-height:92vh;overflow:auto;border:1px solid #373741;border-radius:18px;background:linear-gradient(145deg,#1b1b22,#101014);box-shadow:0 30px 100px #000b}',
       '.twgif-media-import-body{padding:22px}.twgif-media-import-drop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-height:285px;padding:24px;border:1px dashed #65517f;border-radius:15px;background:radial-gradient(ellipse at 50% 35%,#9a53ff14,#ffffff03);text-align:center;cursor:pointer;transition:border-color .16s,background .16s,transform .16s}',
       '.twgif-media-import-drop.is-dragging{border-color:#c4a2ff;background:#9147ff22;transform:scale(1.005)}.twgif-media-import-drop strong{font-size:15px;color:#f5f0ff}.twgif-media-import-drop>span{color:#a8a8b6;font-size:11px}',
@@ -3289,6 +3298,7 @@
       setStatus('Сначала дождись завершения текущей обработки или отмени её значком стоп.', 'info');
       return;
     }
+    clearStaleMediaEditorOverlays();
     ensureMediaEditorStyles();
     const overlay = document.createElement('div');
     overlay.id = 'twgif-media-import-overlay';
@@ -7256,6 +7266,8 @@
   }
 
   function start() {
+    // Recover from orphaned max-z-index overlays left by an interrupted previous run.
+    clearStaleMediaEditorOverlays();
     // Remove the old chat-toolbar editor icon left by a previously injected script version.
     document.getElementById('twgif-editor-trigger')?.remove();
     buildStyles();
@@ -7286,7 +7298,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.51 started', { href: location.href });
+    logDebug('Userscript v' + APP_VERSION + ' started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
