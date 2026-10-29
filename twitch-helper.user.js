@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.67
+// @version      5.9.68
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -2501,7 +2501,7 @@
     const st = document.createElement('style');
     st.id = 'twgif-media-editor-styles';
     st.textContent = [
-      '#twgif-media-editor-overlay,#twgif-media-import-overlay{position:fixed;inset:0;z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:20px;background:#07070acc;backdrop-filter:blur(12px);color:#f4f4f5;font:13px/1.45 Inter,system-ui,sans-serif}',
+      '#twgif-media-editor-overlay,#twgif-media-import-overlay{position:fixed!important;inset:0!important;z-index:2147483647!important;display:flex;align-items:center;justify-content:center;padding:20px;background:#07070acc;backdrop-filter:blur(12px);color:#f4f4f5;font:13px/1.45 Inter,system-ui,sans-serif;pointer-events:auto!important}',
       '#twgif-media-import-overlay .twgif-media-import{width:min(760px,100%);max-height:92vh;overflow:auto;border:1px solid #373741;border-radius:18px;background:linear-gradient(145deg,#1b1b22,#101014);box-shadow:0 30px 100px #000b}',
       '.twgif-media-import-body{padding:22px}.twgif-media-import-drop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-height:285px;padding:24px;border:1px dashed #65517f;border-radius:15px;background:radial-gradient(ellipse at 50% 35%,#9a53ff14,#ffffff03);text-align:center;cursor:pointer;transition:border-color .16s,background .16s,transform .16s}',
       '.twgif-media-import-drop.is-dragging{border-color:#c4a2ff;background:#9147ff22;transform:scale(1.005)}.twgif-media-import-drop strong{font-size:15px;color:#f5f0ff}.twgif-media-import-drop>span{color:#a8a8b6;font-size:11px}',
@@ -3367,8 +3367,10 @@
         await processFiles([file], edits);
       } catch (error) {
         if (closed) {
+          // If editor setup throws before its controls are wired, never leave an inert full-screen overlay behind.
+          document.getElementById('twgif-media-editor-overlay')?.remove();
           logDebug('Editor import failed after dialog handoff', error?.message || error);
-          setStatus((error && error.message) || 'Не удалось открыть медиа.', true);
+          setStatus((error && error.message) || 'Не удалось открыть медиа. Попробуй другой файл.', true);
           return;
         }
         setStatus((error && error.message) || 'Не удалось открыть медиа.', true);
@@ -4990,10 +4992,6 @@
     const style = document.createElement('style');
     style.id = 'twgif-style';
     style.textContent = `
-      #twgif-editor-trigger{appearance:none!important;border:0!important;background:transparent!important;color:var(--color-text-base,#efeff1)!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important;margin:0 2px!important;padding:0!important;align-self:center!important;vertical-align:middle!important;box-sizing:border-box!important;position:fixed!important;left:var(--twgif-editor-trigger-left,0px)!important;top:var(--twgif-editor-trigger-top,0px)!important;z-index:2147482500!important;transform:none!important;border-radius:50%!important;overflow:hidden!important;cursor:pointer!important;line-height:1!important}
-      #twgif-editor-trigger.twgif-editor-inline-trigger{position:relative!important;left:auto!important;top:auto!important;z-index:2!important;transform:none!important;align-self:center!important;margin:0 2px!important}
-      #twgif-editor-trigger:hover{background:var(--color-background-button-text-hover,#2b2b2f)!important;color:var(--color-text-link,#bf94ff)!important}
-      #twgif-editor-trigger svg{display:block;width:18px;height:18px;flex:0 0 18px;pointer-events:none}
       #twgif-trigger{appearance:none!important;border:0!important;background:transparent!important;color:var(--color-text-base,#efeff1)!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important;margin:0!important;padding:0!important;align-self:center!important;vertical-align:middle!important;box-sizing:border-box!important;position:fixed!important;left:var(--twgif-trigger-left,0px)!important;top:var(--twgif-trigger-top,0px)!important;z-index:2147482500!important;transform:none!important;border-radius:50%!important;overflow:hidden!important;cursor:pointer!important;line-height:1!important}
       #twgif-trigger.twgif-inline-trigger{position:relative!important;left:auto!important;top:auto!important;z-index:2!important;transform:none!important;align-self:center!important;margin:0 3px!important;border-radius:50%!important}
       #twgif-trigger.twgif-inline-twitch{flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important}
@@ -5035,7 +5033,10 @@
       #twgif-panel.twgif-resizing{cursor:ns-resize!important;user-select:none!important}
       #twgif-panel.twgif-resizing *{user-select:none!important;cursor:ns-resize!important}
       .twgif-head{display:flex;align-items:center;gap:5px;padding:6px 8px;min-height:42px;border-bottom:1px solid #34343b;flex-shrink:0}
-      .twgif-heading{font-size:13px;font-weight:700;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .twgif-head-brand{display:flex;align-items:center;gap:4px;flex:1;min-width:0;overflow:hidden}
+      .twgif-head-brand .twgif-heading{font-size:13px;font-weight:700;flex:0 1 auto;min-width:0;max-width:calc(100% - 33px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .twgif-media-editor-head-btn{width:28px;height:28px;flex:0 0 28px;color:#c4c4cc}
+      .twgif-media-editor-head-btn svg{display:block;width:17px;height:17px}
       .twgif-head-btn{appearance:none;border:0;background:transparent;color:#c4c4cc;width:29px;height:29px;display:inline-flex;align-items:center;justify-content:center;padding:0;border-radius:6px;cursor:pointer;flex-shrink:0}
       .twgif-head-btn:hover{background:#303036;color:#fff}.twgif-head-btn[hidden]{display:none!important}
       #twgif-settings-open svg{display:block;flex:0 0 18px;width:18px;height:18px;margin:auto;position:static;transform:none}
@@ -5142,7 +5143,7 @@
       <div id="twgif-resize-top" title="Потяните верхнюю границу вверх или вниз, чтобы изменить высоту" aria-hidden="true"></div>
       <div class="twgif-head">
         <button id="twgif-settings-back-top" class="twgif-head-btn" type="button" title="Назад к галерее" aria-label="Назад" hidden>←</button>
-        <div id="twgif-heading" class="twgif-heading">GIF и картинки</div>
+        <div class="twgif-head-brand"><div id="twgif-heading" class="twgif-heading">GIF и картинки</div><button id="twgif-media-editor-open" class="twgif-head-btn twgif-media-editor-head-btn" type="button" title="Редактор видео и анимаций" aria-label="Открыть редактор видео и анимаций">${SVG_CROP}</button></div>
         <div id="twgif-settings-tabs" class="twgif-settings-tabs" hidden>
           <button class="twgif-tab" type="button" data-tab="general" title="Вид и общие" aria-label="Общие настройки" aria-selected="false">◫</button>
           <button class="twgif-tab" type="button" data-tab="convert" title="Конвертация" aria-label="Настройки конвертации" aria-selected="false">⇄</button>
@@ -5172,6 +5173,11 @@
     syncProgressIndicatorView();
 
     panel.querySelector('#twgif-close').addEventListener('click', closePanel);
+    panel.querySelector('#twgif-media-editor-open').addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      openMediaEditorImportDialog();
+    });
     panel.querySelector('#twgif-status-indicator').addEventListener('click', () => {
       settingsTab = 'debug';
       panelView = 'settings';
@@ -5498,51 +5504,6 @@
     return button;
   }
 
-  function createEditorTrigger() {
-    const button = document.createElement('button');
-    button.id = 'twgif-editor-trigger';
-    button.type = 'button';
-    button.className = 'twgif-editor-trigger';
-    button.setAttribute('aria-label', 'Открыть редактор видео и анимаций');
-    button.setAttribute('aria-haspopup', 'dialog');
-    button.removeAttribute('title');
-    button.innerHTML = SVG_CROP;
-    button.addEventListener('click', event => {
-      event.preventDefault();
-      event.stopPropagation();
-      openMediaEditorImportDialog();
-    });
-    return button;
-  }
-
-  function ensureCropEditorTrigger(galleryButton, toolbar) {
-    if (!galleryButton) return;
-    let button = document.getElementById('twgif-editor-trigger');
-    if (!button) button = createEditorTrigger();
-
-    if (galleryButton.classList.contains('twgif-inline-trigger') && galleryButton.parentElement) {
-      const parent = galleryButton.parentElement;
-      if (button.parentElement !== parent || button.previousElementSibling !== galleryButton) {
-        parent.insertBefore(button, galleryButton.nextSibling);
-      }
-      button.classList.add('twgif-editor-inline-trigger');
-      button.style.removeProperty('--twgif-editor-trigger-left');
-      button.style.removeProperty('--twgif-editor-trigger-top');
-      return;
-    }
-
-    if (button.parentElement !== document.body) document.body.appendChild(button);
-    const rect = galleryButton.getBoundingClientRect();
-    const size = 32;
-    const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
-    const viewportHeight = Math.max(1, document.documentElement.clientHeight || innerHeight);
-    const left = Math.max(4, Math.min(viewportWidth - size - 4, rect.right + 3));
-    const top = Math.max(4, Math.min(viewportHeight - size - 4, rect.top + (rect.height - size) / 2));
-    button.classList.remove('twgif-editor-inline-trigger');
-    button.style.setProperty('--twgif-editor-trigger-left', Math.round(left) + 'px');
-    button.style.setProperty('--twgif-editor-trigger-top', Math.round(top) + 'px');
-  }
-
   function hideDropsToolbarButtons(toolbar) {
     if (!toolbar || !isTwitchSite()) return;
     const candidates = toolbar.querySelectorAll('button, [role="button"]');
@@ -5696,7 +5657,6 @@
       // the composer. If it is already inside a hidden toolbar it will follow that
       // toolbar naturally; if detached, the observers retry mounting it later.
       mountTwitchTrigger(button, input, toolbar);
-      ensureCropEditorTrigger(button, toolbar);
       return;
     }
 
@@ -5704,12 +5664,10 @@
     // space for the icon and neighbouring buttons cannot overlap it.
     if (isWtvSite()) {
       if (mountInlineTrigger(button, findInlineTriggerTarget(input, toolbar), 'twgif-inline-wtv')) {
-        ensureCropEditorTrigger(button, toolbar);
         return;
       }
     } else if (isKickSite()) {
       if (mountInlineTrigger(button, findInlineTriggerTarget(input, toolbar), 'twgif-inline-kick')) {
-        ensureCropEditorTrigger(button, toolbar);
         return;
       }
     }
@@ -5738,7 +5696,6 @@
     top = Math.max(4, Math.min(viewportHeight - size - 4, top));
     button.style.setProperty('--twgif-trigger-left', Math.round(left) + 'px');
     button.style.setProperty('--twgif-trigger-top', Math.round(top) + 'px');
-    ensureCropEditorTrigger(button, toolbar);
   }
 
   function repositionTrigger() {
@@ -7299,6 +7256,8 @@
   }
 
   function start() {
+    // Remove the old chat-toolbar editor icon left by a previously injected script version.
+    document.getElementById('twgif-editor-trigger')?.remove();
     buildStyles();
     buildPanel();
     ensureTrigger();
