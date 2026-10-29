@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.61
+// @version      5.9.62
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,8 +37,8 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.61';
-  const VERSION = 16;
+  const APP_VERSION = '5.9.62';
+  const VERSION = 17;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
@@ -2523,16 +2523,25 @@
         '<p class="twgif-editor-subtitle">Обрезай фрагмент, меняй скорость и кадрируй. Изменения применяются до загрузки.</p><span class="twgif-editor-safe">Файл обрабатывается на устройстве</span></div><button class="twgif-editor-close" data-editor-close aria-label="Закрыть">×</button></header>',
         '<div class="twgif-editor-body"><div class="twgif-editor-preview-column"><div class="twgif-editor-stage" data-stage><div class="twgif-editor-stage-hint">Перетаскивай рамку или её углы</div>',
         '<div class="twgif-editor-crop-frame" data-crop-frame><span class="twgif-editor-handle" data-handle="nw"></span><span class="twgif-editor-handle" data-handle="ne"></span><span class="twgif-editor-handle" data-handle="sw"></span><span class="twgif-editor-handle" data-handle="se"></span></div></div>',
-        '<div class="twgif-editor-player"><button class="twgif-editor-play" data-play>▶</button><span class="twgif-editor-player-time" data-current>00:00.00</span><input class="twgif-editor-player-range" type="range" min="0" max="0" step=".01" data-scrub disabled><span class="twgif-editor-player-time" data-duration>—:—</span></div>',
-        '<div class="twgif-editor-help" data-preview-help>Рамка показывает область, которая останется после кадрирования.</div></div><aside>',
-        '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Фрагмент</span><span class="twgif-editor-section-meta" data-selected>Весь файл</span></div>',
-        '<label class="twgif-editor-control-label">Начало <strong data-start-label>00:00.00</strong></label><input class="twgif-editor-range" type="range" min="0" max="0" step=".01" data-start disabled>',
-        '<label class="twgif-editor-control-label">Конец <strong data-end-label>—:—</strong></label><input class="twgif-editor-range" type="range" min="0" max="0" step=".01" data-end disabled><div class="twgif-editor-range-values"><span data-start-value>00:00.00</span><span data-end-value>—:—</span></div><div class="twgif-editor-help" data-trim-help>Читаю длительность…</div></section>',
-        '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Скорость</span><span class="twgif-editor-section-meta" data-speed-summary>1× · обычная</span></div><select class="twgif-editor-select" data-speed>',
-        '<option value=".25">0,25× · очень медленно</option><option value=".5">0,5× · медленно</option><option value=".75">0,75× · медленнее</option><option value="1" selected>1× · обычная</option><option value="1.25">1,25× · быстрее</option><option value="1.5">1,5× · быстро</option><option value="2">2× · вдвое быстрее</option></select><div class="twgif-editor-help">Для видео предпросмотр меняется сразу. У анимаций скорость применяется при обработке.</div></section>',
-        '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Кадрирование</span><button class="twgif-editor-preset" data-reset>Сбросить</button></div><div class="twgif-editor-presets">',
-        '<button class="twgif-editor-preset" data-preset="free" aria-pressed="true">Свободно</button><button class="twgif-editor-preset" data-preset="16:9">16:9</button><button class="twgif-editor-preset" data-preset="9:16">9:16</button><button class="twgif-editor-preset" data-preset="1:1">1:1</button><button class="twgif-editor-preset" data-preset="4:3">4:3</button></div><div class="twgif-editor-crop-readout"><span>Область кадра</span><strong data-crop-readout>100% × 100%</strong></div><div class="twgif-editor-help">Потяни рамку, чтобы переместить область. Углы меняют размер.</div></section>',
-        '<section class="twgif-editor-section"><label class="twgif-editor-toggle"><input type="checkbox" data-loop checked><span><strong>Зацикливание</strong><small>Сохраняется в GIF/WebP; для видео управляет повтором предпросмотра.</small></span></label></section>',
+        '<div class="twgif-editor-timeline-wrap">',
+        '<div class="twgif-editor-timeline-head"><span class="twgif-editor-section-title">Таймлайн</span><span class="twgif-editor-section-meta" data-selected>Весь файл</span></div>',
+        '<div class="twgif-editor-timeline-visual" data-timeline-track>',
+        '<div class="twgif-editor-storyboard" data-storyboard><div class="twgif-editor-storyboard-empty" data-storyboard-empty>Раскадровка появится после загрузки</div></div>',
+        '<div class="twgif-editor-trim-shade twgif-editor-trim-shade-left" data-trim-shade-left></div><div class="twgif-editor-trim-shade twgif-editor-trim-shade-right" data-trim-shade-right></div>',
+        '<div class="twgif-editor-trim-selection" data-trim-selection></div><div class="twgif-editor-playhead" data-playhead></div>',
+        '<button class="twgif-editor-trim-handle twgif-editor-trim-start" type="button" role="slider" aria-label="Начало фрагмента" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="00:00.00" data-trim-start disabled><span class="twgif-editor-handle-time" data-start-label>00:00.00</span></button>',
+        '<button class="twgif-editor-trim-handle twgif-editor-trim-end" type="button" role="slider" aria-label="Конец фрагмента" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="—:—" data-trim-end disabled><span class="twgif-editor-handle-time" data-end-label>—:—</span></button>',
+        '</div><div class="twgif-editor-timeline-edges"><span data-start-value>00:00.00</span><span data-end-value>—:—</span></div>',
+        '<div class="twgif-editor-player"><button class="twgif-editor-play" type="button" data-play aria-label="Воспроизвести">▶</button><span class="twgif-editor-player-time" data-current>00:00.00</span><input class="twgif-editor-player-range" type="range" min="0" max="0" step=".01" data-scrub aria-label="Позиция воспроизведения" disabled><span class="twgif-editor-player-time" data-duration>—:—</span></div>',
+        '<div class="twgif-editor-help" data-trim-help>Перетаскивай маркеры по таймлайну, чтобы выбрать начало и конец.</div>',
+        '<div class="twgif-editor-help" data-preview-help>Кадрирование и настройки применяются к файлу перед загрузкой.</div></div><aside>',
+        '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Скорость</span><span class="twgif-editor-section-meta" data-speed-summary>1× · обычная</span></div>',
+        '<input class="twgif-editor-speed-slider" type="range" data-speed min=".25" max="2" step=".05" value="1" aria-label="Скорость воспроизведения">',
+        '<div class="twgif-editor-speed-ends"><span>0,25× медленно</span><span>2× быстро</span></div><div class="twgif-editor-help">Скорость видна в предпросмотре и применяется к итоговому файлу.</div></section>',
+        '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Кадрирование</span><button class="twgif-editor-preset" type="button" data-crop-toggle aria-pressed="false">Включить</button></div>',
+        '<div data-crop-controls hidden><div class="twgif-editor-presets"><button class="twgif-editor-preset" type="button" data-preset="free" aria-pressed="true">Свободно</button><button class="twgif-editor-preset" type="button" data-preset="16:9">16:9</button><button class="twgif-editor-preset" type="button" data-preset="9:16">9:16</button><button class="twgif-editor-preset" type="button" data-preset="1:1">1:1</button><button class="twgif-editor-preset" type="button" data-preset="4:3">4:3</button></div>',
+        '<div class="twgif-editor-crop-readout"><span>Область кадра</span><strong data-crop-readout>100% × 100%</strong></div><button class="twgif-editor-preset" type="button" data-reset>Сбросить кадрирование</button><div class="twgif-editor-help">Перетаскивай рамку или углы. Сетка видна только в этом режиме.</div></div></section>',
+        '<section class="twgif-editor-section"><label class="twgif-editor-toggle"><input type="checkbox" data-loop><span><strong>Ping-pong</strong><small>Проигрывать выбранный фрагмент вперёд и назад. Для GIF/WebP режим сохраняется в файле.</small></span></label></section>',
         '<div class="twgif-editor-output"><span><span class="twgif-editor-output-label">Формат результата</span><br><span class="twgif-editor-output-label" data-output-note>С учётом конвертации</span></span><strong class="twgif-editor-output-value" data-output>—</strong></div></aside></div>',
         '<footer class="twgif-editor-footer"><div class="twgif-editor-summary" data-summary>Итоговая длительность: <strong>—</strong></div><div class="twgif-editor-actions"><button class="twgif-editor-btn" data-cancel>Отмена</button><button class="twgif-editor-btn twgif-editor-btn-primary" data-apply>Применить и продолжить →</button></div></footer></section>'
       ].join('');
