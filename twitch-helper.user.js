@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.49
+// @version      5.9.50
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.49';
+  const APP_VERSION = '5.9.50';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -2785,8 +2785,14 @@
       const pathCategory = mediaTypeFromMime(pathMime);
       const config = loadConfig();
       if ((config.conversionRules[pathCategory] || 'keep') === 'keep') {
-        const type = mediaTypeFromMime(pathMime);
+        let type = mediaTypeFromMime(pathMime);
         if (type !== 'video') await waitForImage(originalUrl);
+        // Inspect WebP links during import so animated WebP is classified as animation
+        // even if the item has never been hovered in the gallery.
+        if (type === 'image' && /\.webp$/i.test(pathName) &&
+            await resolveAnimatedWebPDuration({ url: originalUrl, previewUrl: originalUrl, name: hintedName }, originalUrl) > 0) {
+          type = 'gif';
+        }
         ensureProcessingRun(runId);
         return addItem(originalUrl, hintedName, type, sourceKey, originalUrl, null, !compressEnabled);
       }
@@ -2802,11 +2808,12 @@
     const file = createLinkedMediaFile(originalUrl, blob, hintedName);
     const mime = mimeFromFile(file);
     const category = mediaTypeFromMime(mime);
-    const type = mediaTypeFromMime(mime);
+    let type = mediaTypeFromMime(mime);
     const config = loadConfig();
     const target = config.conversionRules[category] || 'keep';
 
     if (target === 'keep') {
+      if (type === 'image' && await isAnimatedWebP(file)) type = 'gif';
       if (type !== 'video') await waitForImage(originalUrl);
       ensureProcessingRun(runId);
       setProgress(100, true);
@@ -2827,7 +2834,8 @@
     ensureProcessingRun(runId);
 
     const ext = fileExtension(prepared);
-    const outputType = ext === 'gif' ? 'gif'
+    const animatedWebPOutput = ext === 'webp' && await isAnimatedWebP(prepared);
+    const outputType = animatedWebPOutput || ext === 'gif' ? 'gif'
       : ['webm', 'mp4', 'mov', 'mkv', 'avi', 'ogv', 'mpg', 'mpeg'].includes(ext) ? 'video' : 'image';
     const added = addItem(uploaded.url, prepared.name || hintedName || file.name, outputType, sourceKey, uploaded.url, prepared, !compressEnabled);
     setProgress(100, true);
@@ -2858,8 +2866,9 @@
       }, runId);
       ensureProcessingRun(runId);
       const ext = fileExtension(prepared);
-      const type = ext === 'gif' ? 'gif'
-        : ['webm', 'mp4', 'mov', 'mkv', 'avi'].includes(ext) ? 'video' : 'image';
+      const animatedWebPOutput = ext === 'webp' && await isAnimatedWebP(prepared);
+      const type = animatedWebPOutput || ext === 'gif' ? 'gif'
+        : ['webm', 'mp4', 'mov', 'mkv', 'avi', 'ogv', 'mpg', 'mpeg'].includes(ext) ? 'video' : 'image';
       const added = addItem(uploaded.url, prepared.name || file.name || 'Медиафайл', type, sourceKey, uploaded.url, prepared, !compressEnabled);
       setProgress(100, true);
       if (!added) {
@@ -5695,7 +5704,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.49 started', { href: location.href });
+    logDebug('Userscript v5.9.50 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
