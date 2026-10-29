@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.52
+// @version      5.9.53
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,8 +37,8 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.52';
-  const VERSION = 7;
+  const APP_VERSION = '5.9.53';
+  const VERSION = 8;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
@@ -223,20 +223,35 @@
     }
 
     // WebP's extension does not reveal whether the container has animation frames.
+    let hasUnclassifiedWebP = false;
     for (const rawUrl of candidates) {
       if (!isWebPResource(rawUrl)) continue;
       if (animatedWebPStatusCache.has(rawUrl)) {
         return animatedWebPStatusCache.get(rawUrl) ? 'animated' : 'photo';
       }
       if (Number(videoDurationCache.get(rawUrl)) > 0) return 'animated';
+      hasUnclassifiedWebP = true;
     }
+    if (hasUnclassifiedWebP) return 'unknown';
 
     return type === 'image' ? 'photo' : 'unknown';
   }
 
   function normalizeStoredMediaKind(item) {
     const value = String(item?.mediaKind || '').toLowerCase();
-    return PERSISTED_MEDIA_KINDS.has(value) ? value : inferInitialMediaKind(item);
+    if (PERSISTED_MEDIA_KINDS.has(value)) {
+      // Repair earlier records that marked WebP as a photo before inspecting its bytes.
+      // A zero check timestamp means the value was inferred, not verified by the parser.
+      if (value === 'photo' && !(Number(item?.mediaKindCheckedAt) > 0)) {
+        const candidates = [item?.previewUrl, item?.url, item?.name].filter(Boolean);
+        if (candidates.some(isWebPResource)) {
+          const inferred = inferInitialMediaKind({ ...item, mediaKind: '' });
+          if (inferred === 'unknown' || inferred === 'animated') return inferred;
+        }
+      }
+      return value;
+    }
+    return inferInitialMediaKind(item);
   }
 
   // Collection persistence and normalization: callers work with validated, sorted records.
