@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.58
+// @version      5.9.59
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,8 +37,8 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.58';
-  const VERSION = 13;
+  const APP_VERSION = '5.9.59';
+  const VERSION = 14;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
@@ -1944,7 +1944,9 @@
       }
     }
     const videoFiltersWithCompression = extra => videoTransformFilters.concat(extra || []);
+    // GIF muxer uses -1 for a single play; WebP muxer uses 1 for a single play.
     const outputLoopCount = editOptions && editOptions.loop === false ? '-1' : '0';
+    const webpLoopCount = editOptions && editOptions.loop === false ? '1' : '0';
 
     // When a still image is sent to a video container, create a short 2s clip.
     if (outputIsVideo && sourceIsStillImage) {
@@ -1972,7 +1974,7 @@
           ...(webpFilters.length ? ['-vf', webpFilters.join(',')] : []),
           '-an', '-c:v', 'libwebp',
           ...(compressEnabled ? ['-quality', String(animationQuality)] : ['-lossless', '1']),
-          '-compression_level', String(webpCompressionLevel), '-loop', outputLoopCount, outputPath
+          '-compression_level', String(webpCompressionLevel), '-loop', webpLoopCount, outputPath
         );
       }
     } else if (outputFormat === 'jpg') {
