@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.54
+// @version      5.9.55
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,8 +37,8 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.54';
-  const VERSION = 9;
+  const APP_VERSION = '5.9.55';
+  const VERSION = 10;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
@@ -65,6 +65,7 @@
   const SHARED_MEDIA_CACHE_MAX_ENTRY_BYTES = 6 * 1024 * 1024;
   const SETTINGS_SCHEMA_VERSION = 9;
   const COMPRESS_ENABLED_KEY = 'twgif_compress_enabled_v1';
+  const MEDIA_EDITOR_ENABLED_KEY = 'twgif_media_editor_enabled_v1';
 
   let panelView = 'gallery';
   let settingsTab = 'general';
@@ -2246,6 +2247,398 @@
     });
     mediaSizeLookupPending.set(url, lookup);
     return lookup;
+  }
+
+  function isMediaEditorEnabled() {
+    try { return GM_getValue(MEDIA_EDITOR_ENABLED_KEY, false) === true; } catch (_) { return false; }
+  }
+
+  function isAnimatedPng(file) {
+    if (!file || !file.size) return Promise.resolve(false);
+    const ext = fileExtension(file).toLowerCase();
+    if (ext === 'apng') return Promise.resolve(true);
+    if (mimeFromFile(file) !== 'image/png' && ext !== 'png') return Promise.resolve(false);
+    return file.slice(0, Math.min(file.size, 1024 * 1024)).arrayBuffer().then(buffer => {
+      const b = new Uint8Array(buffer);
+      if (b.length < 33 || b[0] !== 137 || b[1] !== 80 || b[2] !== 78 || b[3] !== 71) return false;
+      let p = 8;
+      while (p + 12 <= b.length) {
+        const n = ((b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3]) >>> 0;
+        if (n > b.length || p + 12 + n > b.length) return false;
+        const tag = String.fromCharCode(b[p + 4], b[p + 5], b[p + 6], b[p + 7]);
+        if (tag === 'acTL') return true;
+        if (tag === 'IDAT' || tag === 'IEND') return false;
+        p += 12 + n;
+      }
+      return false;
+    }).catch(() => false);
+  }
+
+  async function getGifDurationSeconds(file) {
+    if (!(file instanceof Blob) || file.size < 13) return 0;
+    try {
+      const b = new Uint8Array(await file.arrayBuffer());
+      const ascii = (p, n) => String.fromCharCode(...b.subarray(p, p + n));
+      if (!/^GIF8[79]a$/.test(ascii(0, 6))) return 0;
+      let p = 13;
+      const packed = b[10];
+      if (packed & 128) p += 3 * (1 << ((packed & 7) + 1));
+      let delay = 0, total = 0, frames = 0;
+      const skip = from => {
+        let q = from;
+        while (q < b.length) {
+          const n = b[q++];
+          if (!n) return q;
+          q += n;
+          if (q > b.length) return b.length;
+        }
+        return b.length;
+      };
+      while (p < b.length) {
+        const marker = b[p++];
+        if (marker === 0x3b) break;
+        if (marker === 0x21) {
+          if (p >= b.length) break;
+          const label = b[p++];
+          if (label === 0xf9 && p + 5 < b.length && b[p] >= 4) {
+            const blockSize = b[p++];
+            delay = ((b[p + 2] << 8) | b[p + 1]) / 100;
+            p += blockSize;
+            if (p < b.length && b[p] === 0) p++;
+          } else p = skip(p);
+          continue;
+        }
+        if (marker === 0x2c) {
+          if (p + 9 > b.length) break;
+          const local = b[p + 8];
+          p += 9;
+          if (local & 128) p += 3 * (1 << ((local & 7) + 1));
+          if (p >= b.length) break;
+          p++;
+          p = skip(p);
+          total += delay || 0.1;
+          delay = 0;
+          frames++;
+          continue;
+        }
+        break;
+      }
+      return frames ? total : 0;
+    } catch (_) { return 0; }
+  }
+
+  async function getApngDurationSeconds(file) {
+    if (!(file instanceof Blob) || file.size < 40) return 0;
+    try {
+      const b = new Uint8Array(await file.slice(0, Math.min(file.size, 32 * 1024 * 1024)).arrayBuffer());
+      if (b.length < 33 || b[0] !== 137 || b[1] !== 80 || b[2] !== 78 || b[3] !== 71) return 0;
+      let p = 8, total = 0, frames = 0;
+      while (p + 12 <= b.length) {
+        const n = ((b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3]) >>> 0;
+        if (n > b.length || p + 12 + n > b.length) break;
+        const tag = String.fromCharCode(b[p + 4], b[p + 5], b[p + 6], b[p + 7]);
+        const d = p + 8;
+        if (tag === 'fcTL' && n >= 26) {
+          const num = (b[d + 20] << 8) | b[d + 21];
+          const den = ((b[d + 22] << 8) | b[d + 23]) || 100;
+          total += num / den;
+          frames++;
+        }
+        if (tag === 'IEND') break;
+        p += 12 + n;
+      }
+      return frames ? total : 0;
+    } catch (_) { return 0; }
+  }
+
+  async function getEditableMediaInfo(file) {
+    if (!(file instanceof Blob) || !file.size) return null;
+    const mime = mimeFromFile(file), ext = fileExtension(file).toLowerCase();
+    if (mime.startsWith('video/')) return { kind: 'video', mime, extension: ext, duration: 0, width: 0, height: 0 };
+    const webp = await isAnimatedWebP(file);
+    const apng = !webp && (mime === 'image/png' || ext === 'apng' || ext === 'png') ? await isAnimatedPng(file) : false;
+    const gif = mime === 'image/gif' || ext === 'gif';
+    if (!webp && !apng && !gif) return null;
+    return { kind: 'animation', mime, extension: ext, animationFormat: webp ? 'webp' : apng ? 'apng' : 'gif',
+      duration: 0, width: 0, height: 0 };
+  }
+
+  function formatEditorTime(seconds) {
+    const v = Math.max(0, Number(seconds) || 0);
+    return String(Math.floor(v / 60)).padStart(2, '0') + ':' +
+      String(Math.floor(v % 60)).padStart(2, '0') + '.' + String(Math.floor((v % 1) * 100)).padStart(2, '0');
+  }
+
+  function normalizeMediaEditOptions(raw) {
+    const duration = Math.max(0, Number(raw && raw.duration) || 0);
+    const start = Math.max(0, Math.min(duration, Number(raw && raw.start) || 0));
+    const rawEnd = Number(raw && raw.end);
+    const end = duration ? Math.max(start, Math.min(duration, Number.isFinite(rawEnd) ? rawEnd : duration)) : 0;
+    const c = raw && raw.crop || {};
+    const w = Math.max(5, Math.min(100, Number(c.w) || 100));
+    const h = Math.max(5, Math.min(100, Number(c.h) || 100));
+    return { kind: raw && raw.kind === 'animation' ? 'animation' : 'video', duration, start, end,
+      speed: Math.max(.25, Math.min(2, Number(raw && raw.speed) || 1)), loop: raw ? raw.loop !== false : true,
+      crop: { x: Math.max(0, Math.min(100 - w, Number(c.x) || 0)),
+        y: Math.max(0, Math.min(100 - h, Number(c.y) || 0)), w, h },
+      sourceWidth: Math.max(0, Math.floor(Number(raw && raw.sourceWidth) || 0)),
+      sourceHeight: Math.max(0, Math.floor(Number(raw && raw.sourceHeight) || 0)) };
+  }
+
+  function getEditedOutputFormat(file, category, animatedWebP, configuredTarget) {
+    if (['webp', 'gif', 'jpg', 'png', 'mp4', 'webm'].includes(configuredTarget) && configuredTarget !== 'keep') return configuredTarget;
+    const ext = fileExtension(file).toLowerCase();
+    if (category === 'video') return ext === 'webm' ? 'webm' : 'mp4';
+    if (animatedWebP || ext === 'webp') return 'webp';
+    return 'gif';
+  }
+
+  function mediaEditHasChanges(raw, outputFormat) {
+    const e = normalizeMediaEditOptions(raw), c = e.crop;
+    return c.x > .5 || c.y > .5 || c.w < 99.5 || c.h < 99.5 ||
+      (e.duration > 0 && (e.start > .03 || e.end < e.duration - .03)) ||
+      Math.abs(e.speed - 1) > .001 || (e.loop === false && ['gif', 'webp'].includes(outputFormat));
+  }
+
+  function ensureMediaEditorStyles() {
+    if (document.getElementById('twgif-media-editor-styles')) return;
+    const st = document.createElement('style');
+    st.id = 'twgif-media-editor-styles';
+    st.textContent = [
+      '#twgif-media-editor-overlay{position:fixed;inset:0;z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:20px;background:#07070acc;backdrop-filter:blur(12px);color:#f4f4f5;font:13px/1.45 Inter,system-ui,sans-serif}',
+      '#twgif-media-editor{width:min(1120px,100%);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;border:1px solid #373741;border-radius:18px;background:linear-gradient(145deg,#1b1b22,#101014);box-shadow:0 30px 100px #000b}',
+      '.twgif-editor-header{display:flex;justify-content:space-between;gap:14px;padding:18px 22px;border-bottom:1px solid #ffffff12}.twgif-editor-eyebrow{color:#bd9bff;font-size:10px;font-weight:800;letter-spacing:.15em;text-transform:uppercase}',
+      '.twgif-editor-title{margin:5px 0;font-size:21px;letter-spacing:-.03em}.twgif-editor-subtitle{margin:5px 0;color:#a3a3af;font-size:12px}.twgif-editor-safe{display:block;margin-top:8px;color:#8fe0b3;font-size:10px}',
+      '.twgif-editor-close{width:34px;height:34px;border:1px solid #ffffff18;border-radius:9px;background:#ffffff08;color:#ddd;font-size:22px;cursor:pointer}',
+      '.twgif-editor-body{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(270px,.9fr);gap:16px;min-height:0;padding:16px 22px;overflow:auto}.twgif-editor-preview-column{display:flex;flex-direction:column;gap:10px;min-width:0}',
+      '.twgif-editor-stage{position:relative;display:flex;align-items:center;justify-content:center;min-height:210px;height:clamp(220px,43vh,480px);overflow:hidden;border:1px solid #393943;border-radius:13px;background:radial-gradient(ellipse at center,#292933,#08080a 75%);isolation:isolate}',
+      '.twgif-editor-preview-media{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;user-select:none;-webkit-user-drag:none}.twgif-editor-crop-frame{position:absolute;z-index:2;box-sizing:border-box;border:1px solid #eadfff;box-shadow:0 0 0 2000px #000a,0 0 0 1px #8b5bd6;cursor:move;touch-action:none}',
+      '.twgif-editor-crop-frame:after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(to right,transparent 33%,#ffffff44 33.3%,transparent 33.6%,transparent 66.3%,#ffffff44 66.6%,transparent 66.9%),linear-gradient(to bottom,transparent 33%,#ffffff44 33.3%,transparent 33.6%,transparent 66.3%,#ffffff44 66.6%,transparent 66.9%)}',
+      '.twgif-editor-handle{position:absolute;z-index:4;width:13px;height:13px;border:2px solid white;border-radius:4px;background:#a970ff;touch-action:none}.twgif-editor-handle[data-handle=nw]{left:-6px;top:-6px;cursor:nwse-resize}.twgif-editor-handle[data-handle=ne]{right:-6px;top:-6px;cursor:nesw-resize}.twgif-editor-handle[data-handle=sw]{left:-6px;bottom:-6px;cursor:nesw-resize}.twgif-editor-handle[data-handle=se]{right:-6px;bottom:-6px;cursor:nwse-resize}',
+      '.twgif-editor-stage-hint{position:absolute;z-index:1;top:10px;left:10px;padding:5px 8px;border-radius:7px;background:#08080bd9;color:#ccc;font-size:10px;pointer-events:none}',
+      '.twgif-editor-player{display:flex;align-items:center;gap:9px;padding:10px;border:1px solid #ffffff12;border-radius:11px;background:#ffffff05}.twgif-editor-play{width:34px;height:34px;border:1px solid #a970ff66;border-radius:9px;background:#9147ff24;color:#eadcff;cursor:pointer}.twgif-editor-player-time{min-width:70px;color:#c9c9d2;font-size:11px;font-variant-numeric:tabular-nums}.twgif-editor-player-range{width:100%;accent-color:#a970ff}',
+      '.twgif-editor-section{padding:13px;border:1px solid #ffffff12;border-radius:12px;background:#ffffff05}.twgif-editor-section+.twgif-editor-section{margin-top:9px}.twgif-editor-section-head{display:flex;justify-content:space-between;gap:8px;margin-bottom:9px}.twgif-editor-section-title{font-size:12px;font-weight:750}.twgif-editor-section-meta{color:#a8a8b4;font-size:10px}',
+      '.twgif-editor-control-label{display:flex;justify-content:space-between;margin:9px 0 4px;color:#bdbdc8;font-size:11px}.twgif-editor-range{width:100%;accent-color:#a970ff}.twgif-editor-range:disabled{opacity:.4}.twgif-editor-range-values{display:flex;justify-content:space-between;color:#888894;font-size:10px}',
+      '.twgif-editor-select{width:100%;padding:9px;border:1px solid #3b3b46;border-radius:9px;background:#202027;color:#f4f4f5;font:inherit;font-size:12px}.twgif-editor-help{margin-top:7px;color:#90909c;font-size:10px;line-height:1.5}',
+      '.twgif-editor-presets{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:9px}.twgif-editor-preset{padding:6px 8px;border:1px solid #3b3b46;border-radius:8px;background:#ffffff05;color:#bdbdc8;font-size:10px;cursor:pointer}.twgif-editor-preset[aria-pressed=true],.twgif-editor-preset:hover{border-color:#a970ff;background:#9147ff24;color:#eee2ff}',
+      '.twgif-editor-crop-readout{display:flex;justify-content:space-between;color:#bdbdc8;font-size:10px}.twgif-editor-toggle{display:flex;gap:9px;color:#e7e7ed;font-size:11px}.twgif-editor-toggle input{accent-color:#a970ff}.twgif-editor-toggle small{display:block;margin-top:3px;color:#9999a5;font-size:10px}',
+      '.twgif-editor-output{display:flex;justify-content:space-between;gap:10px;padding:11px;border:1px solid #a970ff33;border-radius:11px;background:#9147ff12}.twgif-editor-output-label{color:#a4a4b0;font-size:10px}.twgif-editor-output-value{color:#eee2ff;font-size:12px}',
+      '.twgif-editor-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 22px;border-top:1px solid #ffffff12}.twgif-editor-summary{color:#aaaab5;font-size:11px}.twgif-editor-summary strong{color:#eee}.twgif-editor-actions{display:flex;gap:8px}.twgif-editor-btn{padding:10px 14px;border:1px solid #3b3b46;border-radius:9px;background:#ffffff08;color:#ddd;font:inherit;font-size:12px;font-weight:650;cursor:pointer}.twgif-editor-btn-primary{border-color:#9147ff;background:linear-gradient(135deg,#9c5bff,#7a32e5);color:white}',
+      '@media(max-width:760px){#twgif-media-editor-overlay{padding:7px;align-items:flex-start}#twgif-media-editor{max-height:calc(100vh - 14px)}.twgif-editor-body{grid-template-columns:1fr;padding:10px;gap:10px}.twgif-editor-stage{height:34vh;min-height:175px}.twgif-editor-footer{align-items:flex-start;flex-direction:column;padding:12px 14px}.twgif-editor-actions{width:100%}.twgif-editor-actions .twgif-editor-btn{flex:1}}'
+    ].join('\n');
+    (document.head || document.documentElement).appendChild(st);
+  }
+
+  function openMediaEditor(file, runId, info) {
+    ensureMediaEditorStyles();
+    return new Promise(resolve => {
+      const url = URL.createObjectURL(file);
+      const overlay = document.createElement('div');
+      overlay.id = 'twgif-media-editor-overlay';
+      overlay.innerHTML = [
+        '<section id="twgif-media-editor" role="dialog" aria-modal="true" aria-labelledby="twgif-editor-title">',
+        '<header class="twgif-editor-header"><div><span class="twgif-editor-eyebrow">Перед загрузкой · локально</span><h2 id="twgif-editor-title" class="twgif-editor-title">Редактор медиа</h2>',
+        '<p class="twgif-editor-subtitle">Обрезай фрагмент, меняй скорость и кадрируй. Изменения применяются до загрузки.</p><span class="twgif-editor-safe">Файл обрабатывается на устройстве</span></div><button class="twgif-editor-close" data-editor-close aria-label="Закрыть">×</button></header>',
+        '<div class="twgif-editor-body"><div class="twgif-editor-preview-column"><div class="twgif-editor-stage" data-stage><div class="twgif-editor-stage-hint">Перетаскивай рамку или её углы</div>',
+        '<div class="twgif-editor-crop-frame" data-crop-frame><span class="twgif-editor-handle" data-handle="nw"></span><span class="twgif-editor-handle" data-handle="ne"></span><span class="twgif-editor-handle" data-handle="sw"></span><span class="twgif-editor-handle" data-handle="se"></span></div></div>',
+        '<div class="twgif-editor-player"><button class="twgif-editor-play" data-play>▶</button><span class="twgif-editor-player-time" data-current>00:00.00</span><input class="twgif-editor-player-range" type="range" min="0" max="0" step=".01" data-scrub disabled><span class="twgif-editor-player-time" data-duration>—:—</span></div>',
+        '<div class="twgif-editor-help" data-preview-help>Рамка показывает область, которая останется после кадрирования.</div></div><aside>',
+        '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Фрагмент</span><span class="twgif-editor-section-meta" data-selected>Весь файл</span></div>',
+        '<label class="twgif-editor-control-label">Начало <strong data-start-label>00:00.00</strong></label><input class="twgif-editor-range" type="range" min="0" max="0" step=".01" data-start disabled>',
+        '<label class="twgif-editor-control-label">Конец <strong data-end-label>—:—</strong></label><input class="twgif-editor-range" type="range" min="0" max="0" step=".01" data-end disabled><div class="twgif-editor-range-values"><span data-start-value>00:00.00</span><span data-end-value>—:—</span></div><div class="twgif-editor-help" data-trim-help>Читаю длительность…</div></section>',
+        '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Скорость</span><span class="twgif-editor-section-meta" data-speed-summary>1× · обычная</span></div><select class="twgif-editor-select" data-speed>',
+        '<option value=".25">0,25× · очень медленно</option><option value=".5">0,5× · медленно</option><option value=".75">0,75× · медленнее</option><option value="1" selected>1× · обычная</option><option value="1.25">1,25× · быстрее</option><option value="1.5">1,5× · быстро</option><option value="2">2× · вдвое быстрее</option></select><div class="twgif-editor-help">Для видео предпросмотр меняется сразу. У анимаций скорость применяется при обработке.</div></section>',
+        '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Кадрирование</span><button class="twgif-editor-preset" data-reset>Сбросить</button></div><div class="twgif-editor-presets">',
+        '<button class="twgif-editor-preset" data-preset="free" aria-pressed="true">Свободно</button><button class="twgif-editor-preset" data-preset="16:9">16:9</button><button class="twgif-editor-preset" data-preset="9:16">9:16</button><button class="twgif-editor-preset" data-preset="1:1">1:1</button><button class="twgif-editor-preset" data-preset="4:3">4:3</button></div><div class="twgif-editor-crop-readout"><span>Область кадра</span><strong data-crop-readout>100% × 100%</strong></div><div class="twgif-editor-help">Потяни рамку, чтобы переместить область. Углы меняют размер.</div></section>',
+        '<section class="twgif-editor-section"><label class="twgif-editor-toggle"><input type="checkbox" data-loop checked><span><strong>Зацикливание</strong><small>Повтор в предпросмотре; сохраняется для GIF/WebP.</small></span></label></section>',
+        '<div class="twgif-editor-output"><span><span class="twgif-editor-output-label">Формат результата</span><br><span class="twgif-editor-output-label" data-output-note>С учётом конвертации</span></span><strong class="twgif-editor-output-value" data-output>—</strong></div></aside></div>',
+        '<footer class="twgif-editor-footer"><div class="twgif-editor-summary" data-summary>Итоговая длительность: <strong>—</strong></div><div class="twgif-editor-actions"><button class="twgif-editor-btn" data-cancel>Отмена</button><button class="twgif-editor-btn twgif-editor-btn-primary" data-apply>Применить и продолжить →</button></div></footer></section>'
+      ].join('');
+      document.body.appendChild(overlay);
+
+      const $ = selector => overlay.querySelector(selector);
+      const stage = $('[data-stage]'), frame = $('[data-crop-frame]');
+      const scrub = $('[data-scrub]'), startInput = $('[data-start]'), endInput = $('[data-end]');
+      const speedInput = $('[data-speed]'), loopInput = $('[data-loop]');
+      const media = document.createElement(info.kind === 'video' ? 'video' : 'img');
+      media.className = 'twgif-editor-preview-media';
+      if (info.kind === 'video') { media.preload = 'metadata'; media.playsInline = true; }
+      else { media.alt = 'Предпросмотр анимации'; media.draggable = false; }
+      stage.insertBefore(media, frame);
+
+      const cfg = loadConfig(), category = info.kind === 'video' ? 'video' : 'gif';
+      const chosen = getEditedOutputFormat(file, category, info.animationFormat === 'webp', cfg.conversionRules[category] || 'keep');
+      $('[data-output]').textContent = chosen.toUpperCase();
+      $('[data-output-note]').textContent = ['gif','webp'].includes(chosen) ? 'Зацикливание сохранится в файле' : 'Зацикливание действует в предпросмотре';
+
+      let done = false, duration = 0, width = 0, height = 0, start = 0, end = 0, speed = 1, loop = true;
+      let crop = { x: 0, y: 0, w: 100, h: 100 }, drag = null, dragId = null, resizeObserver = null, resizeHandler = null;
+      const cleanup = () => {
+        document.removeEventListener('keydown', onKey, true);
+        if (resizeObserver) resizeObserver.disconnect();
+        if (resizeHandler) window.removeEventListener('resize', resizeHandler);
+        if (info.kind === 'video') {
+          media.removeEventListener('loadedmetadata', onVideoMeta);
+          media.removeEventListener('timeupdate', onVideoTime);
+          media.removeEventListener('ended', onVideoEnd);
+          media.removeEventListener('play', onPlayState);
+          media.removeEventListener('pause', onPlayState);
+          try { media.pause(); } catch (_) {}
+        }
+        media.removeAttribute('src');
+        try { if (info.kind === 'video') media.load(); } catch (_) {}
+        URL.revokeObjectURL(url);
+        overlay.remove();
+      };
+      const finish = value => { if (done) return; done = true; cleanup(); resolve(value); };
+      const contentRect = () => {
+        const sw = stage.clientWidth, sh = stage.clientHeight;
+        if (!sw || !sh || !width || !height) return { left: 0, top: 0, width: sw, height: sh };
+        const aspect = width / height; let w = sw, h = w / aspect;
+        if (h > sh) { h = sh; w = h * aspect; }
+        return { left: (sw - w) / 2, top: (sh - h) / 2, width: w, height: h };
+      };
+      const updateFrame = () => {
+        const r = contentRect();
+        frame.style.left = (r.left + r.width * crop.x / 100) + 'px';
+        frame.style.top = (r.top + r.height * crop.y / 100) + 'px';
+        frame.style.width = (r.width * crop.w / 100) + 'px';
+        frame.style.height = (r.height * crop.h / 100) + 'px';
+        $('[data-crop-readout]').textContent = Math.round(crop.w) + '% × ' + Math.round(crop.h) + '%';
+        overlay.querySelectorAll('[data-preset]').forEach(b => b.setAttribute('aria-pressed',
+          String(b.dataset.preset === 'free' && crop.x === 0 && crop.y === 0 && crop.w === 100 && crop.h === 100)));
+      };
+      const updateSummary = () => {
+        const selected = duration > 0 ? Math.max(0, end - start) : 0;
+        $('[data-selected]').textContent = selected > 0 ? formatEditorTime(selected) : 'Весь файл';
+        $('[data-summary]').innerHTML = 'Итоговая длительность: <strong>' +
+          (selected > 0 ? formatEditorTime(selected / speed) : 'полная') + '</strong> <span style="color:#888">· ' + speed.toLocaleString('ru-RU') + '×</span>';
+        $('[data-speed-summary]').textContent = speed.toLocaleString('ru-RU') + '× · ' + (speed < 1 ? 'замедление' : speed > 1 ? 'ускорение' : 'обычная');
+        $('[data-start-label]').textContent = formatEditorTime(start);
+        $('[data-end-label]').textContent = duration > 0 ? formatEditorTime(end) : '—:—';
+        $('[data-start-value]').textContent = formatEditorTime(start);
+        $('[data-end-value]').textContent = duration > 0 ? formatEditorTime(end) : '—:—';
+        $('[data-trim-help]').textContent = duration > 0 ? 'После скорости: ' + formatEditorTime(selected / speed) :
+          'Длительность не определена: обрезка по времени недоступна.';
+        startInput.value = String(start); endInput.value = String(end);
+        startInput.max = String(duration); endInput.max = String(duration); scrub.max = String(duration);
+        $('[data-duration]').textContent = duration > 0 ? formatEditorTime(duration) : '—:—';
+      };
+      const setDuration = value => {
+        const n = Number(value);
+        if (!Number.isFinite(n) || n <= 0) return;
+        duration = n; start = Math.min(start, duration); end = end > 0 ? Math.min(end, duration) : duration;
+        if (end <= start) { start = 0; end = duration; }
+        startInput.disabled = false; endInput.disabled = false; scrub.disabled = info.kind !== 'video';
+        updateSummary();
+      };
+      const onPlayState = () => {
+        $('[data-play]').textContent = media.paused ? '▶' : 'Ⅱ';
+        $('[data-play]').setAttribute('aria-label', media.paused ? 'Воспроизвести' : 'Пауза');
+      };
+      const onVideoMeta = () => {
+        if (Number.isFinite(media.duration) && media.duration > 0) setDuration(media.duration);
+        width = media.videoWidth || width; height = media.videoHeight || height; updateFrame();
+      };
+      const onVideoTime = () => {
+        if (!Number.isFinite(media.currentTime)) return;
+        $('[data-current]').textContent = formatEditorTime(media.currentTime); scrub.value = String(media.currentTime);
+        if (duration > 0 && media.currentTime >= end - .035) {
+          if (loop && end > start + .05) { try { media.currentTime = start; } catch (_) {} if (media.paused) media.play().catch(() => {}); }
+          else { media.pause(); try { media.currentTime = end; } catch (_) {} }
+        }
+      };
+      const onVideoEnd = () => {
+        if (loop && end > start + .05) { try { media.currentTime = start; } catch (_) {} media.play().catch(() => {}); }
+        else media.pause();
+      };
+      const onKey = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); } };
+      const preset = value => {
+        if (value === 'free') crop = { x: 0, y: 0, w: 100, h: 100 };
+        else if (width && height) {
+          const a = value.split(':').map(Number), target = a[0] / a[1], sourceAspect = width / height;
+          if (target >= sourceAspect) { const h = sourceAspect / target * 100; crop = { x: 0, y: (100 - h) / 2, w: 100, h }; }
+          else { const w = target / sourceAspect * 100; crop = { x: (100 - w) / 2, y: 0, w, h: 100 }; }
+        }
+        updateFrame();
+        overlay.querySelectorAll('[data-preset]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.preset === value)));
+      };
+      const trimInput = which => {
+        if (!duration) return;
+        const gap = Math.min(.05, duration / 10);
+        if (which === 'start') start = Math.max(0, Math.min(Number(startInput.value) || 0, end - gap));
+        else end = Math.max(start + gap, Math.min(Number(endInput.value) || 0, duration));
+        if (info.kind === 'video' && (media.currentTime < start || media.currentTime > end)) { try { media.currentTime = start; } catch (_) {} }
+        updateSummary();
+      };
+      frame.addEventListener('pointerdown', e => {
+        if (e.button !== 0 && e.pointerType !== 'touch') return;
+        const handle = e.target.closest('[data-handle]');
+        drag = { mode: handle ? handle.dataset.handle : 'move', sx: e.clientX, sy: e.clientY, crop: { ...crop }, rect: contentRect() };
+        dragId = e.pointerId; try { frame.setPointerCapture(e.pointerId); } catch (_) {}
+        e.preventDefault();
+      });
+      frame.addEventListener('pointermove', e => {
+        if (!drag || e.pointerId !== dragId) return;
+        const dx = (e.clientX - drag.sx) / Math.max(1, drag.rect.width) * 100;
+        const dy = (e.clientY - drag.sy) / Math.max(1, drag.rect.height) * 100;
+        const c = drag.crop;
+        if (drag.mode === 'move') { crop.x = Math.max(0, Math.min(100 - c.w, c.x + dx)); crop.y = Math.max(0, Math.min(100 - c.h, c.y + dy)); }
+        else {
+          const min = 5; let l = c.x, t = c.y, r = c.x + c.w, b = c.y + c.h;
+          if (drag.mode.includes('w')) l = Math.max(0, Math.min(r - min, c.x + dx));
+          if (drag.mode.includes('e')) r = Math.min(100, Math.max(l + min, c.x + c.w + dx));
+          if (drag.mode.includes('n')) t = Math.max(0, Math.min(b - min, c.y + dy));
+          if (drag.mode.includes('s')) b = Math.min(100, Math.max(t + min, c.y + c.h + dy));
+          crop = { x: l, y: t, w: r - l, h: b - t };
+        }
+        updateFrame();
+      });
+      const endDrag = e => { if (!drag || (e && e.pointerId !== dragId)) return; drag = null; dragId = null; };
+      frame.addEventListener('pointerup', endDrag); frame.addEventListener('pointercancel', endDrag); frame.addEventListener('lostpointercapture', endDrag);
+      startInput.addEventListener('input', () => trimInput('start')); endInput.addEventListener('input', () => trimInput('end'));
+      scrub.addEventListener('input', () => { if (info.kind === 'video' && duration) { try { media.currentTime = Math.max(start, Math.min(end, Number(scrub.value) || 0)); } catch (_) {} } });
+      speedInput.addEventListener('change', () => { speed = Number(speedInput.value) || 1; if (info.kind === 'video') { try { media.playbackRate = speed; } catch (_) {} } updateSummary(); });
+      loopInput.addEventListener('change', () => { loop = loopInput.checked; updateSummary(); });
+      overlay.querySelectorAll('[data-preset]').forEach(b => b.addEventListener('click', () => preset(b.dataset.preset)));
+      $('[data-reset]').addEventListener('click', () => preset('free'));
+      $('[data-play]').addEventListener('click', () => {
+        if (info.kind !== 'video') { $('[data-preview-help]').textContent = 'Анимация воспроизводится браузером. Скорость и диапазон применятся при обработке.'; return; }
+        if (media.paused) { if (duration && (media.currentTime < start || media.currentTime >= end)) { try { media.currentTime = start; } catch (_) {} }
+          media.playbackRate = speed; media.play().catch(() => { $('[data-preview-help]').textContent = 'Не удалось запустить предпросмотр; настройки всё равно применятся.'; }); }
+        else media.pause();
+      });
+      overlay.querySelectorAll('[data-editor-close],[data-cancel]').forEach(b => b.addEventListener('click', () => finish(null)));
+      overlay.addEventListener('pointerdown', e => { if (e.target === overlay) finish(null); });
+      $('[data-apply]').addEventListener('click', () => {
+        if (!isProcessingRunCurrent(runId)) { finish(null); return; }
+        finish(normalizeMediaEditOptions({ kind: info.kind, duration, start, end, speed, loop, crop, sourceWidth: width, sourceHeight: height }));
+      });
+
+      if (info.kind === 'video') {
+        media.addEventListener('loadedmetadata', onVideoMeta); media.addEventListener('timeupdate', onVideoTime); media.addEventListener('ended', onVideoEnd);
+        media.addEventListener('play', onPlayState); media.addEventListener('pause', onPlayState);
+        media.src = url; media.load(); if (media.readyState >= 1) onVideoMeta();
+      } else {
+        media.addEventListener('load', () => { width = media.naturalWidth || width; height = media.naturalHeight || height; updateFrame(); }, { once: true });
+        media.src = url; if (media.complete && media.naturalWidth) { width = media.naturalWidth; height = media.naturalHeight; updateFrame(); }
+        const durationPromise = info.animationFormat === 'webp' ? getAnimatedWebPDurationSeconds(file)
+          : info.animationFormat === 'apng' ? getApngDurationSeconds(file) : getGifDurationSeconds(file);
+        durationPromise.then(setDuration).catch(() => {});
+        $('[data-preview-help]').textContent = 'Анимация воспроизводится браузером. Кадрирование видно сразу; скорость и диапазон применятся при обработке.';
+      }
+      if (typeof ResizeObserver === 'function') { resizeObserver = new ResizeObserver(updateFrame); resizeObserver.observe(stage); }
+      else { resizeHandler = updateFrame; window.addEventListener('resize', resizeHandler, { passive: true }); }
+      document.addEventListener('keydown', onKey, true); updateSummary();
+      window.requestAnimationFrame(() => { updateFrame(); $('[data-cancel]').focus(); });
+    });
+  }
+
+  async function requestMediaEditIfEnabled(file, runId) {
+    if (!isMediaEditorEnabled()) return undefined;
+    const info = await getEditableMediaInfo(file);
+    ensureProcessingRun(runId);
+    return info ? openMediaEditor(file, runId, info) : undefined;
   }
 
   async function prepareUpload(file, runId = null, compressEnabled = isCompressionEnabled()) {
@@ -4741,6 +5134,7 @@
       <div class="twgif-toolbar">
         <input id="twgif-url-input" class="twgif-input twgif-url-input" type="url" placeholder="Ссылка или несколько ссылок через пробел…" autocomplete="url" aria-label="Ссылка для добавления">
         <button id="twgif-add-url" class="twgif-small-btn twgif-primary twgif-toolbar-icon" type="button" title="Добавить ссылку" aria-label="Добавить ссылку">+</button>
+        <label class="twgif-compress-toggle" title="Перед добавлением открывать редактор видео и анимаций" for="twgif-media-editor-toggle"><input id="twgif-media-editor-toggle" type="checkbox" ${isMediaEditorEnabled() ? 'checked' : ''}>обрезка</label>
         <label class="twgif-compress-toggle" title="Отключить уменьшение разрешения и ограничение качества" for="twgif-compress-toggle"><input id="twgif-compress-toggle" type="checkbox" ${isCompressionEnabled() ? 'checked' : ''}>сжимать</label>
       </div>
       <div class="twgif-media-filter">
@@ -4761,6 +5155,11 @@
 
     const urlInput = body.querySelector('#twgif-url-input');
     const addButton = body.querySelector('#twgif-add-url');
+    const editorToggle = body.querySelector('#twgif-media-editor-toggle');
+    editorToggle.addEventListener('change', event => {
+      try { GM_setValue(MEDIA_EDITOR_ENABLED_KEY, Boolean(event.currentTarget.checked)); }
+      catch (error) { logDebug('Unable to save media editor preference', error); }
+    });
     const compressToggle = body.querySelector('#twgif-compress-toggle');
     compressToggle.addEventListener('change', event => {
       try { GM_setValue(COMPRESS_ENABLED_KEY, Boolean(event.currentTarget.checked)); }
