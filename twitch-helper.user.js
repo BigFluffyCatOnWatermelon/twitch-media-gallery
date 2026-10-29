@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.63
+// @version      5.9.64
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,8 +37,8 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.63';
-  const VERSION = 18;
+  const APP_VERSION = '5.9.64';
+  const VERSION = 19;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
@@ -2700,6 +2700,103 @@
         updateSummary();
       };
 
+      const addStoryboardThumb = (dataUrl, time, index, run) => {
+        if (done || run !== storyboardRun || !dataUrl) return;
+        const empty = $('[data-storyboard-empty]');
+        if (empty) empty.remove();
+        const image = document.createElement('img');
+        image.className = 'twgif-editor-frame-thumb';
+        image.alt = 'Кадр ' + (index + 1) + ' · ' + formatEditorTime(time);
+        image.title = formatEditorTime(time);
+        image.loading = 'lazy';
+        image.src = dataUrl;
+        image.dataset.frameTime = String(time);
+        image.addEventListener('click', event => {
+          event.preventDefault();
+          seekPreviewTime(Number(image.dataset.frameTime) || 0);
+        });
+        storyboard.appendChild(image);
+      };
+
+      const populateVideoStoryboard = async () => {
+        if (info.kind !== 'video' || !duration || done) return;
+        const run = ++storyboardRun;
+        storyboard.replaceChildren();
+        const probe = document.createElement('video');
+        probe.preload = 'auto'; probe.muted = true; probe.playsInline = true; probe.src = url;
+        const waitForEvent = (eventName, timeoutMs = 2200) => new Promise((resolve, reject) => {
+          let timer = 0;
+          const cleanup = () => {
+            probe.removeEventListener(eventName, onDone);
+            probe.removeEventListener('error', onError);
+            if (timer) clearTimeout(timer);
+          };
+          const onDone = () => { cleanup(); resolve(); };
+          const onError = () => { cleanup(); reject(new Error('Не удалось прочитать кадр видео.')); };
+          probe.addEventListener(eventName, onDone, { once: true });
+          probe.addEventListener('error', onError, { once: true });
+          timer = setTimeout(() => { cleanup(); reject(new Error('Превышено время ожидания кадра.')); }, timeoutMs);
+        });
+        try {
+          const metadataReady = waitForEvent('loadedmetadata', 6000);
+          probe.load();
+          await metadataReady;
+          const count = Math.min(12, Math.max(6, Math.ceil(duration / 2)));
+          const canvas = document.createElement('canvas');
+          canvas.width = 160; canvas.height = 90;
+          const context = canvas.getContext('2d');
+          if (!context) return;
+          for (let i = 0; i < count; i++) {
+            if (done || run !== storyboardRun) return;
+            const time = duration <= 0 ? 0 : duration * i / Math.max(1, count - 1);
+            if (Math.abs((Number(probe.currentTime) || 0) - time) > 0.015) {
+              const seeked = waitForEvent('seeked', 2200);
+              try { probe.currentTime = Math.max(0, Math.min(Math.max(0, probe.duration - 0.03), time)); } catch (_) {}
+              await seeked;
+            }
+            context.clearRect(0, 0, canvas.width, canvas.height);
+            context.drawImage(probe, 0, 0, canvas.width, canvas.height);
+            addStoryboardThumb(canvas.toDataURL('image/jpeg', 0.66), time, i, run);
+            if (i % 3 === 2) await new Promise(yieldToBrowser => window.setTimeout(yieldToBrowser, 0));
+          }
+        } catch (error) {
+          if (!done) logDebug('Video storyboard creation stopped', error?.message || error);
+        } finally {
+          try { probe.pause(); } catch (_) {}
+          probe.removeAttribute('src');
+          try { probe.load(); } catch (_) {}
+        }
+      };
+
+      const populateAnimationStoryboard = async () => {
+        if (!animationDecoder || !animationFrameStarts.length || done) return;
+        const run = ++storyboardRun;
+        storyboard.replaceChildren();
+        const count = Math.min(12, animationFrameStarts.length);
+        for (let i = 0; i < count; i++) {
+          if (done || run !== storyboardRun || !animationDecoder) return;
+          const index = Math.round(i * (animationFrameStarts.length - 1) / Math.max(1, count - 1));
+          try {
+            const result = await animationDecoder.decode({ frameIndex: index });
+            const image = result && result.image;
+            if (!image) continue;
+            const canvas = document.createElement('canvas');
+            canvas.width = 160; canvas.height = 90;
+            const context = canvas.getContext('2d');
+            if (context) {
+              context.fillStyle = '#0c0c10';
+              context.fillRect(0, 0, canvas.width, canvas.height);
+              context.drawImage(image, 0, 0, canvas.width, canvas.height);
+              addStoryboardThumb(canvas.toDataURL('image/jpeg', 0.66), animationFrameStarts[index] || 0, i, run);
+            }
+            try { image.close(); } catch (_) {}
+          } catch (error) {
+            logDebug('Animation storyboard frame unavailable', error?.message || error);
+          }
+          if (i % 3 === 2) await new Promise(yieldToBrowser => window.setTimeout(yieldToBrowser, 0));
+        }
+      };
+
       const pauseAnimationPreview = () => {
         animationPlaying = false;
         if (animationTimer) clearTimeout(animationTimer);
@@ -2769,6 +2866,7 @@
           const frameTime = animationFrameStarts[index] || 0;
           currentLabel.textContent = formatEditorTime(frameTime);
           scrub.value = String(frameTime);
+          updateTimelineControls();
           updateFrame();
           return true;
         } catch (error) {
@@ -2895,8 +2993,9 @@
           currentLabel.hidden = false;
           scrub.disabled = false;
           $('[data-preview-help]').textContent =
-            'Покадровый предпросмотр: диапазон, скорость и зацикливание можно проверить до обработки.';
+            'Покадровый предпросмотр: диапазон, скорость и ping-pong можно проверить до обработки.';
           updateFrame();
+          await populateAnimationStoryboard().catch(error => logDebug('Animation storyboard failed', error?.message || error));
           playAnimationPreview();
         } catch (error) {
           try { if (decoder) decoder.close(); } catch (_) {}
@@ -2911,7 +3010,13 @@
         $('[data-play]').setAttribute('aria-label', media.paused ? 'Воспроизвести' : 'Пауза');
       };
       const onVideoMeta = () => {
-        if (Number.isFinite(media.duration) && media.duration > 0) setDuration(media.duration);
+        if (Number.isFinite(media.duration) && media.duration > 0) {
+          setDuration(media.duration);
+          if (!storyboard.dataset.started) {
+            storyboard.dataset.started = 'true';
+            populateVideoStoryboard().catch(error => logDebug('Video storyboard failed', error?.message || error));
+          }
+        }
         width = media.videoWidth || width; height = media.videoHeight || height; updateFrame();
       };
       const onVideoTime = () => {
@@ -2937,19 +3042,75 @@
         updateFrame();
         overlay.querySelectorAll('[data-preset]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.preset === value)));
       };
-      const trimInput = which => {
+      const seekPreviewTime = seconds => {
+        const value = Math.max(0, Math.min(duration || 0, Number(seconds) || 0));
+        if (info.kind === 'video') {
+          if (videoReverseTimer) clearTimeout(videoReverseTimer);
+          videoReverseTimer = 0;
+          videoPingPongDirection = 1;
+          try { media.currentTime = Math.max(start, Math.min(end, value)); } catch (_) {}
+        } else if (animationDecoder) {
+          seekAnimationPreview(Math.max(start, Math.min(end, value)));
+        }
+        currentLabel.textContent = formatEditorTime(value);
+        scrub.value = String(value);
+        updateTimelineControls();
+      };
+      const trimInput = (which, value) => {
         if (!duration) return;
         userChangedTrim = true;
         const gap = Math.min(.05, duration / 10);
-        if (which === 'start') start = Math.max(0, Math.min(Number(startInput.value) || 0, end - gap));
-        else end = Math.max(start + gap, Math.min(Number(endInput.value) || 0, duration));
-        if (info.kind === 'video' && (media.currentTime < start || media.currentTime > end)) { try { media.currentTime = start; } catch (_) {} }
-        else if (info.kind === 'animation' && animationDecoder &&
-            ((animationFrameStarts[animationFrameIndex] || 0) < start || (animationFrameStarts[animationFrameIndex] || 0) > end)) {
-          seekAnimationPreview(start);
-        }
+        if (which === 'start') start = Math.max(0, Math.min(Number(value) || 0, end - gap));
+        else end = Math.max(start + gap, Math.min(Number(value) || 0, duration));
         updateSummary();
+        seekPreviewTime(which === 'start' ? start : end);
       };
+      const setTrimValueFromPointer = (which, event) => {
+        const rect = timelineTrack.getBoundingClientRect();
+        if (!rect.width || !duration) return;
+        trimInput(which, Math.max(0, Math.min(duration, (event.clientX - rect.left) / rect.width * duration)));
+      };
+      const startTrimDrag = (which, event) => {
+        if (event.button !== 0 && event.pointerType !== 'touch') return;
+        if (!duration) return;
+        trimDrag = { which, pointerId: event.pointerId };
+        try { event.currentTarget.setPointerCapture(event.pointerId); } catch (_) {}
+        event.preventDefault();
+      };
+      startInput.addEventListener('pointerdown', event => startTrimDrag('start', event));
+      endInput.addEventListener('pointerdown', event => startTrimDrag('end', event));
+      timelineTrack.addEventListener('pointermove', event => {
+        if (!trimDrag || event.pointerId !== trimDrag.pointerId) return;
+        setTrimValueFromPointer(trimDrag.which, event);
+      });
+      const finishTrimDrag = event => {
+        if (!trimDrag || (event && event.pointerId !== trimDrag.pointerId)) return;
+        trimDrag = null;
+      };
+      timelineTrack.addEventListener('pointerup', finishTrimDrag);
+      timelineTrack.addEventListener('pointercancel', finishTrimDrag);
+      for (const [handle, which] of [[startInput, 'start'], [endInput, 'end']]) {
+        handle.addEventListener('keydown', event => {
+          if (!duration) return;
+          const step = event.shiftKey ? 1 : event.altKey ? .01 : .1;
+          let next = which === 'start' ? start : end;
+          if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') next -= step;
+          else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') next += step;
+          else if (event.key === 'PageDown') next -= 1;
+          else if (event.key === 'PageUp') next += 1;
+          else if (event.key === 'Home') next = 0;
+          else if (event.key === 'End') next = duration;
+          else return;
+          event.preventDefault();
+          trimInput(which, next);
+        });
+      }
+      timelineTrack.addEventListener('pointerdown', event => {
+        if (event.target.closest('[data-trim-start],[data-trim-end],[data-frame-time]')) return;
+        if (!duration) return;
+        const rect = timelineTrack.getBoundingClientRect();
+        if (rect.width) seekPreviewTime((event.clientX - rect.left) / rect.width * duration);
+      });
       frame.addEventListener('pointerdown', e => {
         if (e.button !== 0 && e.pointerType !== 'touch') return;
         const handle = e.target.closest('[data-handle]');
@@ -2975,24 +3136,22 @@
       });
       const endDrag = e => { if (!drag || (e && e.pointerId !== dragId)) return; drag = null; dragId = null; };
       frame.addEventListener('pointerup', endDrag); frame.addEventListener('pointercancel', endDrag); frame.addEventListener('lostpointercapture', endDrag);
-      startInput.addEventListener('input', () => trimInput('start')); endInput.addEventListener('input', () => trimInput('end'));
-      scrub.addEventListener('input', () => {
-        if (info.kind === 'video' && duration) {
-          try { media.currentTime = Math.max(start, Math.min(end, Number(scrub.value) || 0)); } catch (_) {}
-        } else if (info.kind === 'animation' && duration) {
-          seekAnimationPreview(Number(scrub.value) || 0);
-        }
-      });
-      speedInput.addEventListener('change', () => {
-        speed = Number(speedInput.value) || 1;
-        if (info.kind === 'video') {
-          try { media.playbackRate = speed; } catch (_) {}
-        } else if (animationDecoder && animationPlaying) {
-          seekAnimationPreview(animationFrameStarts[animationFrameIndex] || start);
-        }
+      scrub.addEventListener('input', () => seekPreviewTime(Number(scrub.value) || 0));
+      speedInput.addEventListener('input', () => {
+        speed = Math.max(.25, Math.min(2, Number(speedInput.value) || 1));
+        if (info.kind === 'video') { try { media.playbackRate = speed; } catch (_) {} }
+        else if (animationDecoder && animationPlaying) seekAnimationPreview(animationFrameStarts[animationFrameIndex] || start);
         updateSummary();
       });
-      loopInput.addEventListener('change', () => { loop = loopInput.checked; updateSummary(); });
+      loopInput.addEventListener('change', () => { loop = loopInput.checked; animationDirection = 1; videoPingPongDirection = 1; updateSummary(); });
+      cropToggle.addEventListener('click', () => {
+        cropMode = !cropMode;
+        dialog.classList.toggle('twgif-cropping', cropMode);
+        cropControls.hidden = !cropMode;
+        cropToggle.textContent = cropMode ? 'Готово' : 'Включить';
+        cropToggle.setAttribute('aria-pressed', String(cropMode));
+        updateFrame();
+      });
       overlay.querySelectorAll('[data-preset]').forEach(b => b.addEventListener('click', () => preset(b.dataset.preset)));
       $('[data-reset]').addEventListener('click', () => preset('free'));
       playButton.addEventListener('click', () => {
