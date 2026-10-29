@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.59
+// @version      5.9.60
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,8 +37,8 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.59';
-  const VERSION = 14;
+  const APP_VERSION = '5.9.60';
+  const VERSION = 15;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
@@ -2486,7 +2486,7 @@
       '.twgif-editor-crop-frame:after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(to right,transparent 33%,#ffffff44 33.3%,transparent 33.6%,transparent 66.3%,#ffffff44 66.6%,transparent 66.9%),linear-gradient(to bottom,transparent 33%,#ffffff44 33.3%,transparent 33.6%,transparent 66.3%,#ffffff44 66.6%,transparent 66.9%)}',
       '.twgif-editor-handle{position:absolute;z-index:4;width:13px;height:13px;border:2px solid white;border-radius:4px;background:#a970ff;touch-action:none}.twgif-editor-handle[data-handle=nw]{left:-6px;top:-6px;cursor:nwse-resize}.twgif-editor-handle[data-handle=ne]{right:-6px;top:-6px;cursor:nesw-resize}.twgif-editor-handle[data-handle=sw]{left:-6px;bottom:-6px;cursor:nesw-resize}.twgif-editor-handle[data-handle=se]{right:-6px;bottom:-6px;cursor:nwse-resize}',
       '.twgif-editor-stage-hint{position:absolute;z-index:1;top:10px;left:10px;padding:5px 8px;border-radius:7px;background:#08080bd9;color:#ccc;font-size:10px;pointer-events:none}',
-      '.twgif-editor-player{display:flex;align-items:center;gap:9px;padding:10px;border:1px solid #ffffff12;border-radius:11px;background:#ffffff05}.twgif-editor-play{width:34px;height:34px;border:1px solid #a970ff66;border-radius:9px;background:#9147ff24;color:#eadcff;cursor:pointer}.twgif-editor-player-time{min-width:70px;color:#c9c9d2;font-size:11px;font-variant-numeric:tabular-nums}.twgif-editor-player-range{width:100%;accent-color:#a970ff}',
+      '.twgif-editor-player{display:flex;align-items:center;gap:9px;padding:10px;border:1px solid #ffffff12;border-radius:11px;background:#ffffff05}.twgif-editor-play{width:34px;height:34px;border:1px solid #a970ff66;border-radius:9px;background:#9147ff24;color:#eadcff;cursor:pointer}.twgif-editor-play:disabled{opacity:.4;cursor:not-allowed}.twgif-editor-player-time{min-width:70px;color:#c9c9d2;font-size:11px;font-variant-numeric:tabular-nums}.twgif-editor-player-range{width:100%;accent-color:#a970ff}.twgif-editor-player-note{color:#bbbcca;font-size:11px}',
       '.twgif-editor-section{padding:13px;border:1px solid #ffffff12;border-radius:12px;background:#ffffff05}.twgif-editor-section+.twgif-editor-section{margin-top:9px}.twgif-editor-section-head{display:flex;justify-content:space-between;gap:8px;margin-bottom:9px}.twgif-editor-section-title{font-size:12px;font-weight:750}.twgif-editor-section-meta{color:#a8a8b4;font-size:10px}',
       '.twgif-editor-control-label{display:flex;justify-content:space-between;margin:9px 0 4px;color:#bdbdc8;font-size:11px}.twgif-editor-range{width:100%;accent-color:#a970ff}.twgif-editor-range:disabled{opacity:.4}.twgif-editor-range-values{display:flex;justify-content:space-between;color:#888894;font-size:10px}',
       '.twgif-editor-select{width:100%;padding:9px;border:1px solid #3b3b46;border-radius:9px;background:#202027;color:#f4f4f5;font:inherit;font-size:12px}.twgif-editor-help{margin-top:7px;color:#90909c;font-size:10px;line-height:1.5}',
@@ -2530,11 +2530,26 @@
       const stage = $('[data-stage]'), frame = $('[data-crop-frame]');
       const scrub = $('[data-scrub]'), startInput = $('[data-start]'), endInput = $('[data-end]');
       const speedInput = $('[data-speed]'), loopInput = $('[data-loop]');
+      const playButton = $('[data-play]');
+      const currentLabel = $('[data-current]');
+      const durationLabel = $('[data-duration]');
+      const animationNote = document.createElement('span');
+      animationNote.className = 'twgif-editor-player-note';
+      animationNote.textContent = 'Анимация воспроизводится браузером';
+      animationNote.hidden = true;
+      durationLabel.before(animationNote);
       const media = document.createElement(info.kind === 'video' ? 'video' : 'img');
       media.className = 'twgif-editor-preview-media';
       if (info.kind === 'video') { media.preload = 'metadata'; media.playsInline = true; }
       else { media.alt = 'Предпросмотр анимации'; media.draggable = false; }
       stage.insertBefore(media, frame);
+      const animationCanvas = info.kind === 'animation' ? document.createElement('canvas') : null;
+      if (animationCanvas) {
+        animationCanvas.className = 'twgif-editor-preview-media';
+        animationCanvas.hidden = true;
+        animationCanvas.setAttribute('aria-label', 'Покадровый предпросмотр анимации');
+        stage.insertBefore(animationCanvas, frame);
+      }
 
       const cfg = loadConfig(), category = info.kind === 'video' ? 'video' : 'gif';
       const chosen = getEditedOutputFormat(file, category, info.animationFormat === 'webp', cfg.conversionRules[category] || 'keep');
@@ -2543,7 +2558,18 @@
 
       let done = false, duration = 0, width = 0, height = 0, start = 0, end = 0, speed = 1, loop = true;
       let crop = { x: 0, y: 0, w: 100, h: 100 }, drag = null, dragId = null, resizeObserver = null, resizeHandler = null;
+      let userChangedTrim = false;
+      let animationDecoder = null, animationFrameDurations = [], animationFrameStarts = [];
+      let animationFrameIndex = 0, animationPlaying = false, animationTimer = 0, animationGeneration = 0;
       const cleanup = () => {
+        animationPlaying = false;
+        animationGeneration++;
+        if (animationTimer) clearTimeout(animationTimer);
+        animationTimer = 0;
+        if (animationDecoder) {
+          try { animationDecoder.close(); } catch (_) {}
+          animationDecoder = null;
+        }
         document.removeEventListener('keydown', onKey, true);
         if (resizeObserver) resizeObserver.disconnect();
         if (resizeHandler) window.removeEventListener('resize', resizeHandler);
@@ -2599,9 +2625,217 @@
         if (!Number.isFinite(n) || n <= 0) return;
         duration = n; start = Math.min(start, duration); end = end > 0 ? Math.min(end, duration) : duration;
         if (end <= start) { start = 0; end = duration; }
-        startInput.disabled = false; endInput.disabled = false; scrub.disabled = info.kind !== 'video';
+        startInput.disabled = false; endInput.disabled = false;
+        scrub.disabled = info.kind !== 'video' && !animationDecoder;
         updateSummary();
       };
+
+      const pauseAnimationPreview = () => {
+        animationPlaying = false;
+        if (animationTimer) clearTimeout(animationTimer);
+        animationTimer = 0;
+        playButton.textContent = '▶';
+        playButton.setAttribute('aria-label', 'Воспроизвести анимацию');
+      };
+
+      const fallbackAnimationPreview = () => {
+        if (done) return;
+        animationPlaying = false;
+        animationGeneration++;
+        if (animationTimer) clearTimeout(animationTimer);
+        animationTimer = 0;
+        if (animationDecoder) {
+          try { animationDecoder.close(); } catch (_) {}
+          animationDecoder = null;
+        }
+        if (animationCanvas) animationCanvas.hidden = true;
+        media.hidden = false;
+        media.src = url;
+        playButton.hidden = true;
+        scrub.hidden = true;
+        currentLabel.hidden = true;
+        animationNote.hidden = false;
+        animationNote.textContent = 'Анимация · предпросмотр браузера';
+        $('[data-preview-help]').textContent =
+          'Браузер показывает исходную анимацию. Рамка кадрирования видна сразу; диапазон и скорость применятся при обработке.';
+      };
+
+      const findAnimationFrameAt = seconds => {
+        if (!animationFrameStarts.length) return 0;
+        const target = Math.max(0, Number(seconds) || 0);
+        let index = 0;
+        for (let i = 1; i < animationFrameStarts.length; i++) {
+          if (animationFrameStarts[i] > target) break;
+          index = i;
+        }
+        return index;
+      };
+
+      const drawAnimationFrame = async (index, generation) => {
+        if (!animationDecoder || done || generation !== animationGeneration) return false;
+        try {
+          const result = await animationDecoder.decode({ frameIndex: index });
+          const image = result && result.image;
+          if (!image) return false;
+          if (done || generation !== animationGeneration || !animationCanvas) {
+            try { image.close(); } catch (_) {}
+            return false;
+          }
+          const frameWidth = Number(image.displayWidth || image.codedWidth) || width;
+          const frameHeight = Number(image.displayHeight || image.codedHeight) || height;
+          const context = animationCanvas.getContext('2d');
+          if (!context || frameWidth <= 0 || frameHeight <= 0) {
+            try { image.close(); } catch (_) {}
+            return false;
+          }
+          if (animationCanvas.width !== frameWidth) animationCanvas.width = frameWidth;
+          if (animationCanvas.height !== frameHeight) animationCanvas.height = frameHeight;
+          width = frameWidth;
+          height = frameHeight;
+          context.clearRect(0, 0, frameWidth, frameHeight);
+          context.drawImage(image, 0, 0, frameWidth, frameHeight);
+          try { image.close(); } catch (_) {}
+          animationFrameIndex = index;
+          const frameTime = animationFrameStarts[index] || 0;
+          currentLabel.textContent = formatEditorTime(frameTime);
+          scrub.value = String(frameTime);
+          updateFrame();
+          return true;
+        } catch (error) {
+          logDebug('Frame preview decode failed; using native animation', error?.message || error);
+          fallbackAnimationPreview();
+          return false;
+        }
+      };
+
+      const runAnimationPreview = async generation => {
+        if (!animationPlaying || !animationDecoder || done || generation !== animationGeneration) return;
+        const drawn = await drawAnimationFrame(animationFrameIndex, generation);
+        if (!drawn || !animationPlaying || generation !== animationGeneration) return;
+        const frameDuration = Math.max(0.01, Number(animationFrameDurations[animationFrameIndex]) || 0.1);
+        animationTimer = window.setTimeout(() => {
+          animationTimer = 0;
+          if (!animationPlaying || !animationDecoder || done || generation !== animationGeneration) return;
+          const nextIndex = animationFrameIndex + 1;
+          const nextTime = nextIndex < animationFrameStarts.length ? animationFrameStarts[nextIndex] : duration;
+          if (nextIndex >= animationFrameStarts.length || nextTime >= end - 0.005) {
+            if (loop && end > start + 0.02) animationFrameIndex = findAnimationFrameAt(start);
+            else { pauseAnimationPreview(); return; }
+          } else animationFrameIndex = nextIndex;
+          runAnimationPreview(generation).catch(() => pauseAnimationPreview());
+        }, Math.max(10, Math.min(10000, frameDuration / speed * 1000)));
+      };
+
+      const playAnimationPreview = () => {
+        if (!animationDecoder || done) return;
+        if (duration > 0 && (animationFrameStarts[animationFrameIndex] < start ||
+            animationFrameStarts[animationFrameIndex] >= end)) animationFrameIndex = findAnimationFrameAt(start);
+        animationPlaying = true;
+        playButton.textContent = 'Ⅱ';
+        playButton.setAttribute('aria-label', 'Приостановить анимацию');
+        const generation = ++animationGeneration;
+        runAnimationPreview(generation).catch(() => pauseAnimationPreview());
+      };
+
+      const seekAnimationPreview = seconds => {
+        if (!animationDecoder || done) return;
+        const wasPlaying = animationPlaying;
+        if (animationTimer) clearTimeout(animationTimer);
+        animationTimer = 0;
+        animationFrameIndex = findAnimationFrameAt(Math.max(start, Math.min(end, Number(seconds) || 0)));
+        const generation = ++animationGeneration;
+        drawAnimationFrame(animationFrameIndex, generation).then(drawn => {
+          if (!drawn) { pauseAnimationPreview(); return; }
+          if (!wasPlaying) return;
+          animationPlaying = true;
+          playButton.textContent = 'Ⅱ';
+          playButton.setAttribute('aria-label', 'Приостановить анимацию');
+          const frameDuration = Math.max(0.01, Number(animationFrameDurations[animationFrameIndex]) || 0.1);
+          animationTimer = window.setTimeout(() => {
+            animationTimer = 0;
+            if (generation !== animationGeneration || !animationPlaying) return;
+            const nextIndex = animationFrameIndex + 1;
+            const nextTime = nextIndex < animationFrameStarts.length ? animationFrameStarts[nextIndex] : duration;
+            if (nextIndex >= animationFrameStarts.length || nextTime >= end - 0.005) {
+              if (loop && end > start + 0.02) animationFrameIndex = findAnimationFrameAt(start);
+              else { pauseAnimationPreview(); return; }
+            } else animationFrameIndex = nextIndex;
+            runAnimationPreview(generation).catch(() => pauseAnimationPreview());
+          }, Math.max(10, Math.min(10000, frameDuration / speed * 1000)));
+        }).catch(() => fallbackAnimationPreview());
+      };
+
+      const setupAnimationPreview = async durationPromise => {
+        if (info.kind !== 'animation') return;
+        if (typeof ImageDecoder !== 'function' || typeof file.stream !== 'function') {
+          fallbackAnimationPreview();
+          return;
+        }
+        let decoder = null;
+        try {
+          const mime = info.mime || (info.animationFormat === 'webp' ? 'image/webp'
+            : info.animationFormat === 'apng' ? 'image/png' : 'image/gif');
+          decoder = new ImageDecoder({ data: file.stream(), type: mime });
+          await decoder.tracks.ready;
+          if (done) { try { decoder.close(); } catch (_) {} return; }
+          const track = decoder.tracks.selectedTrack;
+          const frameCount = Math.floor(Number(track && track.frameCount) || 0);
+          if (!frameCount || frameCount > 1500) {
+            try { decoder.close(); } catch (_) {}
+            fallbackAnimationPreview();
+            return;
+          }
+          const estimatedDuration = Math.max(0, Number(await durationPromise) || 0);
+          const frameDurations = [];
+          let measuredTotal = 0;
+          for (let index = 0; index < frameCount; index++) {
+            if (done) { try { decoder.close(); } catch (_) {} return; }
+            const result = await decoder.decode({ frameIndex: index });
+            const image = result && result.image;
+            const durationMicros = Number(image && image.duration);
+            const frameDuration = Number.isFinite(durationMicros) && durationMicros > 0
+              ? durationMicros / 1000000
+              : (estimatedDuration > 0 ? estimatedDuration / frameCount : 0.1);
+            frameDurations.push(Math.max(0.01, Math.min(60, frameDuration)));
+            measuredTotal += frameDurations[frameDurations.length - 1];
+            if (index === 0 && image) {
+              width = Number(image.displayWidth || image.codedWidth) || width;
+              height = Number(image.displayHeight || image.codedHeight) || height;
+            }
+            try { if (image) image.close(); } catch (_) {}
+            if (index > 0 && index % 20 === 0) await new Promise(yieldToBrowser => window.setTimeout(yieldToBrowser, 0));
+          }
+          if (done) { try { decoder.close(); } catch (_) {} return; }
+          animationDecoder = decoder;
+          animationFrameDurations = frameDurations;
+          animationFrameStarts = [];
+          let elapsed = 0;
+          for (const frameDuration of frameDurations) {
+            animationFrameStarts.push(elapsed);
+            elapsed += frameDuration;
+          }
+          if (!userChangedTrim) { start = 0; end = measuredTotal; }
+          setDuration(measuredTotal);
+          animationCanvas.hidden = false;
+          media.hidden = true;
+          animationNote.hidden = true;
+          playButton.hidden = false;
+          playButton.disabled = false;
+          scrub.hidden = false;
+          currentLabel.hidden = false;
+          scrub.disabled = false;
+          $('[data-preview-help]').textContent =
+            'Покадровый предпросмотр: диапазон, скорость и зацикливание можно проверить до обработки.';
+          updateFrame();
+          playAnimationPreview();
+        } catch (error) {
+          try { if (decoder) decoder.close(); } catch (_) {}
+          if (animationDecoder === decoder) animationDecoder = null;
+          logDebug('Animated preview unavailable; using native animation', error?.message || error);
+          fallbackAnimationPreview();
+        }
+      };
+
       const onPlayState = () => {
         $('[data-play]').textContent = media.paused ? '▶' : 'Ⅱ';
         $('[data-play]').setAttribute('aria-label', media.paused ? 'Воспроизвести' : 'Пауза');
@@ -2635,10 +2869,15 @@
       };
       const trimInput = which => {
         if (!duration) return;
+        userChangedTrim = true;
         const gap = Math.min(.05, duration / 10);
         if (which === 'start') start = Math.max(0, Math.min(Number(startInput.value) || 0, end - gap));
         else end = Math.max(start + gap, Math.min(Number(endInput.value) || 0, duration));
         if (info.kind === 'video' && (media.currentTime < start || media.currentTime > end)) { try { media.currentTime = start; } catch (_) {} }
+        else if (info.kind === 'animation' && animationDecoder &&
+            ((animationFrameStarts[animationFrameIndex] || 0) < start || (animationFrameStarts[animationFrameIndex] || 0) > end)) {
+          seekAnimationPreview(start);
+        }
         updateSummary();
       };
       frame.addEventListener('pointerdown', e => {
@@ -2667,16 +2906,37 @@
       const endDrag = e => { if (!drag || (e && e.pointerId !== dragId)) return; drag = null; dragId = null; };
       frame.addEventListener('pointerup', endDrag); frame.addEventListener('pointercancel', endDrag); frame.addEventListener('lostpointercapture', endDrag);
       startInput.addEventListener('input', () => trimInput('start')); endInput.addEventListener('input', () => trimInput('end'));
-      scrub.addEventListener('input', () => { if (info.kind === 'video' && duration) { try { media.currentTime = Math.max(start, Math.min(end, Number(scrub.value) || 0)); } catch (_) {} } });
-      speedInput.addEventListener('change', () => { speed = Number(speedInput.value) || 1; if (info.kind === 'video') { try { media.playbackRate = speed; } catch (_) {} } updateSummary(); });
+      scrub.addEventListener('input', () => {
+        if (info.kind === 'video' && duration) {
+          try { media.currentTime = Math.max(start, Math.min(end, Number(scrub.value) || 0)); } catch (_) {}
+        } else if (info.kind === 'animation' && duration) {
+          seekAnimationPreview(Number(scrub.value) || 0);
+        }
+      });
+      speedInput.addEventListener('change', () => {
+        speed = Number(speedInput.value) || 1;
+        if (info.kind === 'video') {
+          try { media.playbackRate = speed; } catch (_) {}
+        } else if (animationDecoder && animationPlaying) {
+          seekAnimationPreview(animationFrameStarts[animationFrameIndex] || start);
+        }
+        updateSummary();
+      });
       loopInput.addEventListener('change', () => { loop = loopInput.checked; updateSummary(); });
       overlay.querySelectorAll('[data-preset]').forEach(b => b.addEventListener('click', () => preset(b.dataset.preset)));
       $('[data-reset]').addEventListener('click', () => preset('free'));
-      $('[data-play]').addEventListener('click', () => {
-        if (info.kind !== 'video') { $('[data-preview-help]').textContent = 'Анимация воспроизводится браузером. Скорость и диапазон применятся при обработке.'; return; }
-        if (media.paused) { if (duration && (media.currentTime < start || media.currentTime >= end)) { try { media.currentTime = start; } catch (_) {} }
-          media.playbackRate = speed; media.play().catch(() => { $('[data-preview-help]').textContent = 'Не удалось запустить предпросмотр; настройки всё равно применятся.'; }); }
-        else media.pause();
+      playButton.addEventListener('click', () => {
+        if (info.kind === 'animation') {
+          if (!animationDecoder) return;
+          if (animationPlaying) pauseAnimationPreview();
+          else playAnimationPreview();
+          return;
+        }
+        if (media.paused) {
+          if (duration && (media.currentTime < start || media.currentTime >= end)) { try { media.currentTime = start; } catch (_) {} }
+          media.playbackRate = speed;
+          media.play().catch(() => { $('[data-preview-help]').textContent = 'Не удалось запустить предпросмотр; настройки всё равно применятся.'; });
+        } else media.pause();
       });
       overlay.querySelectorAll('[data-editor-close],[data-cancel]').forEach(b => b.addEventListener('click', () => finish(null)));
       overlay.addEventListener('pointerdown', e => { if (e.target === overlay) finish(null); });
@@ -2690,12 +2950,16 @@
         media.addEventListener('play', onPlayState); media.addEventListener('pause', onPlayState);
         media.src = url; media.load(); if (media.readyState >= 1) onVideoMeta();
       } else {
+        playButton.disabled = true;
         media.addEventListener('load', () => { width = media.naturalWidth || width; height = media.naturalHeight || height; updateFrame(); }, { once: true });
         media.src = url; if (media.complete && media.naturalWidth) { width = media.naturalWidth; height = media.naturalHeight; updateFrame(); }
         const durationPromise = info.animationFormat === 'webp' ? getAnimatedWebPDurationSeconds(file)
           : info.animationFormat === 'apng' ? getApngDurationSeconds(file) : getGifDurationSeconds(file);
         durationPromise.then(setDuration).catch(() => {});
-        $('[data-preview-help]').textContent = 'Анимация воспроизводится браузером. Кадрирование видно сразу; скорость и диапазон применятся при обработке.';
+        setupAnimationPreview(durationPromise).catch(error => {
+          logDebug('Animation preview setup failed', error?.message || error);
+          fallbackAnimationPreview();
+        });
       }
       if (typeof ResizeObserver === 'function') { resizeObserver = new ResizeObserver(updateFrame); resizeObserver.observe(stage); }
       else { resizeHandler = updateFrame; window.addEventListener('resize', resizeHandler, { passive: true }); }
