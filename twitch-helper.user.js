@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.57
+// @version      5.9.58
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,8 +37,8 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.57';
-  const VERSION = 12;
+  const APP_VERSION = '5.9.58';
+  const VERSION = 13;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
@@ -2176,7 +2176,9 @@
         totalMilliseconds += webpReadU24LE(chunk.data, 12);
         frameCount++;
       }
-      return frameCount > 0 && totalMilliseconds > 0 ? totalMilliseconds / 1000 : 0;
+      // Some valid animated WebPs have zero frame delays. When frame chunks exist,
+      // estimate their duration so the editor can still expose a useful trim range.
+      return frameCount > 0 ? (totalMilliseconds > 0 ? totalMilliseconds / 1000 : frameCount * 0.1) : 0;
     }).catch(() => 0);
   }
 
@@ -2411,7 +2413,9 @@
         if (tag === 'IEND') break;
         p += 12 + n;
       }
-      return frames ? total : 0;
+      // A zero-delay APNG still contains frames; use a conservative estimate rather
+      // than disabling the timeline completely.
+      return frames ? (total > 0 ? total : frames * 0.1) : 0;
     } catch (_) { return 0; }
   }
 
@@ -2514,7 +2518,7 @@
         '<option value=".25">0,25× · очень медленно</option><option value=".5">0,5× · медленно</option><option value=".75">0,75× · медленнее</option><option value="1" selected>1× · обычная</option><option value="1.25">1,25× · быстрее</option><option value="1.5">1,5× · быстро</option><option value="2">2× · вдвое быстрее</option></select><div class="twgif-editor-help">Для видео предпросмотр меняется сразу. У анимаций скорость применяется при обработке.</div></section>',
         '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Кадрирование</span><button class="twgif-editor-preset" data-reset>Сбросить</button></div><div class="twgif-editor-presets">',
         '<button class="twgif-editor-preset" data-preset="free" aria-pressed="true">Свободно</button><button class="twgif-editor-preset" data-preset="16:9">16:9</button><button class="twgif-editor-preset" data-preset="9:16">9:16</button><button class="twgif-editor-preset" data-preset="1:1">1:1</button><button class="twgif-editor-preset" data-preset="4:3">4:3</button></div><div class="twgif-editor-crop-readout"><span>Область кадра</span><strong data-crop-readout>100% × 100%</strong></div><div class="twgif-editor-help">Потяни рамку, чтобы переместить область. Углы меняют размер.</div></section>',
-        '<section class="twgif-editor-section"><label class="twgif-editor-toggle"><input type="checkbox" data-loop checked><span><strong>Зацикливание</strong><small>Повтор в предпросмотре; сохраняется для GIF/WebP.</small></span></label></section>',
+        '<section class="twgif-editor-section"><label class="twgif-editor-toggle"><input type="checkbox" data-loop checked><span><strong>Зацикливание</strong><small>Сохраняется в GIF/WebP; для видео управляет повтором предпросмотра.</small></span></label></section>',
         '<div class="twgif-editor-output"><span><span class="twgif-editor-output-label">Формат результата</span><br><span class="twgif-editor-output-label" data-output-note>С учётом конвертации</span></span><strong class="twgif-editor-output-value" data-output>—</strong></div></aside></div>',
         '<footer class="twgif-editor-footer"><div class="twgif-editor-summary" data-summary>Итоговая длительность: <strong>—</strong></div><div class="twgif-editor-actions"><button class="twgif-editor-btn" data-cancel>Отмена</button><button class="twgif-editor-btn twgif-editor-btn-primary" data-apply>Применить и продолжить →</button></div></footer></section>'
       ].join('');
@@ -3566,6 +3570,10 @@
               return processSingleFile(file, sourceKey, runId, compressEnabled, edits);
             }
             if (info.kind === 'animation') type = 'gif';
+          } else if (/\.webp(?:$|[?#])/i.test(originalUrl)) {
+            // The file was already downloaded for inspection; avoid a second network
+            // probe when the editor correctly identifies a static WebP.
+            animatedWebPStatusCache.set(originalUrl, false);
           }
         }
         if (type !== 'video') await waitForImage(originalUrl);
