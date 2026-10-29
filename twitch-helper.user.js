@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.46
+// @version      5.9.47
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.46';
+  const APP_VERSION = '5.9.47';
   const VERSION = 6;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -69,6 +69,8 @@
   let panelView = 'gallery';
   let settingsTab = 'general';
   let galleryTab = 'all';
+  // Independent from galleryTab (All / HD / 7TV / Favorites).
+  let galleryMediaType = 'all'; // 'all' | 'photos' | 'videos'
   let galleryPage = 0;
   let mediaLoadRun = 0;
   let chatMediaObserver = null;
@@ -92,7 +94,7 @@
   let activeTrigger = null;
   let triggerResultTimer = 0;
   let portalImportDepth = 0;
-  let pendingPortalResult = '';
+  let pendingTriggerResult = '';
   let activeComposer = null;
   let savedComposerRange = null;
   let savedComposerOffset = null;
@@ -198,6 +200,7 @@
     try { return JSON.parse(value); } catch (_) { return fallback; }
   }
 
+  // Collection persistence and normalization: callers work with validated, sorted records.
   function loadData() {
     const raw = parseJson(GM_getValue(DATA_KEY, EMPTY_DATA()), EMPTY_DATA());
     const data = EMPTY_DATA();
@@ -562,6 +565,7 @@
     logDebug('File processing cancelled by user', { runId: cancelledRun });
   }
 
+  // Network layer: GM_xmlhttpRequest is used for cross-origin media and API requests.
   function request(options) {
     return new Promise((resolve, reject) => {
       const { acceptHttpErrors = false, trackForCancel = false, ...xhrOptions } = options;
@@ -981,6 +985,7 @@
     return file;
   }
 
+  // Local IndexedDB cache is per origin; the bounded GM cache below is shared across matched sites.
   function openMediaCacheDb() {
     if (mediaCacheDbPromise) return mediaCacheDbPromise;
     if (typeof indexedDB === 'undefined') return Promise.resolve(null);
@@ -1250,6 +1255,7 @@
     return null;
   }
 
+  // Upload and conversion pipeline: processing run IDs make cancellation safe across awaits.
   async function uploadToKappa(file, onUploadProgress = null, runId = null) {
     const endpoints = [KAPPA_UPLOAD_URL, KAPPA_UPLOAD_MIRROR_URL];
     let lastError = null;
@@ -2180,6 +2186,7 @@
 
 
 
+  // Import-result feedback is separate from the portal's in-progress pulse.
   function playTriggerResult(result) {
     const trigger = document.getElementById('twgif-trigger') || activeTrigger;
     if (!trigger || !trigger.isConnected) return;
@@ -2199,23 +2206,32 @@
   }
 
   function flashTriggerResult(result) {
-    // Only portal-triggered imports notify. Play the result immediately while
-    // the user can see the page; queue it only if the tab/window is not visible.
-    if (portalImportDepth < 1) return;
-    if (document.visibilityState === 'hidden' ||
-        (typeof document.hasFocus === 'function' && !document.hasFocus())) {
-      pendingPortalResult = result;
+    // Avoid noisy notifications while the gallery itself is visible. Imports can
+    // finish after the panel is closed, regardless of how they were started.
+    if (isPanelOpen()) {
+      pendingTriggerResult = '';
       return;
     }
-    pendingPortalResult = '';
+    if (document.visibilityState === 'hidden' ||
+        (typeof document.hasFocus === 'function' && !document.hasFocus())) {
+      pendingTriggerResult = result;
+      return;
+    }
+    pendingTriggerResult = '';
     playTriggerResult(result);
   }
 
-  function showPendingPortalResult() {
-    if (!pendingPortalResult || document.visibilityState === 'hidden') return;
+  function showPendingTriggerResult() {
+    if (!pendingTriggerResult) return;
+    // A pending result is no longer useful if the user opens the gallery first.
+    if (isPanelOpen()) {
+      pendingTriggerResult = '';
+      return;
+    }
+    if (document.visibilityState === 'hidden') return;
     if (typeof document.hasFocus === 'function' && !document.hasFocus()) return;
-    const result = pendingPortalResult;
-    pendingPortalResult = '';
+    const result = pendingTriggerResult;
+    pendingTriggerResult = '';
     playTriggerResult(result);
   }
 
@@ -2330,6 +2346,20 @@
         /^\/emote\/[a-z0-9]{20,32}\/\d+x\.(?:webp|gif|png|avif|jpe?g)$/i.test(url.pathname);
     } catch (_) {
       return false;
+    }
+  }
+
+  function isVideoGalleryItem(item) {
+    if (String(item?.type || '').toLowerCase() === 'video') return true;
+
+    const rawUrl = String(item?.previewUrl || item?.url || '');
+    if (!rawUrl) return false;
+    try {
+      const pathname = new URL(rawUrl, location.href).pathname;
+      return /\.(?:webm|mp4|mov|m4v|mkv|avi|ogv|mpg|mpeg)$/i.test(pathname);
+    } catch (_) {
+      // Fallback for unusual/non-standard URL strings.
+      return /\.(?:webm|mp4|mov|m4v|mkv|avi|ogv|mpg|mpeg)(?:$|[?#])/i.test(rawUrl);
     }
   }
 
@@ -2624,6 +2654,7 @@
     return new File([blob], name, { type: mime, lastModified: Date.now() });
   }
 
+  // Import entry points share the same core pipeline, whether a file, URL, or supported service link is used.
   async function addUrl(rawUrl, customName = '', runId = null, compressEnabled = isCompressionEnabled()) {
     if (runId !== null && runId !== undefined) return addUrlCore(rawUrl, customName, runId, '', compressEnabled);
     if (activeProcessingRunId) {
@@ -2665,6 +2696,7 @@
     );
     if (alreadyAdded) {
       setStatus('Это медиа уже есть в галерее.', 'info');
+      flashTriggerResult('duplicate');
       return false;
     }
 
@@ -2955,6 +2987,7 @@
     return 'сайте';
   }
 
+  // Platform adapter: find and preserve the active chat composer despite SPA DOM replacement.
   function looksLikeChatEditor(element) {
     if (!element || !element.isConnected || !element.getClientRects().length || element.closest('#twgif-panel')) return false;
     const type = String(element.getAttribute('type') || '').toLowerCase();
@@ -3415,6 +3448,10 @@
       .twgif-settings-tabs{display:flex;align-items:center;gap:1px}.twgif-settings-tabs[hidden]{display:none!important}
       .twgif-tab{appearance:none;border:0;background:transparent;color:#a8a8b3;width:28px;height:28px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
       .twgif-tab:hover{background:#303036;color:#fff}.twgif-tab[aria-selected=true]{background:#392653;color:#d6b4ff}
+      .twgif-media-filter{display:flex;align-items:center;gap:4px;margin:0 0 6px}
+      .twgif-media-filter-button{appearance:none;display:inline-flex;align-items:center;justify-content:center;border:1px solid #3c3c44;border-radius:6px;background:#202024;color:#bcbcc6;padding:5px 10px;font:inherit;font-size:11px;font-weight:500;line-height:1.2;cursor:pointer}
+      .twgif-media-filter-button:hover{background:#303036;color:#fff}
+      .twgif-media-filter-button[aria-pressed=true]{border-color:#8b5bd4;background:#392653;color:#e8d7ff}
       .twgif-gallery-tabs{display:flex;gap:5px;margin:0 0 8px}
       .twgif-gallery-tab{appearance:none;display:inline-flex;align-items:center;gap:5px;border:1px solid #3c3c44;border-radius:6px;background:#202024;color:#bcbcc6;padding:6px 9px;font:inherit;font-size:11px;font-weight:500;line-height:1.2;cursor:pointer}
       .twgif-gallery-tab:hover{background:#303036;color:#fff}.twgif-gallery-tab[aria-selected=true]{border-color:#8b5bd4;background:#392653;color:#e8d7ff}
@@ -3766,6 +3803,7 @@
     return true;
   }
 
+  // The toolbar trigger is also the file-drop portal; portalImportDepth controls only its loading pulse.
   function createTrigger() {
     const button = document.createElement('button');
     button.id = 'twgif-trigger';
@@ -4407,6 +4445,7 @@
     syncProgressIndicatorView();
   }
 
+  // Gallery shell: filter controls are independent from category tabs and paging.
   function renderGallery() {
     const body = document.getElementById('twgif-panel-body');
     if (!body) return;
@@ -4416,7 +4455,12 @@
         <button id="twgif-add-url" class="twgif-small-btn twgif-primary twgif-toolbar-icon" type="button" title="Добавить ссылку" aria-label="Добавить ссылку">+</button>
         <label class="twgif-compress-toggle" title="Отключить уменьшение разрешения и ограничение качества" for="twgif-compress-toggle"><input id="twgif-compress-toggle" type="checkbox" ${isCompressionEnabled() ? 'checked' : ''}>сжимать</label>
       </div>
-      <div class="twgif-gallery-tabs" role="tablist" aria-label="Тип медиа">
+      <div class="twgif-media-filter" role="group" aria-label="Фильтр по типу медиа">
+        <button class="twgif-media-filter-button" type="button" data-media-filter="all" aria-pressed="true">Всё</button>
+        <button class="twgif-media-filter-button" type="button" data-media-filter="photos" aria-pressed="false">Фото</button>
+        <button class="twgif-media-filter-button" type="button" data-media-filter="videos" aria-pressed="false">Видео</button>
+      </div>
+      <div class="twgif-gallery-tabs" role="tablist" aria-label="Категория медиа">
         <button class="twgif-gallery-tab" type="button" data-gallery-tab="all" role="tab" aria-selected="true">Все <span id="twgif-all-count" class="twgif-gallery-tab-count">0</span></button>
         <button class="twgif-gallery-tab" type="button" data-gallery-tab="hd" role="tab" aria-selected="false">HD <span id="twgif-hd-count" class="twgif-gallery-tab-count">0</span></button>
         <button class="twgif-gallery-tab" type="button" data-gallery-tab="7tv" role="tab" aria-selected="false">7TV <span id="twgif-7tv-count" class="twgif-gallery-tab-count">0</span></button>
@@ -4462,6 +4506,7 @@
           } catch (error) {
             if (error?.name === 'AbortError' || !isProcessingRunCurrent(runId)) break;
             failures.push(`${link}: ${error.message || error}`);
+            flashTriggerResult('error');
             logDebug('Bulk URL add failed', { link, error: error.message || error });
           }
         }
@@ -4495,6 +4540,18 @@
         renderGalleryItems();
       });
     });
+    body.querySelectorAll('.twgif-media-filter-button').forEach(button => {
+      button.addEventListener('click', () => {
+        const requestedFilter = button.dataset.mediaFilter;
+        galleryMediaType = ['photos', 'videos'].includes(requestedFilter) ? requestedFilter : 'all';
+        galleryPage = 0;
+        body.querySelectorAll('.twgif-media-filter-button').forEach(filterButton => {
+          filterButton.setAttribute('aria-pressed', String(filterButton.dataset.mediaFilter === galleryMediaType));
+        });
+        renderGalleryItems();
+      });
+    });
+
     urlInput.addEventListener('keydown', event => {
       if (event.key === 'Enter') { event.preventDefault(); addLink(); }
     });
@@ -4540,7 +4597,7 @@
     const frame = document.createElement('div');
     frame.className = 'twgif-media-frame';
     const previewUrl = item.previewUrl || item.url;
-    const isVideo = item.type === 'video' || /\.(webm|mp4|mov|mkv|avi)(?:$|\?)/i.test(previewUrl);
+    const isVideo = isVideoGalleryItem(item);
     let media;
 
     if (isVideo) {
@@ -4968,6 +5025,7 @@
     });
   }
 
+  // Gallery renderer: reuse cached cards/media nodes to avoid restarting decoded image/video data.
   function renderGalleryItems() {
     const body = document.getElementById('twgif-panel-body');
     if (!body || panelView !== 'gallery') return;
@@ -5012,10 +5070,19 @@
     if (hdCount) hdCount.textContent = String(hdItems.length);
     if (sevenTvCount) sevenTvCount.textContent = String(sevenTvItems.length);
     if (favoritesCount) favoritesCount.textContent = String(favoriteItems.length);
-    const items = galleryTab === '7tv' ? sevenTvItems
+    const categoryItems = galleryTab === '7tv' ? sevenTvItems
       : galleryTab === 'hd' ? hdItems
       : galleryTab === 'favorites' ? favoriteItems
       : allItems;
+    const mediaFilterButtons = body.querySelectorAll('.twgif-media-filter-button');
+    mediaFilterButtons.forEach(button => {
+      button.setAttribute('aria-pressed', String(button.dataset.mediaFilter === galleryMediaType));
+    });
+    const items = galleryMediaType === 'all'
+      ? categoryItems
+      : categoryItems.filter(item => galleryMediaType === 'videos'
+        ? isVideoGalleryItem(item)
+        : !isVideoGalleryItem(item));
     const pageSize = config.pageSize;
     const pages = Math.max(1, Math.ceil(items.length / pageSize));
     galleryPage = Math.max(0, Math.min(galleryPage, pages - 1));
@@ -5087,13 +5154,17 @@
 
     masonry.hidden = visible.length === 0;
     empty.hidden = visible.length > 0;
-    empty.textContent = galleryTab === '7tv'
-      ? 'В коллекции пока нет ссылок 7TV.'
-      : galleryTab === 'hd'
-        ? 'Пока нет HD-медиа. Сними галочку «сжимать» и добавь файлы.'
-        : galleryTab === 'favorites'
-          ? 'Пока нет избранных медиа. Нажми сердечко на карточке.'
-          : 'Коллекция пуста. Добавь ссылку или перетащи файл.';
+    empty.textContent = galleryMediaType === 'photos'
+      ? 'В выбранной категории нет фото.'
+      : galleryMediaType === 'videos'
+        ? 'В выбранной категории нет видео.'
+        : galleryTab === '7tv'
+          ? 'В коллекции пока нет ссылок 7TV.'
+          : galleryTab === 'hd'
+            ? 'Пока нет HD-медиа. Сними галочку «сжимать» и добавь файлы.'
+            : galleryTab === 'favorites'
+              ? 'Пока нет избранных медиа. Нажми сердечко на карточке.'
+              : 'Коллекция пуста. Добавь ссылку или перетащи файл.';
 
     pagination.hidden = items.length <= pageSize;
     pageLabel.textContent = `Стр. ${galleryPage + 1} / ${pages}`;
@@ -5439,14 +5510,14 @@
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
-      showPendingPortalResult();
+      showPendingTriggerResult();
       if (isPanelOpen() && panelView === 'gallery') {
         // Resume the sequential loader after browser timer throttling, without resetting src.
         renderGalleryItems();
       }
     }
   });
-  window.addEventListener('focus', showPendingPortalResult);
+  window.addEventListener('focus', showPendingTriggerResult);
 
   window.addEventListener('resize', () => {
     repositionTrigger();
@@ -5476,6 +5547,7 @@
   }, true);
   // The popup stays fixed where it was opened; only the toolbar icon follows Twitch layout changes.
 
+  // Lifecycle watchers recover the toolbar and chat media controls after site SPA updates.
   function installObservers() {
     if (observer) observer.disconnect();
     const target = getChatInput();
@@ -5591,7 +5663,7 @@
       }, 1200);
     }
 
-    logDebug('Userscript v5.9.45 started', { href: location.href });
+    logDebug('Userscript v5.9.47 started', { href: location.href });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
