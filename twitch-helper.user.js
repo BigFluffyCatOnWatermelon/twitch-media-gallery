@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.69
+// @version      5.9.70
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,8 +37,8 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.69';
-  const VERSION = 23;
+  const APP_VERSION = '5.9.70';
+  const VERSION = 24;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
@@ -2549,6 +2549,8 @@
       '.twgif-editor-output{display:flex;justify-content:space-between;gap:10px;padding:11px;border:1px solid #a970ff33;border-radius:11px;background:#9147ff12}.twgif-editor-output-label{color:#a4a4b0;font-size:10px}.twgif-editor-output-value{color:#eee2ff;font-size:12px}',
       '.twgif-editor-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 22px;border-top:1px solid #ffffff12}.twgif-editor-summary{color:#aaaab5;font-size:11px}.twgif-editor-summary strong{color:#eee}.twgif-editor-actions{display:flex;gap:8px}.twgif-editor-btn{padding:10px 14px;border:1px solid #3b3b46;border-radius:9px;background:#ffffff08;color:#ddd;font:inherit;font-size:12px;font-weight:650;cursor:pointer}.twgif-editor-btn-primary{border-color:#9147ff;background:linear-gradient(135deg,#9c5bff,#7a32e5);color:white}',
       '@media(max-width:760px){#twgif-media-editor-overlay{padding:7px;align-items:flex-start}#twgif-media-editor{max-height:calc(100vh - 14px)}.twgif-editor-body{grid-template-columns:1fr;padding:10px;gap:10px}.twgif-editor-stage{height:34vh;min-height:175px}.twgif-editor-footer{align-items:flex-start;flex-direction:column;padding:12px 14px}.twgif-editor-actions{width:100%}.twgif-editor-actions .twgif-editor-btn{flex:1}}'
+    ,
+      '#twgif-media-editor{width:min(1180px,100%);max-height:92vh}.twgif-editor-header{align-items:center;padding:11px 16px;gap:10px}.twgif-editor-title{font-size:18px;margin:3px 0}.twgif-editor-subtitle{margin:3px 0}.twgif-editor-safe{margin-top:4px}.twgif-editor-close{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:34px;height:34px;flex:0 0 34px;padding:0;border:1px solid #ffffff18;border-radius:9px;background:#ffffff08;color:#ddd;font-size:22px;line-height:1;cursor:pointer}.twgif-editor-body{flex:1 1 auto;grid-template-columns:minmax(0,1.55fr) minmax(260px,.85fr);gap:12px;min-height:0;padding:10px 16px;overflow:hidden}.twgif-editor-preview-column{gap:8px;min-height:0}.twgif-editor-stage{height:clamp(180px,35vh,380px);min-height:180px}.twgif-editor-body>aside{display:flex;flex-direction:column;gap:6px;min-width:0;min-height:0;overflow:hidden}.twgif-editor-body>aside>.twgif-editor-section{padding:8px;margin:0;flex:0 0 auto}.twgif-editor-section+.twgif-editor-section{margin-top:0}.twgif-editor-section-head{align-items:center;margin-bottom:5px}.twgif-editor-help{margin-top:4px;font-size:9px;line-height:1.35}.twgif-editor-speed-ends{font-size:9px}.twgif-editor-crop-readout{margin-bottom:5px}.twgif-editor-output{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px;flex:0 0 auto}.twgif-editor-footer{padding:10px 16px}.twgif-editor-btn{padding:9px 12px}.twgif-editor-play{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:34px;height:34px;flex:0 0 34px;padding:0;border:1px solid #a970ff66;border-radius:9px;background:#9147ff24;color:#eadcff;line-height:1;cursor:pointer}.twgif-editor-timeline-wrap{padding:9px 10px}.twgif-editor-timeline-head{margin-bottom:24px}.twgif-editor-timeline-visual{height:76px;touch-action:none;cursor:crosshair}.twgif-editor-storyboard{pointer-events:none}.twgif-editor-frame-thumb{display:block;width:100%;height:100%;min-width:0;object-fit:contain;background:#0c0c10;opacity:.9;user-select:none;-webkit-user-select:none;-webkit-user-drag:none;pointer-events:none;cursor:default}.twgif-editor-playhead{will-change:left}.twgif-editor-playhead-label{position:absolute;z-index:7;top:-25px;left:0;transform:translateX(-50%);padding:2px 5px;border:1px solid #604783;border-radius:5px;background:#20162d;color:#f0e2ff;font-size:10px;font-variant-numeric:tabular-nums;line-height:1.2;white-space:nowrap;pointer-events:none;will-change:left}.twgif-editor-timeline-wrap .twgif-editor-player{display:flex;align-items:center;gap:8px;padding:5px 0 0;border:0;background:transparent}.twgif-editor-player-time[hidden],.twgif-editor-player-range[hidden]{display:none!important}.twgif-editor-timeline-wrap .twgif-editor-help{margin-top:5px}.twgif-editor-close:focus-visible,.twgif-editor-play:focus-visible{outline:2px solid #e2c5ff;outline-offset:2px}@media(max-width:760px){#twgif-media-editor-overlay{padding:7px;align-items:flex-start}#twgif-media-editor{max-height:calc(100vh - 14px)}.twgif-editor-body{grid-template-columns:1fr;padding:10px;gap:10px;overflow:auto}.twgif-editor-body>aside{overflow:visible}.twgif-editor-stage{height:34vh;min-height:175px}.twgif-editor-footer{align-items:flex-start;flex-direction:column;padding:12px 14px}.twgif-editor-actions{width:100%}.twgif-editor-actions .twgif-editor-btn{flex:1}}',
     ].join('\n');
     (document.head || document.documentElement).appendChild(st);
   }
@@ -2570,11 +2572,11 @@
         '<div class="twgif-editor-timeline-visual" data-timeline-track>',
         '<div class="twgif-editor-storyboard" data-storyboard><div class="twgif-editor-storyboard-empty" data-storyboard-empty>Раскадровка появится после загрузки</div></div>',
         '<div class="twgif-editor-trim-shade twgif-editor-trim-shade-left" data-trim-shade-left></div><div class="twgif-editor-trim-shade twgif-editor-trim-shade-right" data-trim-shade-right></div>',
-        '<div class="twgif-editor-trim-selection" data-trim-selection></div><div class="twgif-editor-playhead" data-playhead></div>',
+        '<div class="twgif-editor-trim-selection" data-trim-selection></div><div class="twgif-editor-playhead" data-playhead></div><div class="twgif-editor-playhead-label" data-playhead-label>00:00.00</div>',
         '<button class="twgif-editor-trim-handle twgif-editor-trim-start" type="button" role="slider" aria-label="Начало фрагмента" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="00:00.00" data-trim-start disabled><span class="twgif-editor-handle-time" data-start-label>00:00.00</span></button>',
         '<button class="twgif-editor-trim-handle twgif-editor-trim-end" type="button" role="slider" aria-label="Конец фрагмента" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="—:—" data-trim-end disabled><span class="twgif-editor-handle-time" data-end-label>—:—</span></button>',
         '</div><div class="twgif-editor-timeline-edges"><span data-start-value>00:00.00</span><span data-end-value>—:—</span></div>',
-        '<div class="twgif-editor-player"><button class="twgif-editor-play" type="button" data-play aria-label="Воспроизвести">▶</button><span class="twgif-editor-player-time" data-current>00:00.00</span><input class="twgif-editor-player-range" type="range" min="0" max="0" step=".01" data-scrub aria-label="Позиция воспроизведения" disabled><span class="twgif-editor-player-time" data-duration>—:—</span></div>',
+        '<div class="twgif-editor-player"><button class="twgif-editor-play" type="button" data-play aria-label="Воспроизвести">▶</button><span class="twgif-editor-player-time" data-current hidden>00:00.00</span><input class="twgif-editor-player-range" type="range" min="0" max="0" step=".01" data-scrub aria-label="Позиция воспроизведения" hidden disabled><span class="twgif-editor-player-time" data-duration hidden>—:—</span></div>',
         '<div class="twgif-editor-help" data-trim-help>Перетаскивай маркеры по таймлайну, чтобы выбрать начало и конец.</div>',
         '<div class="twgif-editor-help" data-preview-help>Кадрирование и настройки применяются к файлу перед загрузкой.</div></div><aside>',
         '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Скорость</span><span class="twgif-editor-section-meta" data-speed-summary>1× · обычная</span></div>',
@@ -2597,7 +2599,7 @@
       const scrub = $('[data-scrub]'), startInput = $('[data-trim-start]'), endInput = $('[data-trim-end]');
       const trimSelection = $('[data-trim-selection]');
       const trimShadeLeft = $('[data-trim-shade-left]'), trimShadeRight = $('[data-trim-shade-right]');
-      const playhead = $('[data-playhead]');
+      const playhead = $('[data-playhead]'), playheadLabel = $('[data-playhead-label]');
       const speedInput = $('[data-speed]'), loopInput = $('[data-loop]');
       const cropToggle = $('[data-crop-toggle]'), cropControls = $('[data-crop-controls]');
       const playButton = $('[data-play]');
@@ -2631,6 +2633,7 @@
       let done = false, duration = 0, width = 0, height = 0, start = 0, end = 0, speed = 1, loop = false;
       let crop = { x: 0, y: 0, w: 100, h: 100 }, cropMode = false, trimDrag = null;
       let drag = null, dragId = null, resizeObserver = null, resizeHandler = null;
+      let playheadDrag = null, seekTimer = 0, pendingSeekTime = null, playheadRaf = 0;
       let userChangedTrim = false, videoReverseTimer = 0, videoPingPongDirection = 1;
       let animationDecoder = null, animationFrameDurations = [], animationFrameStarts = [];
       let animationFrameIndex = 0, animationDirection = 1, animationPlaying = false, animationTimer = 0, animationGeneration = 0;
@@ -2641,6 +2644,11 @@
         storyboardRun++;
         if (videoReverseTimer) clearTimeout(videoReverseTimer);
         videoReverseTimer = 0;
+        if (seekTimer) clearTimeout(seekTimer);
+        seekTimer = 0;
+        pendingSeekTime = null;
+        if (playheadRaf) window.cancelAnimationFrame(playheadRaf);
+        playheadRaf = 0;
         if (animationTimer) clearTimeout(animationTimer);
         animationTimer = 0;
         if (animationDecoder) {
@@ -2681,6 +2689,15 @@
         overlay.querySelectorAll('[data-preset]').forEach(b => b.setAttribute('aria-pressed',
           String(b.dataset.preset === 'free' && crop.x === 0 && crop.y === 0 && crop.w === 100 && crop.h === 100)));
       };
+      const paintPlayhead = seconds => {
+        const safeDuration = Math.max(0, Number(duration) || 0);
+        const value = Math.max(0, Math.min(safeDuration || Number(seconds) || 0, Number(seconds) || 0));
+        const pct = safeDuration ? Math.max(0, Math.min(100, value / safeDuration * 100)) : 0;
+        playhead.style.left = pct + '%';
+        playheadLabel.style.left = pct + '%';
+        const label = formatEditorTime(value);
+        if (playheadLabel.textContent !== label) playheadLabel.textContent = label;
+      };
       const updateTimelineControls = () => {
         const safeDuration = Math.max(0, Number(duration) || 0);
         const startPct = safeDuration ? Math.max(0, Math.min(100, start / safeDuration * 100)) : 0;
@@ -2700,8 +2717,7 @@
         const previewTime = info.kind === 'video' ? (Number(media.currentTime) || 0)
           : animationDecoder ? (Number(animationFrameStarts[animationFrameIndex]) || 0)
             : (Number(scrub.value) || 0);
-        const playheadPct = safeDuration ? Math.max(0, Math.min(100, previewTime / safeDuration * 100)) : 0;
-        playhead.style.left = playheadPct + '%';
+        paintPlayhead(previewTime);
         scrub.max = String(safeDuration);
         if (Number.isFinite(previewTime)) scrub.value = String(Math.max(0, Math.min(safeDuration || previewTime, previewTime)));
         startInput.disabled = safeDuration <= 0;
@@ -2740,16 +2756,22 @@
         if (empty) empty.remove();
         const image = document.createElement('img');
         image.className = 'twgif-editor-frame-thumb';
-        image.alt = 'Кадр ' + (index + 1) + ' · ' + formatEditorTime(time);
-        image.title = formatEditorTime(time);
-        image.loading = 'lazy';
+        image.alt = '';
+        image.setAttribute('aria-hidden', 'true');
+        image.draggable = false;
+        image.loading = 'eager';
         image.src = dataUrl;
-        image.dataset.frameTime = String(time);
-        image.addEventListener('click', event => {
-          event.preventDefault();
-          seekPreviewTime(Number(image.dataset.frameTime) || 0);
-        });
         storyboard.appendChild(image);
+      };
+      const drawStoryboardFrame = (context, source, canvas) => {
+        const sourceWidth = Number(source.videoWidth || source.displayWidth || source.naturalWidth || source.width) || canvas.width;
+        const sourceHeight = Number(source.videoHeight || source.displayHeight || source.naturalHeight || source.height) || canvas.height;
+        const scale = Math.min(canvas.width / sourceWidth, canvas.height / sourceHeight);
+        const drawWidth = sourceWidth * scale;
+        const drawHeight = sourceHeight * scale;
+        context.fillStyle = '#0c0c10';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(source, (canvas.width - drawWidth) / 2, (canvas.height - drawHeight) / 2, drawWidth, drawHeight);
       };
 
       const populateVideoStoryboard = async () => {
@@ -2789,8 +2811,7 @@
               try { probe.currentTime = Math.max(0, Math.min(Math.max(0, probe.duration - 0.03), time)); } catch (_) {}
               await seeked;
             }
-            context.clearRect(0, 0, canvas.width, canvas.height);
-            context.drawImage(probe, 0, 0, canvas.width, canvas.height);
+            drawStoryboardFrame(context, probe, canvas);
             addStoryboardThumb(canvas.toDataURL('image/jpeg', 0.66), time, i, run);
             if (i % 3 === 2) await new Promise(yieldToBrowser => window.setTimeout(yieldToBrowser, 0));
           }
@@ -2820,9 +2841,7 @@
             canvas.width = 160; canvas.height = 90;
             const context = canvas.getContext('2d');
             if (context) {
-              context.fillStyle = '#0c0c10';
-              context.fillRect(0, 0, canvas.width, canvas.height);
-              context.drawImage(image, 0, 0, canvas.width, canvas.height);
+              drawStoryboardFrame(context, image, canvas);
               addStoryboardThumb(canvas.toDataURL('image/jpeg', 0.66), animationFrameStarts[index] || 0, i, run);
             }
             try { image.close(); } catch (_) {}
@@ -2922,12 +2941,9 @@
           if (!animationPlaying || !animationDecoder || done || generation !== animationGeneration) return;
           const firstFrame = findAnimationFrameAt(start);
           const lastFrame = Math.max(firstFrame, findAnimationFrameAt(Math.max(start, end - 0.001)));
-          let nextIndex = animationFrameIndex + animationDirection;
+          let nextIndex = animationFrameIndex + 1;
           if (nextIndex > lastFrame) {
-            if (loop && lastFrame > firstFrame) { animationDirection = -1; nextIndex = lastFrame - 1; }
-            else { pauseAnimationPreview(); return; }
-          } else if (nextIndex < firstFrame) {
-            if (loop && lastFrame > firstFrame) { animationDirection = 1; nextIndex = firstFrame + 1; }
+            if (loop && lastFrame > firstFrame) nextIndex = firstFrame;
             else { pauseAnimationPreview(); return; }
           }
           if (nextIndex < firstFrame || nextIndex > lastFrame) { pauseAnimationPreview(); return; }
@@ -2967,12 +2983,9 @@
             if (generation !== animationGeneration || !animationPlaying) return;
             const firstFrame = findAnimationFrameAt(start);
             const lastFrame = Math.max(firstFrame, findAnimationFrameAt(Math.max(start, end - 0.001)));
-            let nextIndex = animationFrameIndex + animationDirection;
+            let nextIndex = animationFrameIndex + 1;
             if (nextIndex > lastFrame) {
-              if (loop && lastFrame > firstFrame) { animationDirection = -1; nextIndex = lastFrame - 1; }
-              else { pauseAnimationPreview(); return; }
-            } else if (nextIndex < firstFrame) {
-              if (loop && lastFrame > firstFrame) { animationDirection = 1; nextIndex = firstFrame + 1; }
+              if (loop && lastFrame > firstFrame) nextIndex = firstFrame;
               else { pauseAnimationPreview(); return; }
             }
             if (nextIndex < firstFrame || nextIndex > lastFrame) { pauseAnimationPreview(); return; }
@@ -3054,10 +3067,26 @@
         }
       };
 
+      const animateVideoPlayhead = () => {
+        playheadRaf = 0;
+        if (done || info.kind !== 'video' || media.paused || duration <= 0) return;
+        const time = Number(media.currentTime) || 0;
+        paintPlayhead(time);
+        const timeLabel = formatEditorTime(time);
+        if (currentLabel.textContent !== timeLabel) currentLabel.textContent = timeLabel;
+        scrub.value = String(time);
+        playheadRaf = window.requestAnimationFrame(animateVideoPlayhead);
+      };
       const onPlayState = () => {
         const playing = !media.paused || Boolean(videoReverseTimer);
         playButton.textContent = playing ? 'Ⅱ' : '▶';
         playButton.setAttribute('aria-label', playing ? 'Пауза' : 'Воспроизвести');
+        if (playing && !playheadRaf && info.kind === 'video') {
+          playheadRaf = window.requestAnimationFrame(animateVideoPlayhead);
+        } else if (!playing && playheadRaf) {
+          window.cancelAnimationFrame(playheadRaf);
+          playheadRaf = 0;
+        }
       };
       const onVideoMeta = () => {
         if (Number.isFinite(media.duration) && media.duration > 0) {
@@ -3099,15 +3128,12 @@
         currentLabel.textContent = formatEditorTime(media.currentTime);
         scrub.value = String(media.currentTime);
         updateTimelineControls();
-        if (!media.paused && duration > 0 && media.currentTime >= end - .035 && videoPingPongDirection === 1) {
-          if (loop && end > start + .05) startVideoReverse();
-          else { media.pause(); try { media.currentTime = end; } catch (_) {} }
+        if (!media.paused && duration > 0 && media.currentTime >= end - .035) {
+          media.pause();
+          try { media.currentTime = end; } catch (_) {}
         }
       };
-      const onVideoEnd = () => {
-        if (loop && end > start + .05 && videoPingPongDirection === 1) startVideoReverse();
-        else media.pause();
-      };
+      const onVideoEnd = () => { media.pause(); };
       const onKey = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); } };
       const preset = value => {
         if (value === 'free') crop = { x: 0, y: 0, w: 100, h: 100 };
@@ -3119,19 +3145,40 @@
         updateFrame();
         overlay.querySelectorAll('[data-preset]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.preset === value)));
       };
-      const seekPreviewTime = seconds => {
-        const value = Math.max(0, Math.min(duration || 0, Number(seconds) || 0));
+      const performPreviewSeek = (value, fast = false) => {
         if (info.kind === 'video') {
-          if (videoReverseTimer) clearTimeout(videoReverseTimer);
-          videoReverseTimer = 0;
-          videoPingPongDirection = 1;
-          try { media.currentTime = value; } catch (_) {}
+          if (fast && typeof media.fastSeek === 'function') media.fastSeek(value);
+          else media.currentTime = value;
         } else if (animationDecoder) {
           seekAnimationPreview(value);
         }
+      };
+      const flushPendingPreviewSeek = (fast = false) => {
+        if (seekTimer) clearTimeout(seekTimer);
+        seekTimer = 0;
+        if (pendingSeekTime === null) return;
+        const value = pendingSeekTime;
+        pendingSeekTime = null;
+        try { performPreviewSeek(value, fast); } catch (_) {}
+      };
+      const seekPreviewTime = (seconds, defer = false) => {
+        const value = Math.max(0, Math.min(duration || 0, Number(seconds) || 0));
+        if (videoReverseTimer) clearTimeout(videoReverseTimer);
+        videoReverseTimer = 0;
+        videoPingPongDirection = 1;
         currentLabel.textContent = formatEditorTime(value);
         scrub.value = String(value);
         updateTimelineControls();
+        paintPlayhead(value);
+        if (defer) {
+          pendingSeekTime = value;
+          if (!seekTimer) seekTimer = window.setTimeout(() => flushPendingPreviewSeek(true), 70);
+          return;
+        }
+        if (seekTimer) clearTimeout(seekTimer);
+        seekTimer = 0;
+        pendingSeekTime = null;
+        try { performPreviewSeek(value, false); } catch (_) {}
       };
       const trimInput = (which, value) => {
         if (!duration) return;
@@ -3140,7 +3187,7 @@
         if (which === 'start') start = Math.max(0, Math.min(Number(value) || 0, end - gap));
         else end = Math.max(start + gap, Math.min(Number(value) || 0, duration));
         updateSummary();
-        seekPreviewTime(which === 'start' ? start : end);
+        seekPreviewTime(which === 'start' ? start : end, true);
       };
       const setTrimValueFromPointer = (which, event) => {
         const rect = timelineTrack.getBoundingClientRect();
@@ -3157,15 +3204,25 @@
       startInput.addEventListener('pointerdown', event => startTrimDrag('start', event));
       endInput.addEventListener('pointerdown', event => startTrimDrag('end', event));
       timelineTrack.addEventListener('pointermove', event => {
-        if (!trimDrag || event.pointerId !== trimDrag.pointerId) return;
-        setTrimValueFromPointer(trimDrag.which, event);
+        if (trimDrag && event.pointerId === trimDrag.pointerId) {
+          setTrimValueFromPointer(trimDrag.which, event);
+          return;
+        }
+        if (playheadDrag && event.pointerId === playheadDrag.pointerId) {
+          const rect = timelineTrack.getBoundingClientRect();
+          if (rect.width && duration) {
+            seekPreviewTime(Math.max(0, Math.min(duration, (event.clientX - rect.left) / rect.width * duration)), true);
+          }
+        }
       });
-      const finishTrimDrag = event => {
-        if (!trimDrag || (event && event.pointerId !== trimDrag.pointerId)) return;
-        trimDrag = null;
+      const finishTimelineDrag = event => {
+        if (trimDrag && (!event || event.pointerId === trimDrag.pointerId)) trimDrag = null;
+        if (playheadDrag && (!event || event.pointerId === playheadDrag.pointerId)) playheadDrag = null;
+        if (!trimDrag && !playheadDrag) flushPendingPreviewSeek(false);
       };
-      timelineTrack.addEventListener('pointerup', finishTrimDrag);
-      timelineTrack.addEventListener('pointercancel', finishTrimDrag);
+      timelineTrack.addEventListener('pointerup', finishTimelineDrag);
+      timelineTrack.addEventListener('pointercancel', finishTimelineDrag);
+      timelineTrack.addEventListener('lostpointercapture', finishTimelineDrag);
       for (const [handle, which] of [[startInput, 'start'], [endInput, 'end']]) {
         handle.addEventListener('keydown', event => {
           if (!duration) return;
@@ -3183,10 +3240,14 @@
         });
       }
       timelineTrack.addEventListener('pointerdown', event => {
-        if (event.target.closest('[data-trim-start],[data-trim-end],[data-frame-time]')) return;
-        if (!duration) return;
+        if (event.target.closest('[data-trim-start],[data-trim-end]')) return;
+        if (!duration || (event.button !== 0 && event.pointerType !== 'touch')) return;
         const rect = timelineTrack.getBoundingClientRect();
-        if (rect.width) seekPreviewTime((event.clientX - rect.left) / rect.width * duration);
+        if (!rect.width) return;
+        playheadDrag = { pointerId: event.pointerId };
+        try { timelineTrack.setPointerCapture(event.pointerId); } catch (_) {}
+        seekPreviewTime(Math.max(0, Math.min(duration, (event.clientX - rect.left) / rect.width * duration)));
+        event.preventDefault();
       });
       frame.addEventListener('pointerdown', e => {
         if (e.button !== 0 && e.pointerType !== 'touch') return;
@@ -3635,19 +3696,21 @@
     }
   }
 
-  function addItem(url, name, type, sourceKey = '', previewUrl = '', mediaBlob = null, isHd = false) {
+  function addItem(url, name, type, sourceKey = '', previewUrl = '', mediaBlob = null, isHd = false, forceAdd = false) {
     const data = loadData();
     const normalizedUrl = String(url || '').trim();
     const normalizedPreview = String(previewUrl || normalizedUrl).trim();
-    const existing = data.items.find(item =>
-      item.url === normalizedUrl ||
-      (sourceKey && item.sourceKey === sourceKey) ||
-      (normalizedPreview && item.previewUrl === normalizedPreview)
-    );
-    if (existing) {
-      setStatus('Это медиа уже есть в галерее.', 'info');
-      flashTriggerResult('duplicate');
-      return false;
+    if (!forceAdd) {
+      const existing = data.items.find(item =>
+        item.url === normalizedUrl ||
+        (sourceKey && item.sourceKey === sourceKey) ||
+        (normalizedPreview && item.previewUrl === normalizedPreview)
+      );
+      if (existing) {
+        setStatus('Это медиа уже есть в галерее.', 'info');
+        flashTriggerResult('duplicate');
+        return false;
+      }
     }
 
     const now = Date.now();
@@ -4413,17 +4476,35 @@
     return [String(file.name || ''), String(file.size || 0), String(file.lastModified || 0), String(file.type || '')].join('|');
   }
 
+  function makeEditedImportFilename(file) {
+    const originalName = String(file && file.name || 'Медиафайл');
+    const extension = fileExtension(file).toLowerCase();
+    const suffix = 'обрезка ' + Date.now() + '-' + makeId().slice(-4);
+    const baseName = extension && originalName.toLowerCase().endsWith('.' + extension)
+      ? originalName.slice(0, -(extension.length + 1))
+      : originalName;
+    return (baseName.slice(0, 80) || 'Медиафайл') + ' (' + suffix + ')' + (extension ? '.' + extension : '');
+  }
+
   async function processSingleFile(file, sourceKey, runId, compressEnabled = isCompressionEnabled(), suppliedEditOptions = undefined) {
     setProgress(0, true);
     try {
       ensureProcessingRun(runId);
       setStatus('Подготавливаю «' + (file.name || 'медиа') + '»…', 'info', true);
       setProgress(4, true);
-      const prepared = await prepareUpload(file, runId, compressEnabled, suppliedEditOptions);
+      let prepared = await prepareUpload(file, runId, compressEnabled, suppliedEditOptions);
       ensureProcessingRun(runId);
       if (!prepared) {
         setStatus('Медиа пропущено: редактирование отменено.', 'info');
         return false;
+      }
+      const editorImport = suppliedEditOptions !== undefined && suppliedEditOptions !== null;
+      if (editorImport) {
+        prepared = new File([prepared], makeEditedImportFilename(prepared), {
+          type: prepared.type || mimeFromFile(prepared),
+          lastModified: Date.now()
+        });
+        sourceKey = String(sourceKey || '') + ':editor:' + makeId();
       }
       setProgress(65, true);
       setStatus('Загружаю «' + (prepared.name || file.name) + '» на kappa.lol…', 'info', true);
@@ -4439,7 +4520,7 @@
       const animatedWebPOutput = ext === 'webp' && await isAnimatedWebP(prepared);
       const type = animatedWebPOutput || ext === 'gif' ? 'gif'
         : ['webm', 'mp4', 'mov', 'mkv', 'avi', 'ogv', 'mpg', 'mpeg'].includes(ext) ? 'video' : 'image';
-      const added = addItem(uploaded.url, prepared.name || file.name || 'Медиафайл', type, sourceKey, uploaded.url, prepared, !compressEnabled);
+      const added = addItem(uploaded.url, prepared.name || file.name || 'Медиафайл', type, sourceKey, uploaded.url, prepared, !compressEnabled, editorImport);
       setProgress(100, true);
       if (!added) {
         setStatus('Это медиа уже есть в галерее.', 'info');
@@ -4480,6 +4561,7 @@
     }
 
     const compressEnabled = isCompressionEnabled();
+    const editorImport = suppliedEditOptions !== undefined && suppliedEditOptions !== null;
     const runId = ++processingRunId;
     activeProcessingRunId = runId;
     syncTriggerUploadIndicator();
@@ -4487,12 +4569,12 @@
     try {
       for (const file of files) {
         if (!isProcessingRunCurrent(runId)) break;
-        const key = fileFingerprint(file);
+        const key = editorImport ? fileFingerprint(file) + '|editor:' + makeId() : fileFingerprint(file);
         const now = Date.now();
         for (const [fingerprint, expiresAt] of recentFileFingerprints) {
           if (expiresAt <= now) recentFileFingerprints.delete(fingerprint);
         }
-        if (loadData().items.some(item => item.sourceKey && item.sourceKey === key)) {
+        if (!editorImport && loadData().items.some(item => item.sourceKey && item.sourceKey === key)) {
           logDebug('File fingerprint already exists in collection; upload skipped', { name: file.name, size: file.size });
           setStatus(`«${file.name || 'Файл'}» уже есть в галерее — повторная загрузка пропущена.`, 'info');
           flashTriggerResult('duplicate');
@@ -4503,7 +4585,7 @@
           logDebug('Duplicate file event ignored while processing', { name: file.name, size: file.size });
           continue;
         }
-        if ((recentFileFingerprints.get(key) || 0) > now) {
+        if (!editorImport && (recentFileFingerprints.get(key) || 0) > now) {
           logDebug('Repeated file event ignored after success', { name: file.name, size: file.size });
           continue;
         }
@@ -4517,7 +4599,7 @@
           succeeded = await task;
         } finally {
           processingFiles.delete(key);
-          if (succeeded) recentFileFingerprints.set(key, Date.now() + 20000);
+          if (succeeded && !editorImport) recentFileFingerprints.set(key, Date.now() + 20000);
         }
       }
     } finally {
