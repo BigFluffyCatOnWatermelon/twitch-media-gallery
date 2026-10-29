@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.71
+// @version      5.9.72
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.71';
+  const APP_VERSION = '5.9.72';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -2585,7 +2585,7 @@
         '</div><div class="twgif-editor-timeline-edges"><span data-start-value>00:00.00</span><span data-end-value>—:—</span></div>',
         '<div class="twgif-editor-player"><button class="twgif-editor-play" type="button" data-play aria-label="Воспроизвести">▶</button><span class="twgif-editor-player-time" data-current hidden>00:00.00</span><input class="twgif-editor-player-range" type="range" min="0" max="0" step=".01" data-scrub aria-label="Позиция воспроизведения" hidden disabled><span class="twgif-editor-player-time" data-duration hidden>—:—</span></div>',
         '<div class="twgif-editor-help" data-trim-help>Перетаскивай маркеры по таймлайну, чтобы выбрать начало и конец.</div>',
-        '<div class="twgif-editor-help" data-preview-help>Кадрирование и настройки применяются к файлу перед загрузкой.</div></div>',
+        '<div class="twgif-editor-help" data-preview-help>Кадрирование и настройки применяются к файлу перед загрузкой.</div></div></div>',
         '<footer class="twgif-editor-footer"><div class="twgif-editor-summary" data-summary>Итоговая длительность: <strong>—</strong></div><div class="twgif-editor-actions"><button class="twgif-editor-btn" data-cancel>Отмена</button><button class="twgif-editor-btn twgif-editor-btn-primary" data-apply>Применить и продолжить →</button></div></footer></section>'
       ].join('');
       document.body.appendChild(overlay);
@@ -3208,7 +3208,7 @@
           try { media.currentTime = end; } catch (_) {}
         }
       };
-      const onVideoEnd = () => { media.pause(); paintPlayhead(start); currentLabel.textContent = formatEditorTime(start); };
+      const onVideoEnd = () => { media.pause(); try { media.currentTime = start; } catch (_) {} paintPlayhead(start); currentLabel.textContent = formatEditorTime(start); };
       const onKey = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); } };
       const preset = value => {
         if (value === 'free') crop = { x: 0, y: 0, w: 100, h: 100 };
