@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.65
+// @version      5.9.66
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,8 +37,8 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.65';
-  const VERSION = 20;
+  const APP_VERSION = '5.9.66';
+  const VERSION = 21;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
@@ -2615,7 +2615,9 @@
       const cfg = loadConfig(), category = info.kind === 'video' ? 'video' : 'gif';
       const chosen = getEditedOutputFormat(file, category, info.animationFormat === 'webp', cfg.conversionRules[category] || 'keep');
       $('[data-output]').textContent = chosen.toUpperCase();
-      $('[data-output-note]').textContent = ['gif','webp'].includes(chosen) ? 'Зацикливание сохранится в файле' : 'Зацикливание действует в предпросмотре';
+      $('[data-output-note]').textContent = ['gif','webp'].includes(chosen)
+        ? 'Ping-pong сохраняется в анимации'
+        : 'Ping-pong будет запечён в видео';
 
       let done = false, duration = 0, width = 0, height = 0, start = 0, end = 0, speed = 1, loop = false;
       let crop = { x: 0, y: 0, w: 100, h: 100 }, cropMode = false, trimDrag = null;
@@ -2765,6 +2767,7 @@
           probe.load();
           await metadataReady;
           const count = Math.min(12, Math.max(6, Math.ceil(duration / 2)));
+          storyboard.style.gridTemplateColumns = 'repeat(' + count + ', minmax(0,1fr))';
           const canvas = document.createElement('canvas');
           canvas.width = 160; canvas.height = 90;
           const context = canvas.getContext('2d');
@@ -2796,6 +2799,7 @@
         const run = ++storyboardRun;
         storyboard.replaceChildren();
         const count = Math.min(12, animationFrameStarts.length);
+        storyboard.style.gridTemplateColumns = 'repeat(' + count + ', minmax(0,1fr))';
         for (let i = 0; i < count; i++) {
           if (done || run !== storyboardRun || !animationDecoder) return;
           const index = Math.round(i * (animationFrameStarts.length - 1) / Math.max(1, count - 1));
@@ -3075,6 +3079,8 @@
           }
           try { media.currentTime = nextTime; } catch (_) {}
           videoReverseTimer = window.setTimeout(reverseStep, 40);
+          playButton.textContent = 'Ⅱ';
+          playButton.setAttribute('aria-label', 'Пауза');
           updateTimelineControls();
         };
         reverseStep();
@@ -3205,7 +3211,18 @@
         else if (animationDecoder && animationPlaying) seekAnimationPreview(animationFrameStarts[animationFrameIndex] || start);
         updateSummary();
       });
-      loopInput.addEventListener('change', () => { loop = loopInput.checked; animationDirection = 1; videoPingPongDirection = 1; updateSummary(); });
+      loopInput.addEventListener('change', () => {
+        loop = loopInput.checked;
+        animationDirection = 1;
+        if (!loop && videoReverseTimer) {
+          clearTimeout(videoReverseTimer);
+          videoReverseTimer = 0;
+          videoPingPongDirection = 1;
+          media.playbackRate = speed;
+          media.play().catch(() => {});
+        } else videoPingPongDirection = 1;
+        updateSummary();
+      });
       cropToggle.addEventListener('click', () => {
         cropMode = !cropMode;
         dialog.classList.toggle('twgif-cropping', cropMode);
@@ -3307,9 +3324,11 @@
     const submitButton = overlay.querySelector('[data-import-url-submit]');
     let closed = false;
     let busy = false;
+    let escapeHandler = null;
     const close = () => {
       if (closed) return;
       closed = true;
+      if (escapeHandler) document.removeEventListener('keydown', escapeHandler, true);
       overlay.remove();
     };
     const setStatus = (message, isError = false) => {
@@ -3384,6 +3403,7 @@
         if (!blob || !blob.size) throw new Error('Ссылка вернула пустой файл.');
         if (blob.size > MAX_FILE_BYTES) throw new Error('Файл больше ' + formatBytes(MAX_FILE_BYTES) + '.');
         const file = createLinkedMediaFile(parsed.href, blob);
+        busy = false;
         await handoffFile(file);
       } catch (error) {
         if (!closed) setStatus((error && error.message) || 'Не удалось скачать медиа по ссылке.', true);
@@ -3441,12 +3461,13 @@
     });
     overlay.querySelectorAll('[data-import-close]').forEach(button => button.addEventListener('click', close));
     overlay.addEventListener('pointerdown', event => { if (event.target === overlay) close(); });
-    document.addEventListener('keydown', function closeOnEscape(event) {
+    escapeHandler = event => {
       if (event.key === 'Escape' && !closed) {
-        document.removeEventListener('keydown', closeOnEscape, true);
+        event.preventDefault();
         close();
       }
-    }, true);
+    };
+    document.addEventListener('keydown', escapeHandler, true);
   }
 
   async function requestMediaEditIfEnabled(file, runId) {
