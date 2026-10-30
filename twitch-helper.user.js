@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.82
+// @version      5.9.83
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -39,7 +39,7 @@
 
   // Shared fallback for preview callbacks that may outlive the editor's local scope.
   let videoReverseDisplayTime = null;
-  const APP_VERSION = '5.9.82';
+  const APP_VERSION = '5.9.83';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -937,7 +937,7 @@
     return webpMakeChunk('VP8X', payload);
   }
 
-  async function compressAnimatedWebP(file, maxWidth, quality, runId = null) {
+  async function compressAnimatedWebP(file, maxWidth, quality, runId = null, rawEditOptions = null) {
     if (!file || !file.size) throw new Error('Файл пустой.');
     const inputBytes = new Uint8Array(await file.arrayBuffer());
     ensureProcessingRun(runId);
@@ -958,16 +958,65 @@
     const originalHeight = webpReadU24LE(sourceVp8x.data, 7) + 1;
     if (!originalWidth || !originalHeight) throw new Error('Не удалось определить размеры анимированного WebP.');
 
-    const configuredWidth = clampInt(maxWidth, 100, 4000, DEFAULT_MAX_WIDTH);
-    const scale = originalWidth > configuredWidth ? configuredWidth / originalWidth : 1;
-    const canvasWidth = Math.max(1, Math.round(originalWidth * scale));
-    const canvasHeight = Math.max(1, Math.round(originalHeight * scale));
+    const edit = rawEditOptions ? normalizeMediaEditOptions(rawEditOptions) : null;
+    const crop = edit ? edit.crop : { x: 0, y: 0, w: 100, h: 100 };
+    const cropEnabled = Boolean(edit && (crop.x > 0.5 || crop.y > 0.5 || crop.w < 99.5 || crop.h < 99.5));
+    const cropX = cropEnabled
+      ? Math.max(0, Math.min(originalWidth - 2, Math.floor((originalWidth * crop.x / 100) / 2) * 2)) : 0;
+    const cropY = cropEnabled
+      ? Math.max(0, Math.min(originalHeight - 2, Math.floor((originalHeight * crop.y / 100) / 2) * 2)) : 0;
+    const cropWidth = cropEnabled
+      ? Math.max(2, Math.min(originalWidth - cropX, Math.floor((originalWidth * crop.w / 100) / 2) * 2))
+      : originalWidth;
+    const cropHeight = cropEnabled
+      ? Math.max(2, Math.min(originalHeight - cropY, Math.floor((originalHeight * crop.h / 100) / 2) * 2))
+      : originalHeight;
+    const cropRight = Math.min(originalWidth, cropX + cropWidth);
+    const cropBottom = Math.min(originalHeight, cropY + cropHeight);
+    const requestedMaxWidth = edit && edit.exportSettings && edit.exportSettings.compressEnabled === false
+      ? 16383 : clampInt(maxWidth, 100, 16383, DEFAULT_MAX_WIDTH);
+    const scale = Math.min(1, requestedMaxWidth / Math.max(1, cropWidth));
+    const canvasWidth = Math.max(1, Math.min(16383, Math.round(cropWidth * scale)));
+    const canvasHeight = Math.max(1, Math.min(16383, Math.round(cropHeight * scale)));
+    if (canvasWidth * canvasHeight > 40_000_000) {
+      throw new Error('Область анимированного WebP слишком велика для безопасной обработки в браузере. Уменьши максимальную сторону в настройках экспорта.');
+    }
     const sourceAlpha = (sourceVp8x.data[0] & 0x10) !== 0;
     const iccChunk = topChunks.find(chunk => chunk.type === 'ICCP');
     const iccBlock = iccChunk ? webpMakeChunk('ICCP', iccChunk.data) : null;
 
+    // FFmpeg.wasm 0.12.10 is based on FFmpeg 5.1.4 and its WebP decoder
+    // cannot reliably decode animated WebP. Decode each ANMF image natively instead.
+    const rawDurations = sourceFrames.map(frame =>
+      frame.data.length >= 16 ? webpReadU24LE(frame.data, 12) : 0
+    );
+    const rawDurationTotal = rawDurations.reduce((sum, value) => sum + value, 0);
+    const estimatedDuration = edit && edit.duration > 0 ? edit.duration * 1000 : 0;
+    const fallbackFrameDuration = rawDurationTotal > 0
+      ? 100
+      : Math.max(10, estimatedDuration > 0 ? estimatedDuration / sourceFrames.length : 100);
+    const frameDurations = rawDurations.map(value => value > 0 ? value : fallbackFrameDuration);
+    const sourceDurationMs = frameDurations.reduce((sum, value) => sum + value, 0);
+    const editDurationMs = estimatedDuration > 0 ? estimatedDuration : sourceDurationMs;
+    const timeScale = editDurationMs > 0 ? sourceDurationMs / editDurationMs : 1;
+    const trimStartMs = edit
+      ? Math.max(0, Math.min(sourceDurationMs, edit.start * 1000 * timeScale)) : 0;
+    const trimEndMs = edit
+      ? Math.max(trimStartMs, Math.min(sourceDurationMs, edit.end * 1000 * timeScale)) : sourceDurationMs;
+    if (trimEndMs <= trimStartMs) throw new Error('Выбранный фрагмент WebP пустой.');
+    const playbackSpeed = edit ? Math.max(0.25, Math.min(4, edit.speed || 1)) : 1;
+    const mustApplyEdits = Boolean(edit && mediaEditHasChanges(edit, 'webp'));
+
+    const addFrameDuration = (frameChunk, milliseconds) => {
+      if (!frameChunk || milliseconds <= 0) return;
+      const current = webpReadU24LE(frameChunk, 8 + 12);
+      webpWriteU24LE(frameChunk, 8 + 12, Math.min(0xffffff, current + Math.round(milliseconds)));
+    };
+
     const encodeAtQuality = async encodeQuality => {
       const outputFrames = [];
+      let timelineMs = 0;
+      let leadingOmittedDuration = 0;
       for (let index = 0; index < sourceFrames.length; index++) {
         ensureProcessingRun(runId);
         const sourceFrame = sourceFrames[index];
@@ -975,9 +1024,16 @@
 
         const sourceX = webpReadU24LE(sourceFrame.data, 0) * 2;
         const sourceY = webpReadU24LE(sourceFrame.data, 3) * 2;
-        const sourceWidth = webpReadU24LE(sourceFrame.data, 6) + 1;
-        const sourceHeight = webpReadU24LE(sourceFrame.data, 9) + 1;
-        const duration = webpReadU24LE(sourceFrame.data, 12);
+        const sourceFrameWidth = webpReadU24LE(sourceFrame.data, 6) + 1;
+        const sourceFrameHeight = webpReadU24LE(sourceFrame.data, 9) + 1;
+        const frameDurationMs = frameDurations[index];
+        const frameStartMs = timelineMs;
+        const frameEndMs = timelineMs + frameDurationMs;
+        timelineMs = frameEndMs;
+        const visibleStartMs = Math.max(frameStartMs, trimStartMs);
+        const visibleEndMs = Math.min(frameEndMs, trimEndMs);
+        if (visibleEndMs <= visibleStartMs) continue;
+        const outputDurationMs = Math.max(1, Math.round((visibleEndMs - visibleStartMs) / playbackSpeed));
         const frameFlags = sourceFrame.data[15];
         const frameChunks = webpParseChunks(sourceFrame.data, 16, sourceFrame.data.length);
         const alphaChunk = frameChunks.find(chunk => chunk.type === 'ALPH');
@@ -988,26 +1044,45 @@
           throw new Error('В кадре WebP №' + (index + 1) + ' не найдено изображение.');
         }
 
-        const standaloneChunks = [
-          webpMakeCanvasHeader(sourceWidth, sourceHeight, sourceAlpha || Boolean(alphaChunk)),
+        const intersectionLeft = Math.max(sourceX, cropX);
+        const intersectionTop = Math.max(sourceY, cropY);
+        const intersectionRight = Math.min(sourceX + sourceFrameWidth, cropRight);
+        const intersectionBottom = Math.min(sourceY + sourceFrameHeight, cropBottom);
+        if (intersectionRight <= intersectionLeft || intersectionBottom <= intersectionTop) {
+          if (outputFrames.length) addFrameDuration(outputFrames[outputFrames.length - 1], outputDurationMs);
+          else leadingOmittedDuration += outputDurationMs;
+          continue;
+        }
+
+        const standalone = webpMakeRiff([
+          webpMakeCanvasHeader(sourceFrameWidth, sourceFrameHeight, sourceAlpha || Boolean(alphaChunk)),
           ...encodedImageChunks.map(chunk => webpMakeChunk(chunk.type, chunk.data))
-        ];
-        const standalone = webpMakeRiff(standaloneChunks);
+        ]);
         let bitmap = null;
         try {
           bitmap = await createImageBitmap(standalone);
-          const frameX = Math.min(canvasWidth - 1, Math.max(0, Math.round((sourceX * scale) / 2) * 2));
-          const frameY = Math.min(canvasHeight - 1, Math.max(0, Math.round((sourceY * scale) / 2) * 2));
-          const frameWidth = Math.max(1, Math.min(canvasWidth - frameX, Math.round(sourceWidth * scale)));
-          const frameHeight = Math.max(1, Math.min(canvasHeight - frameY, Math.round(sourceHeight * scale)));
+          const sourceCropX = intersectionLeft - sourceX;
+          const sourceCropY = intersectionTop - sourceY;
+          const intersectionWidth = intersectionRight - intersectionLeft;
+          const intersectionHeight = intersectionBottom - intersectionTop;
+          const frameX = Math.max(0, Math.min(canvasWidth - 1,
+            Math.floor(((intersectionLeft - cropX) * scale) / 2) * 2));
+          const frameY = Math.max(0, Math.min(canvasHeight - 1,
+            Math.floor(((intersectionTop - cropY) * scale) / 2) * 2));
+          const frameWidth = Math.max(1, Math.min(canvasWidth - frameX,
+            Math.round(intersectionWidth * scale)));
+          const frameHeight = Math.max(1, Math.min(canvasHeight - frameY,
+            Math.round(intersectionHeight * scale)));
           const canvas = webpMakeCanvas(frameWidth, frameHeight);
           const context = canvas.getContext('2d', { alpha: true });
-          if (!context) throw new Error('Canvas недоступен при сжатии анимированного WebP.');
+          if (!context) throw new Error('Canvas недоступен при обработке анимированного WebP.');
           context.clearRect(0, 0, frameWidth, frameHeight);
-          context.drawImage(bitmap, 0, 0, frameWidth, frameHeight);
+          context.drawImage(bitmap,
+            sourceCropX, sourceCropY, intersectionWidth, intersectionHeight,
+            0, 0, frameWidth, frameHeight);
           const encodedBlob = await webpCanvasToBlob(canvas, encodeQuality);
           if (!encodedBlob || !encodedBlob.size || !/^image\/webp$/i.test(encodedBlob.type || '')) {
-            throw new Error('Браузер не вернул WebP при сжатии кадра.');
+            throw new Error('Браузер не вернул WebP при обработке кадра.');
           }
           const encodedBytes = new Uint8Array(await encodedBlob.arrayBuffer());
           const encodedChunks = webpParseChunks(encodedBytes, 12, encodedBytes.length)
@@ -1021,8 +1096,9 @@
           webpWriteU24LE(frameHeader, 3, Math.floor(frameY / 2));
           webpWriteU24LE(frameHeader, 6, frameWidth - 1);
           webpWriteU24LE(frameHeader, 9, frameHeight - 1);
-          webpWriteU24LE(frameHeader, 12, duration);
+          webpWriteU24LE(frameHeader, 12, Math.min(0xffffff, outputDurationMs + leadingOmittedDuration));
           frameHeader[15] = frameFlags;
+          leadingOmittedDuration = 0;
           outputFrames.push(webpMakeChunk('ANMF', webpJoinBytes([
             frameHeader,
             ...encodedChunks.map(chunk => webpMakeChunk(chunk.type, chunk.data))
@@ -1033,7 +1109,22 @@
 
         if (index === sourceFrames.length - 1 || index % 8 === 0) {
           setProgress(10 + Math.round(((index + 1) / sourceFrames.length) * 78), true);
-          setStatus('Сжимаю анимированный WebP: кадр ' + (index + 1) + ' из ' + sourceFrames.length + '…', 'info', true);
+          setStatus(mustApplyEdits
+            ? 'Применяю изменения к WebP: кадр ' + (index + 1) + ' из ' + sourceFrames.length + '…'
+            : 'Сжимаю анимированный WebP: кадр ' + (index + 1) + ' из ' + sourceFrames.length + '…', 'info', true);
+        }
+      }
+
+      if (leadingOmittedDuration > 0 && outputFrames.length) {
+        addFrameDuration(outputFrames[0], leadingOmittedDuration);
+      }
+      if (!outputFrames.length) throw new Error('После обрезки в выбранной области не осталось кадров WebP.');
+
+      let finalFrames = outputFrames;
+      if (edit && edit.loop && outputFrames.length > 2) {
+        finalFrames = outputFrames.slice();
+        for (let index = outputFrames.length - 2; index > 0; index--) {
+          finalFrames.push(webpMakeChunk('ANMF', outputFrames[index].subarray(8)));
         }
       }
 
@@ -1041,17 +1132,22 @@
       vp8xData[0] = 0x02 | (sourceAlpha ? 0x10 : 0) | (iccChunk ? 0x20 : 0);
       webpWriteU24LE(vp8xData, 4, canvasWidth - 1);
       webpWriteU24LE(vp8xData, 7, canvasHeight - 1);
+      const animData = new Uint8Array(sourceAnim.data);
+      if (edit && edit.loop && animData.length >= 6) {
+        animData[4] = 0;
+        animData[5] = 0;
+      }
       const outputChunks = [
         webpMakeChunk('VP8X', vp8xData),
         ...(iccBlock ? [iccBlock] : []),
-        webpMakeChunk('ANIM', sourceAnim.data),
-        ...outputFrames
+        webpMakeChunk('ANIM', animData),
+        ...finalFrames
       ];
       return webpMakeRiff(outputChunks);
     };
 
     const initialQuality = clampInt(Math.round((Number(quality) || 0.68) * 100), 20, 100, 68) / 100;
-    const qualities = [...new Set([
+    const qualities = mustApplyEdits ? [initialQuality] : [...new Set([
       initialQuality,
       Math.min(initialQuality, 0.54),
       Math.min(initialQuality, 0.40),
@@ -1062,21 +1158,26 @@
       ensureProcessingRun(runId);
       const candidate = await encodeAtQuality(qualities[attempt]);
       if (!smallest || candidate.size < smallest.size) smallest = candidate;
-      if (candidate.size < file.size) {
-        const baseName = String(file.name || 'animated.webp').replace(/\.[^.]+$/i, '') || 'animated';
-        const output = new File([candidate], baseName + '.webp', {
+      if (mustApplyEdits || candidate.size < file.size) {
+        const output = new File([candidate], (String(file.name || 'animated.webp').replace(/\.[^.]+$/i, '') || 'animated') + '.webp', {
           type: 'image/webp',
           lastModified: Date.now()
         });
-        logDebug('Animated WebP compressed', {
+        logDebug(mustApplyEdits ? 'Animated WebP edited with browser frame pipeline' : 'Animated WebP compressed', {
           inputBytes: file.size,
           outputBytes: output.size,
           quality: qualities[attempt],
           sourceFrames: sourceFrames.length,
-          sourceWidth: originalWidth,
-          outputWidth: canvasWidth
+          outputWidth: canvasWidth,
+          trimStartMs,
+          trimEndMs,
+          playbackSpeed,
+          crop: { x: cropX, y: cropY, width: cropWidth, height: cropHeight },
+          pingPong: Boolean(edit && edit.loop)
         });
-        setStatus('Анимированный WebP сжат: ' + formatBytes(file.size) + ' → ' + formatBytes(output.size) + '.', 'success');
+        setStatus(mustApplyEdits
+          ? 'Изменения анимированного WebP применены в браузере.'
+          : 'Анимированный WebP сжат: ' + formatBytes(file.size) + ' → ' + formatBytes(output.size) + '.', 'success');
         setProgress(95, true);
         return output;
       }
@@ -1091,7 +1192,6 @@
     setProgress(95, true);
     return file;
   }
-
   // Local IndexedDB cache is per origin; the bounded GM cache below is shared across matched sites.
   function openMediaCacheDb() {
     if (mediaCacheDbPromise) return mediaCacheDbPromise;
@@ -2548,6 +2648,7 @@
       '.twgif-cropping .twgif-editor-crop-frame{opacity:1;pointer-events:auto}.twgif-editor-crop-frame:after{content:"";display:none;position:absolute;inset:0;pointer-events:none;background:linear-gradient(to right,transparent 33%,#ffffff55 33.3%,transparent 33.6%,transparent 66.3%,#ffffff55 66.6%,transparent 66.9%),linear-gradient(to bottom,transparent 33%,#ffffff55 33.3%,transparent 33.6%,transparent 66.3%,#ffffff55 66.6%,transparent 66.9%)}.twgif-cropping .twgif-editor-crop-frame:after{display:block}',
       '.twgif-editor-handle{position:absolute;z-index:4;width:13px;height:13px;border:2px solid white;border-radius:4px;background:#a970ff;touch-action:none}.twgif-editor-handle[data-handle=nw]{left:-6px;top:-6px;cursor:nwse-resize}.twgif-editor-handle[data-handle=ne]{right:-6px;top:-6px;cursor:nesw-resize}.twgif-editor-handle[data-handle=sw]{left:-6px;bottom:-6px;cursor:nesw-resize}.twgif-editor-handle[data-handle=se]{right:-6px;bottom:-6px;cursor:nwse-resize}',
       '.twgif-editor-preview-reverse-canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;user-select:none;pointer-events:none}',
+      '.twgif-editor-mute svg{width:18px;height:18px;display:block}',
       '.twgif-editor-export{padding:0!important;overflow:hidden}.twgif-editor-export>summary{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px;cursor:pointer;list-style:none}.twgif-editor-export>summary::-webkit-details-marker{display:none}.twgif-editor-export[open]>summary{border-bottom:1px solid #ffffff12}.twgif-editor-export-body{padding:8px}.twgif-editor-export-preset-row{display:flex;gap:6px;margin-bottom:8px}.twgif-editor-export-preset-row select{flex:1;min-width:0}.twgif-editor-export-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 7px}.twgif-editor-export-field{display:flex;flex-direction:column;gap:3px;color:#bdbdc8;font-size:9px;min-width:0}.twgif-editor-export-field .twgif-editor-select{box-sizing:border-box;min-width:0;padding:6px 7px;font-size:10px}.twgif-editor-export .twgif-editor-preset{white-space:nowrap}.twgif-editor-timeline-head{font-size:10px;color:#c9c2d6}.twgif-editor-timeline-head span{font-variant-numeric:tabular-nums;color:#a6a6b2}',
       '.twgif-editor-player{display:flex;align-items:center;gap:9px;padding:10px;border:1px solid #ffffff12;border-radius:11px;background:#ffffff05}.twgif-editor-play{width:34px;height:34px;border:1px solid #a970ff66;border-radius:9px;background:#9147ff24;color:#eadcff;cursor:pointer}.twgif-editor-play:disabled{opacity:.4;cursor:not-allowed}.twgif-editor-player-time{min-width:70px;color:#c9c9d2;font-size:11px;font-variant-numeric:tabular-nums}.twgif-editor-player-range{width:100%;accent-color:#a970ff}.twgif-editor-player-note{color:#bbbcca;font-size:11px}',
       '.twgif-editor-timeline-wrap{margin-top:2px;padding:12px;border:1px solid #ffffff12;border-radius:13px;background:linear-gradient(135deg,#ffffff07,#ffffff02)}.twgif-editor-timeline-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:28px}',
@@ -2600,7 +2701,7 @@
         '<header class="twgif-editor-header"><div><span class="twgif-editor-eyebrow">Перед загрузкой · локально</span><h2 id="twgif-editor-title" class="twgif-editor-title">Редактор медиа</h2>',
         '<p class="twgif-editor-subtitle">Обрезай фрагмент, меняй скорость и кадрируй. Изменения применяются до загрузки.</p><span class="twgif-editor-safe">Файл обрабатывается на устройстве</span></div><button class="twgif-editor-close" data-editor-close aria-label="Закрыть">×</button></header>',
         '<div class="twgif-editor-body"><div class="twgif-editor-preview-column"><div class="twgif-editor-stage" data-stage>',
-        '<div class="twgif-editor-crop-frame" data-crop-frame><span class="twgif-editor-handle" data-handle="nw"></span><span class="twgif-editor-handle" data-handle="ne"></span><span class="twgif-editor-handle" data-handle="sw"></span><span class="twgif-editor-handle" data-handle="se"></span></div></div><div class="twgif-editor-preview-controls"><button class="twgif-editor-play" type="button" data-play aria-label="Воспроизвести">▶</button><span class="twgif-editor-player-time" data-current hidden>00:00.00</span><input class="twgif-editor-player-range" type="range" min="0" max="0" step=".01" data-scrub aria-label="Позиция воспроизведения" hidden disabled><span class="twgif-editor-player-time" data-duration hidden>—:—</span></div></div><aside>',
+        '<div class="twgif-editor-crop-frame" data-crop-frame><span class="twgif-editor-handle" data-handle="nw"></span><span class="twgif-editor-handle" data-handle="ne"></span><span class="twgif-editor-handle" data-handle="sw"></span><span class="twgif-editor-handle" data-handle="se"></span></div></div><div class="twgif-editor-preview-controls"><button class="twgif-editor-play" type="button" data-play aria-label="Воспроизвести">▶</button><button class="twgif-editor-play twgif-editor-mute" type="button" data-mute aria-label="Включить звук" aria-pressed="true" title="Звук выключен"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="m16 9 5 6m0-6-5 6"/></svg></button><span class="twgif-editor-player-time" data-current hidden>00:00.00</span><input class="twgif-editor-player-range" type="range" min="0" max="0" step=".01" data-scrub aria-label="Позиция воспроизведения" hidden disabled><span class="twgif-editor-player-time" data-duration hidden>—:—</span></div></div><aside>',
         '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Скорость</span><span class="twgif-editor-section-meta" data-speed-summary>1× · обычная</span></div>',
         '<input class="twgif-editor-speed-slider" type="range" data-speed min=".25" max="4" step=".05" value="1" aria-label="Скорость воспроизведения">',
         '<div class="twgif-editor-speed-ends"><span>0,25×</span><span>4×</span></div><div class="twgif-editor-help">Скорость видна в предпросмотре и применяется к итоговому файлу.</div></section>',
@@ -2655,6 +2756,7 @@
       const speedInput = $('[data-speed]'), loopInput = $('[data-loop]');
       const cropToggle = $('[data-crop-toggle]'), cropControls = $('[data-crop-controls]');
       const playButton = $('[data-play]');
+      const muteButton = $('[data-mute]');
       const currentLabel = $('[data-current]');
       const durationLabel = $('[data-duration]');
 
@@ -2777,8 +2879,14 @@
       durationLabel.before(animationNote);
       const media = document.createElement(info.kind === 'video' ? 'video' : 'img');
       media.className = 'twgif-editor-preview-media';
-      if (info.kind === 'video') { media.preload = 'auto'; media.playsInline = true; }
-      else { media.alt = 'Предпросмотр анимации'; media.draggable = false; }
+      if (info.kind === 'video') {
+        media.preload = 'auto'; media.playsInline = true;
+        media.defaultMuted = true;
+        media.muted = true;
+      } else {
+        media.alt = 'Предпросмотр анимации'; media.draggable = false;
+        muteButton.hidden = true;
+      }
       stage.insertBefore(media, frame);
       const videoReverseCanvas = info.kind === 'video' ? document.createElement('canvas') : null;
       if (videoReverseCanvas) {
@@ -2926,6 +3034,17 @@
         endInput.disabled = safeDuration <= 0;
         $('[data-duration]').textContent = safeDuration > 0 ? formatEditorTime(safeDuration) : '—:—';
       };
+      const updateMuteButton = () => {
+        if (!muteButton) return;
+        const muted = info.kind !== 'video' || Boolean(media.muted);
+        muteButton.innerHTML = muted
+          ? '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="m16 9 5 6m0-6-5 6"/></svg>'
+          : '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>';
+        muteButton.setAttribute('aria-label', muted ? 'Включить звук' : 'Выключить звук');
+        muteButton.setAttribute('aria-pressed', String(muted));
+        muteButton.title = muted ? 'Звук выключен' : 'Звук включён';
+      };
+      updateMuteButton();
       const updateSummary = () => {
         const selected = duration > 0 ? Math.max(0, end - start) : 0;
         $('[data-summary]').innerHTML = 'Итоговая длительность: <strong>' +
@@ -3984,6 +4103,13 @@
       });
       overlay.querySelectorAll('[data-preset]').forEach(b => b.addEventListener('click', () => preset(b.dataset.preset)));
       $('[data-reset]').addEventListener('click', () => preset('free'));
+      muteButton.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (info.kind !== 'video') return;
+        media.muted = !media.muted;
+        updateMuteButton();
+      });
       playButton.addEventListener('click', () => {
         if (info.kind === 'animation') {
           if (!animationDecoder) return;
@@ -4292,36 +4418,42 @@
     }
     if (target === 'keep') return file;
 
-    // The animated-WebP size optimizer cannot apply temporal transforms. Only use it
-    // when the editor is off or the user accepted without changing anything.
-    if (animatedWebP && !editOptions) {
-      if (target === 'webp') {
-        if (!compressEnabled) {
-          setStatus('Анимированный WebP: исходный размер сохранён (сжатие отключено).', 'info');
-          return file;
-        }
-        setStatus('Подготавливаю сжатие анимированного WebP…', 'info', true);
-        setProgress(5, true);
-        try {
-          const converted = await compressAnimatedWebP(
-            file,
-            config.maxWidth,
-            config.compression.animationQuality / 100,
-            runId
-          );
-          ensureProcessingRun(runId);
-          return converted;
-        } catch (error) {
-          if (!isProcessingRunCurrent(runId)) throw error;
-          logDebug('Animated WebP compression failed; original kept to preserve animation', {
-            name: file.name,
-            error: error.message || String(error)
-          });
-          setStatus('Не удалось безопасно сжать анимированный WebP; загружаю оригинал.', 'info');
-          return file;
-        }
+    // Handle animated WebP in the browser. The pinned FFmpeg.wasm 0.12.10 core
+    // is based on FFmpeg 5.1.4 and cannot reliably decode animated WebP input.
+    if (animatedWebP) {
+      if (target !== 'webp') {
+        throw new Error('Анимированный WebP нельзя безопасно передать текущей сборке FFmpeg. Для сохранения анимации выбери WebP или «Оставить исходный формат».');
       }
-      throw new Error('Это анимированный WebP. Чтобы сохранить анимацию, выбери целевой формат WebP или «Оставить исходный формат».');
+      const actualEdits = Boolean(editOptions && mediaEditHasChanges(editOptions, 'webp'));
+      const exportSettings = editorExport && editorExport.isCustom ? editorExport : null;
+      const exportCompression = exportSettings ? exportSettings.compression : config.compression;
+      const exportWidth = exportSettings
+        ? (exportSettings.compressEnabled ? exportSettings.maxWidth : 16383)
+        : (compressEnabled ? config.maxWidth : 16383);
+      const exportQuality = exportSettings && !exportSettings.compressEnabled
+        ? 1 : (Number(exportCompression.animationQuality) || 68) / 100;
+      if (!compressEnabled && !actualEdits && !exportSettings) {
+        setStatus('Анимированный WebP: исходный размер сохранён (сжатие отключено).', 'info');
+        return file;
+      }
+      setStatus(actualEdits ? 'Применяю изменения к анимированному WebP в браузере…' : 'Подготавливаю сжатие анимированного WebP…', 'info', true);
+      setProgress(5, true);
+      try {
+        const converted = await compressAnimatedWebP(
+          file, exportWidth, exportQuality, runId, actualEdits ? editOptions : null
+        );
+        ensureProcessingRun(runId);
+        return converted;
+      } catch (error) {
+        if (!isProcessingRunCurrent(runId)) throw error;
+        if (actualEdits) throw new Error('Не удалось применить изменения к анимированному WebP в браузере: ' + (error.message || String(error)));
+        logDebug('Animated WebP compression failed; original kept to preserve animation', {
+          name: file.name,
+          error: error.message || String(error)
+        });
+        setStatus('Не удалось безопасно сжать анимированный WebP; загружаю оригинал.', 'info');
+        return file;
+      }
     }
 
     if (!editOptions && compressEnabled && category === 'image' && ['webp', 'png', 'jpg'].includes(target)) {
@@ -4333,7 +4465,20 @@
         return converted;
       } catch (error) {
         if (!isProcessingRunCurrent(runId)) throw error;
-        logDebug('Canvas conversion failed; falling back to FFmpeg.wasm', { name: file.name, target, error: error.message || error });
+        if (target === 'webp' && (mime === 'image/webp' || extension === 'webp')) {
+          const signature = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+          const validWebP = signature.length >= 12 &&
+            String.fromCharCode(...signature.slice(0, 4)) === 'RIFF' &&
+            String.fromCharCode(...signature.slice(8, 12)) === 'WEBP';
+          if (validWebP) {
+            logDebug('Static WebP browser decode failed; keeping original instead of sending WebP to FFmpeg', {
+              name: file.name, size: file.size, error: error.message || String(error)
+            });
+            setStatus('Браузер не смог перекодировать WebP. Загружаю исходный файл без повторного декодирования.', 'info');
+            return file;
+          }
+        }
+        logDebug('Canvas conversion failed; falling back to FFmpeg.wasm', { name: file.name, target, error: error.message || String(error) });
       }
     }
     const conversionWidth = editorExport && editorExport.isCustom
