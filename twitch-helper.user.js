@@ -2803,7 +2803,7 @@
       let playheadDrag = null, seekTimer = 0, pendingSeekTime = null, playheadRaf = 0, isTimelineScrubbing = false;
       let userChangedTrim = false, videoReverseTimer = 0, videoPingPongDirection = 1;
       let videoReverseFrames = [], videoReverseCacheCanvas = null, videoReverseCacheContext = null;
-      let videoReverseCapturePending = false, videoReverseCacheLastTime = -Infinity, videoReverseDisplayTime = null, videoReverseCacheGeneration = 0;
+      let videoReverseCapturePending = false, videoReverseCacheLastTime = -Infinity, videoReverseCacheGeneration = 0;
       let videoSeekInFlight = false, pendingVideoSeekTarget = null, pendingVideoSeekFast = false;
       let videoSeekTimeout = 0, videoSeekDispatchTimer = 0, videoSeekHandler = null;
       let animationDecoder = null, animationFrameDurations = [], animationFrameStarts = [];
