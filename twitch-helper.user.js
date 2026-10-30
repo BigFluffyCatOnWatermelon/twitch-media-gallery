@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.76
+// @version      5.9.77
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.76';
+  const APP_VERSION = '5.9.77';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -2470,10 +2470,14 @@
     const rawEnd = Number(raw && raw.end);
     const end = duration ? Math.max(start, Math.min(duration, Number.isFinite(rawEnd) ? rawEnd : duration)) : 0;
     const c = raw && raw.crop || {};
+    const requestedPingPongMode = String(raw && raw.pingPongMode || '');
+    const pingPongMode = ['eco', 'balanced', 'smooth'].includes(requestedPingPongMode)
+      ? requestedPingPongMode : raw && raw.loop === true ? 'smooth' : 'off';
     const w = Math.max(5, Math.min(100, Number(c.w) || 100));
     const h = Math.max(5, Math.min(100, Number(c.h) || 100));
     return { kind: raw && raw.kind === 'animation' ? 'animation' : 'video', duration, start, end,
-      speed: Math.max(.25, Math.min(4, Number(raw && raw.speed) || 1)), loop: raw ? raw.loop !== false : true,
+      speed: Math.max(.25, Math.min(4, Number(raw && raw.speed) || 1)),
+      loop: pingPongMode !== 'off', pingPongMode,
       crop: { x: Math.max(0, Math.min(100 - w, Number(c.x) || 0)),
         y: Math.max(0, Math.min(100 - h, Number(c.y) || 0)), w, h },
       hd: Boolean(raw && raw.hd),
@@ -2574,7 +2578,7 @@
         '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Кадрирование</span><button class="twgif-editor-preset" type="button" data-crop-toggle aria-pressed="false">Включить</button></div>',
         '<div data-crop-controls hidden><div class="twgif-editor-presets"><button class="twgif-editor-preset" type="button" data-preset="free" aria-pressed="true">Свободно</button><button class="twgif-editor-preset" type="button" data-preset="16:9">16:9</button><button class="twgif-editor-preset" type="button" data-preset="9:16">9:16</button><button class="twgif-editor-preset" type="button" data-preset="1:1">1:1</button><button class="twgif-editor-preset" type="button" data-preset="4:3">4:3</button></div>',
         '<div class="twgif-editor-crop-readout"><span>Область кадра</span><strong data-crop-readout>100% × 100%</strong></div><button class="twgif-editor-preset" type="button" data-reset>Сбросить кадрирование</button><div class="twgif-editor-help">Перетаскивай рамку или углы. Сетка видна только в этом режиме.</div></div></section>',
-        '<section class="twgif-editor-section"><label class="twgif-editor-toggle"><input type="checkbox" data-loop><span><strong>Ping-pong</strong><small>Проигрывать выбранный фрагмент вперёд и назад. Для GIF/WebP режим сохраняется в файле.</small></span></label></section>',
+        '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Ping-pong</span><span class="twgif-editor-section-meta">Просмотр в обе стороны</span></div><select class="twgif-editor-select" data-loop aria-label="Режим ping-pong"><option value="off">Выключен</option><option value="eco">Лёгкий · 15 FPS</option><option value="balanced">Сбалансированный · 24 FPS</option><option value="smooth">Плавный · 30 FPS</option></select><div class="twgif-editor-help">Обратное движение в предпросмотре. Раскадровка при этом приостанавливается.</div></section>',
         '<section class="twgif-editor-section"><label class="twgif-editor-toggle"><input type="checkbox" data-hd><span><strong>HD</strong><small>Сохранить исходное разрешение и качество без сжатия.</small></span></label></section>',
         '</aside>',
         '<div class="twgif-editor-timeline-wrap">',
@@ -2600,6 +2604,7 @@
       const playhead = $('[data-playhead]');
       const speedInput = $('[data-speed]'), loopInput = $('[data-loop]');
       const hdInput = $('[data-hd]');
+      loopInput.value = pingPongMode;
       const cropToggle = $('[data-crop-toggle]'), cropControls = $('[data-crop-controls]');
       const playButton = $('[data-play]');
       const currentLabel = $('[data-current]');
@@ -2624,6 +2629,7 @@
       }
 
       let done = false, duration = 0, width = 0, height = 0, start = 0, end = 0, speed = 1, loop = false;
+      let pingPongMode = 'off', videoReverseActive = false, videoReverseGeneration = 0;
       let crop = { x: 0, y: 0, w: 100, h: 100 }, cropMode = false, trimDrag = null;
       let drag = null, dragId = null, resizeObserver = null, resizeHandler = null;
       let playheadDrag = null, seekTimer = 0, pendingSeekTime = null, playheadRaf = 0, isTimelineScrubbing = false;
@@ -2642,6 +2648,8 @@
         storyboardObjectUrls.length = 0;
         if (videoReverseTimer) clearTimeout(videoReverseTimer);
         videoReverseTimer = 0;
+        videoReverseActive = false;
+        videoReverseGeneration++;
         if (seekTimer) clearTimeout(seekTimer);
         seekTimer = 0;
         pendingSeekTime = null;
@@ -2751,7 +2759,8 @@
         if (info.kind === 'video' && !media.paused) {
           await new Promise(resolve => media.addEventListener('pause', resolve, { once: true }));
         }
-        while ((isTimelineScrubbing || (info.kind === 'animation' && animationPlaying)) && !done) {
+        while ((isTimelineScrubbing || (info.kind === 'animation' && animationPlaying) ||
+            (info.kind === 'video' && videoReverseActive)) && !done) {
           await new Promise(resolve => window.setTimeout(resolve, 40));
         }
         if (!done) await new Promise(resolve => window.setTimeout(resolve, 0));
@@ -3039,6 +3048,22 @@
         }
       };
 
+      const nextAnimationPlaybackFrame = (firstFrame, lastFrame) => {
+        if (lastFrame <= firstFrame) return loop ? firstFrame : -1;
+        if (animationDirection >= 0) {
+          if (animationFrameIndex >= lastFrame) {
+            if (!loop) return -1;
+            animationDirection = -1;
+            return lastFrame - 1;
+          }
+          return animationFrameIndex + 1;
+        }
+        if (animationFrameIndex <= firstFrame) {
+          animationDirection = 1;
+          return firstFrame + 1;
+        }
+        return animationFrameIndex - 1;
+      };
       const runAnimationPreview = async generation => {
         if (!animationPlaying || !animationDecoder || done || generation !== animationGeneration) return;
         const drawn = animationPaintedFrameIndex === animationFrameIndex
@@ -3050,11 +3075,7 @@
           if (!animationPlaying || !animationDecoder || done || generation !== animationGeneration) return;
           const firstFrame = findAnimationFrameAt(start);
           const lastFrame = Math.max(firstFrame, findAnimationFrameAt(Math.max(start, end - 0.001)));
-          let nextIndex = animationFrameIndex + 1;
-          if (nextIndex > lastFrame) {
-            if (loop && lastFrame > firstFrame) nextIndex = firstFrame;
-            else { pauseAnimationPreview(); return; }
-          }
+          const nextIndex = nextAnimationPlaybackFrame(firstFrame, lastFrame);
           if (nextIndex < firstFrame || nextIndex > lastFrame) { pauseAnimationPreview(); return; }
           animationFrameIndex = nextIndex;
           runAnimationPreview(generation).catch(() => pauseAnimationPreview());
@@ -3066,7 +3087,10 @@
         const firstFrame = findAnimationFrameAt(start);
         const lastFrame = Math.max(firstFrame, findAnimationFrameAt(Math.max(start, end - 0.001)));
         if (duration > 0 && (animationFrameStarts[animationFrameIndex] < start ||
-            animationFrameStarts[animationFrameIndex] >= end || animationFrameIndex >= lastFrame)) {
+            animationFrameStarts[animationFrameIndex] >= end ||
+            animationFrameIndex < firstFrame || animationFrameIndex > lastFrame)) {
+          animationFrameIndex = firstFrame;
+        } else if (animationFrameIndex >= lastFrame) {
           animationFrameIndex = firstFrame;
         }
         animationDirection = 1;
@@ -3100,20 +3124,7 @@
               animationPlaying = true;
               playButton.textContent = 'Ⅱ';
               playButton.setAttribute('aria-label', 'Приостановить анимацию');
-              const frameDuration = Math.max(0.01, Number(animationFrameDurations[animationFrameIndex]) || 0.1);
-              animationTimer = window.setTimeout(() => {
-                animationTimer = 0;
-                if (!animationPlaying || !animationDecoder || done) return;
-                const firstFrame = findAnimationFrameAt(start);
-                const lastFrame = Math.max(firstFrame, findAnimationFrameAt(Math.max(start, end - 0.001)));
-                let nextIndex = animationFrameIndex + 1;
-                if (nextIndex > lastFrame) {
-                  if (loop && lastFrame > firstFrame) nextIndex = firstFrame;
-                  else { pauseAnimationPreview(); return; }
-                }
-                animationFrameIndex = nextIndex;
-                runAnimationPreview(++animationGeneration).catch(() => pauseAnimationPreview());
-              }, Math.max(10, Math.min(10000, frameDuration / speed * 1000)));
+              runAnimationPreview(generation).catch(() => pauseAnimationPreview());
             }
           } catch (error) {
             logDebug('Animation seek failed', error?.message || error);
@@ -3189,31 +3200,31 @@
         updateTimelineControls(value);
       };
       const stopVideoPreview = (atEnd = false) => {
-        if (videoReverseTimer) clearTimeout(videoReverseTimer);
-        videoReverseTimer = 0;
-        videoPingPongDirection = 1;
+        cancelVideoReverse();
         try { media.pause(); } catch (_) {}
         if (playheadRaf) window.cancelAnimationFrame(playheadRaf);
         playheadRaf = 0;
+        const safeEnd = Math.max(start, end - getVideoEndGuard());
         const value = atEnd ? end : Math.max(0, Math.min(duration || 0, Number(media.currentTime) || 0));
-        if (atEnd) { try { media.currentTime = end; } catch (_) {} }
+        if (atEnd && duration > 0) { try { media.currentTime = safeEnd; } catch (_) {} }
         playButton.textContent = '▶';
         playButton.setAttribute('aria-label', 'Воспроизвести');
         syncVideoPosition(value);
       };
       const animateVideoPlayhead = () => {
         playheadRaf = 0;
-        if (done || info.kind !== 'video' || media.paused || duration <= 0) return;
+        if (done || info.kind !== 'video' || (media.paused && !videoReverseActive) || duration <= 0) return;
         const time = Number(media.currentTime) || 0;
-        if (time >= end - 0.018) {
-          stopVideoPreview(true);
+        if (!videoReverseActive && time >= end - getVideoEndGuard()) {
+          if (loop) startVideoReverse();
+          else stopVideoPreview(true);
           return;
         }
         syncVideoPosition(time);
         playheadRaf = window.requestAnimationFrame(animateVideoPlayhead);
       };
       const onPlayState = () => {
-        const playing = !media.paused || Boolean(videoReverseTimer);
+        const playing = !media.paused || videoReverseActive;
         playButton.textContent = playing ? 'Ⅱ' : '▶';
         playButton.setAttribute('aria-label', playing ? 'Пауза' : 'Воспроизвести');
         if (playing && !playheadRaf && info.kind === 'video') {
@@ -3233,35 +3244,86 @@
         }
         width = media.videoWidth || width; height = media.videoHeight || height; updateFrame();
       };
+      const getVideoPingPongFps = () => pingPongMode === 'eco' ? 15 : pingPongMode === 'balanced' ? 24 : 30;
+      const getVideoEndGuard = () => {
+        const frameStep = speed / getVideoPingPongFps();
+        return Math.max(0.045, Math.min(0.2, frameStep * 1.35));
+      };
+      const waitForVideoSeek = (target, generation) => new Promise(resolve => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          media.removeEventListener('seeked', onSeeked);
+          clearTimeout(timeout);
+          if (!done && generation === videoReverseGeneration) syncVideoPosition(media.currentTime);
+          resolve(!done && generation === videoReverseGeneration);
+        };
+        const onSeeked = () => finish();
+        const timeout = window.setTimeout(finish, 450);
+        media.addEventListener('seeked', onSeeked, { once: true });
+        try {
+          if (Math.abs((Number(media.currentTime) || 0) - target) < 0.004 && !media.seeking) finish();
+          else media.currentTime = target;
+        } catch (_) { finish(); }
+      });
+      const cancelVideoReverse = () => {
+        if (videoReverseTimer) clearTimeout(videoReverseTimer);
+        videoReverseTimer = 0;
+        videoReverseActive = false;
+        videoPingPongDirection = 1;
+        videoReverseGeneration++;
+      };
       const startVideoReverse = () => {
-        if (!loop || end <= start + .05 || done || videoReverseTimer) return;
-        media.pause();
+        if (!loop || end <= start + .05 || done || videoReverseActive) return;
+        videoReverseActive = true;
         videoPingPongDirection = -1;
+        const generation = ++videoReverseGeneration;
+        media.pause();
         playButton.textContent = 'Ⅱ';
         playButton.setAttribute('aria-label', 'Пауза');
-        const reverseStep = () => {
-          if (done || !loop || videoPingPongDirection !== -1) { videoReverseTimer = 0; return; }
-          const nextTime = (Number(media.currentTime) || end) - Math.max(.02, .04 * speed);
-          if (nextTime <= start + .01) {
-            videoReverseTimer = 0;
+        const fps = getVideoPingPongFps();
+        const frameInterval = 1000 / fps;
+        const mediaStep = speed / fps;
+        const safeEnd = Math.max(start, end - getVideoEndGuard());
+        const reverseStep = async () => {
+          videoReverseTimer = 0;
+          if (done || !loop || !videoReverseActive || generation !== videoReverseGeneration) return;
+          const current = Number(media.currentTime) || safeEnd;
+          const target = current - mediaStep;
+          if (target <= start + mediaStep * 0.5) {
+            const positioned = await waitForVideoSeek(start, generation);
+            if (!positioned || done || !videoReverseActive || generation !== videoReverseGeneration) return;
+            videoReverseActive = false;
             videoPingPongDirection = 1;
-            try { media.currentTime = start; } catch (_) {}
+            videoReverseTimer = 0;
             media.playbackRate = speed;
-            media.play().catch(() => { playButton.textContent = '▶'; });
+            try { await media.play(); }
+            catch (_) { stopVideoPreview(false); }
             return;
           }
-          try { media.currentTime = nextTime; } catch (_) {}
-          videoReverseTimer = window.setTimeout(reverseStep, 40);
+          const positioned = await waitForVideoSeek(target, generation);
+          if (!positioned || done || !videoReverseActive || generation !== videoReverseGeneration || !loop) return;
+          videoReverseTimer = window.setTimeout(reverseStep, frameInterval);
           playButton.textContent = 'Ⅱ';
           playButton.setAttribute('aria-label', 'Пауза');
-          updateTimelineControls();
         };
-        reverseStep();
+        const positionAtSafeEnd = async () => {
+          const positioned = await waitForVideoSeek(safeEnd, generation);
+          if (!positioned || done || !videoReverseActive || generation !== videoReverseGeneration) return;
+          videoReverseTimer = window.setTimeout(reverseStep, frameInterval);
+        };
+        positionAtSafeEnd().catch(error => {
+          logDebug('Ping-pong reverse preview failed', error?.message || error);
+          stopVideoPreview(false);
+        });
       };
       const onVideoTime = () => {
         if (!Number.isFinite(media.currentTime)) return;
-        if (!media.paused && duration > 0 && media.currentTime >= end - 0.018) {
-          stopVideoPreview(true);
+        if (!media.paused && !videoReverseActive && duration > 0 &&
+            media.currentTime >= end - getVideoEndGuard()) {
+          if (loop) startVideoReverse();
+          else stopVideoPreview(true);
           return;
         }
         syncVideoPosition(media.currentTime);
@@ -3305,9 +3367,7 @@
       };
       const seekPreviewTime = (seconds, defer = false) => {
         const value = Math.max(0, Math.min(duration || 0, Number(seconds) || 0));
-        if (videoReverseTimer) clearTimeout(videoReverseTimer);
-        videoReverseTimer = 0;
-        videoPingPongDirection = 1;
+        cancelVideoReverse();
         currentLabel.textContent = formatEditorTime(value);
         scrub.value = String(value);
         updateTimelineControls(value);
@@ -3328,8 +3388,9 @@
         const gap = Math.min(.05, duration / 10);
         if (which === 'start') start = Math.max(0, Math.min(Number(value) || 0, end - gap));
         else end = Math.max(start + gap, Math.min(Number(value) || 0, duration));
+        animationDirection = 1;
         updateSummary();
-        seekPreviewTime(which === 'start' ? start : end, true);
+        seekPreviewTime(which === 'start' ? start : Math.max(start, end - (info.kind === 'video' ? getVideoEndGuard() : 0.001)), true);
       };
       const setTrimValueFromPointer = (which, event) => {
         const rect = timelineTrack.getBoundingClientRect();
@@ -3429,15 +3490,16 @@
         updateSummary();
       });
       loopInput.addEventListener('change', () => {
-        loop = loopInput.checked;
+        pingPongMode = ['eco', 'balanced', 'smooth'].includes(loopInput.value) ? loopInput.value : 'off';
+        loop = pingPongMode !== 'off';
         animationDirection = 1;
-        if (!loop && videoReverseTimer) {
-          clearTimeout(videoReverseTimer);
-          videoReverseTimer = 0;
-          videoPingPongDirection = 1;
+        if (!loop && videoReverseActive) {
+          cancelVideoReverse();
           media.playbackRate = speed;
-          media.play().catch(() => {});
-        } else videoPingPongDirection = 1;
+          if (media.paused) media.play().catch(() => {});
+        } else if (info.kind === 'animation' && animationPlaying) {
+          seekAnimationPreview(animationFrameStarts[animationFrameIndex] || start);
+        }
         updateSummary();
       });
       cropToggle.addEventListener('click', () => {
@@ -3457,8 +3519,10 @@
           else playAnimationPreview();
           return;
         }
-        if (videoReverseTimer) { clearTimeout(videoReverseTimer); videoReverseTimer = 0; videoPingPongDirection = 1; }
-        
+        if (videoReverseActive) {
+          stopVideoPreview(false);
+          return;
+        }
         if (media.paused) {
           const restartAtStart = duration && (media.currentTime < start || media.currentTime >= end - 0.025 || media.ended);
           const playFromSelection = async () => {
@@ -3492,7 +3556,7 @@
       overlay.addEventListener('pointerdown', e => { if (e.target === overlay) finish(null); });
       $('[data-apply]').addEventListener('click', () => {
         if (!isProcessingRunCurrent(runId)) { finish(null); return; }
-        finish(normalizeMediaEditOptions({ kind: info.kind, duration, start, end, speed, loop, hd: hdInput.checked, crop, sourceWidth: width, sourceHeight: height }));
+        finish(normalizeMediaEditOptions({ kind: info.kind, duration, start, end, speed, loop, pingPongMode, hd: hdInput.checked, crop, sourceWidth: width, sourceHeight: height }));
       });
 
       if (info.kind === 'video') {
