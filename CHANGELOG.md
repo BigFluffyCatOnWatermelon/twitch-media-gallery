@@ -1,5 +1,16 @@
 # Changelog
 
+## [5.9.89] — 2026-10-30
+
+### Fixed
+- The animated WebP estimate no longer silently caps its predicted result at the original file size when edge-frame re-encoding may still exceed it.
+- Video size estimates now account for the doubled duration produced by ping-pong export.
+- Bumped the userscript version to 5.9.89.
+
+### Verification
+- Full userscript JavaScript syntax check passed.
+- Estimated sizes remain approximate until the actual encode finishes.
+
 ## [5.9.88] — 2026-10-30
 
 ### Fixed
