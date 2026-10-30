@@ -3451,6 +3451,7 @@
           return;
         }
         if (loop && !videoReverseActive) updateVideoPingPongPlaybackRate(time);
+        if (loop) captureVideoReverseFrame();
         syncVideoPosition(time);
         playheadRaf = window.requestAnimationFrame(animateVideoPlayhead);
       };
@@ -3458,7 +3459,7 @@
         const playing = !media.paused || videoReverseActive;
         playButton.textContent = playing ? 'Ⅱ' : '▶';
         playButton.setAttribute('aria-label', playing ? 'Пауза' : 'Воспроизвести');
-        if (playing && !playheadRaf && info.kind === 'video') {
+        if (playing && !videoReverseActive && !playheadRaf && info.kind === 'video') {
           playheadRaf = window.requestAnimationFrame(animateVideoPlayhead);
         } else if (!playing && playheadRaf) {
           window.cancelAnimationFrame(playheadRaf);
@@ -3513,9 +3514,87 @@
       };
       const getVideoEndGuard = () => {
         // Guard against a whole source frame being presented between two UI ticks.
-        // This is deliberately independent from the selected reverse-preview cadence.
         const sourceFrameStep = speed / 24;
         return Math.max(0.05, Math.min(0.24, sourceFrameStep * 1.25));
+      };
+      const clearVideoReverseCache = () => {
+        for (const frame of videoReverseFrames) { try { frame.bitmap.close(); } catch (_) {} }
+        videoReverseFrames.length = 0;
+        videoReverseCacheLastTime = -Infinity;
+      };
+      const captureVideoReverseFrame = () => {
+        if (done || info.kind !== 'video' || !loop || videoReverseActive || media.paused || media.readyState < 2 ||
+            !videoReverseCanvas || typeof createImageBitmap !== 'function' || videoReverseCapturePending ||
+            end <= start + 0.05 || videoReverseFrames.length >= 180) return;
+        const time = Number(media.currentTime) || 0;
+        if (time < start - 0.03 || time > end + 0.03) return;
+        if (time < videoReverseCacheLastTime - 0.05) clearVideoReverseCache();
+        const sampleInterval = Math.max(1 / 18, (end - start) / 180);
+        if (time - videoReverseCacheLastTime < sampleInterval * 0.85) return;
+        const sourceWidth = Number(media.videoWidth) || 0;
+        const sourceHeight = Number(media.videoHeight) || 0;
+        if (!sourceWidth || !sourceHeight) return;
+        const scale = Math.min(1, 240 / Math.max(sourceWidth, sourceHeight));
+        const frameWidth = Math.max(2, Math.round(sourceWidth * scale));
+        const frameHeight = Math.max(2, Math.round(sourceHeight * scale));
+        if (!videoReverseCacheCanvas) {
+          videoReverseCacheCanvas = document.createElement('canvas');
+          videoReverseCacheContext = videoReverseCacheCanvas.getContext('2d', { alpha: false });
+        }
+        if (!videoReverseCacheContext) return;
+        if (videoReverseCacheCanvas.width !== frameWidth) videoReverseCacheCanvas.width = frameWidth;
+        if (videoReverseCacheCanvas.height !== frameHeight) videoReverseCacheCanvas.height = frameHeight;
+        try {
+          videoReverseCacheContext.drawImage(media, 0, 0, frameWidth, frameHeight);
+          videoReverseCapturePending = true;
+          const snapshotTime = time;
+          createImageBitmap(videoReverseCacheCanvas).then(bitmap => {
+            if (done || !loop || videoReverseFrames.length >= 180) { try { bitmap.close(); } catch (_) {} return; }
+            videoReverseFrames.push({ time: snapshotTime, bitmap });
+            videoReverseCacheLastTime = snapshotTime;
+          }).catch(error => { logDebug('Reverse preview frame cache failed', error?.message || error); })
+            .finally(() => { videoReverseCapturePending = false; });
+        } catch (_) { videoReverseCapturePending = false; }
+      };
+      const scheduleVideoPreviewSeek = () => {
+        if (done || videoSeekInFlight || pendingVideoSeekTarget === null || videoSeekDispatchTimer) return;
+        videoSeekDispatchTimer = window.setTimeout(() => {
+          videoSeekDispatchTimer = 0;
+          if (done || videoSeekInFlight || pendingVideoSeekTarget === null) return;
+          const target = pendingVideoSeekTarget;
+          const fast = pendingVideoSeekFast;
+          pendingVideoSeekTarget = null;
+          pendingVideoSeekFast = false;
+          if (!media.seeking && Math.abs((Number(media.currentTime) || 0) - target) <= 0.012) {
+            if (pendingVideoSeekTarget !== null) scheduleVideoPreviewSeek();
+            return;
+          }
+          videoSeekInFlight = true;
+          let settled = false;
+          const finishSeek = () => {
+            if (settled) return;
+            settled = true;
+            if (videoSeekHandler) media.removeEventListener('seeked', videoSeekHandler);
+            videoSeekHandler = null;
+            if (videoSeekTimeout) clearTimeout(videoSeekTimeout);
+            videoSeekTimeout = 0;
+            videoSeekInFlight = false;
+            if (!done && pendingVideoSeekTarget !== null) scheduleVideoPreviewSeek();
+          };
+          videoSeekHandler = finishSeek;
+          media.addEventListener('seeked', finishSeek, { once: true });
+          videoSeekTimeout = window.setTimeout(finishSeek, 900);
+          try {
+            if (fast && typeof media.fastSeek === 'function') media.fastSeek(target);
+            else media.currentTime = target;
+            if (!media.seeking && Math.abs((Number(media.currentTime) || 0) - target) <= 0.03) window.setTimeout(finishSeek, 0);
+          } catch (_) { finishSeek(); }
+        }, 24);
+      };
+      const queueVideoPreviewSeek = (target, fast = false) => {
+        pendingVideoSeekTarget = target;
+        pendingVideoSeekFast = Boolean(fast);
+        scheduleVideoPreviewSeek();
       };
       const waitForVideoSeek = (target, generation) => new Promise(resolve => {
         let settled = false;
@@ -3543,6 +3622,9 @@
         videoReverseTimer = 0;
         videoReverseActive = false;
         videoPingPongDirection = 1;
+        videoReverseDisplayTime = null;
+        if (videoReverseCanvas) videoReverseCanvas.hidden = true;
+        if (media) media.hidden = false;
         videoReverseGeneration++;
       };
       const startVideoReverse = (resumeFromCurrent = false) => {
@@ -3559,6 +3641,72 @@
           ? Math.max(start, Math.min(end - getVideoEndGuard(), Number(media.currentTime) || start))
           : Math.max(start, end - getVideoEndGuard());
         const reverseSpan = Math.max(0, safeEnd - start);
+        const cachedFrames = videoReverseFrames
+          .filter(frame => frame.time >= start - 0.03 && frame.time <= safeEnd + 0.03)
+          .sort((a, b) => a.time - b.time);
+        if (reverseSpan > 0.05 && cachedFrames.length >= 3) {
+          const firstCachedTime = cachedFrames[0].time;
+          const lastCachedTime = cachedFrames[cachedFrames.length - 1].time;
+          let largestGap = 0;
+          for (let i = 1; i < cachedFrames.length; i++) largestGap = Math.max(largestGap, cachedFrames[i].time - cachedFrames[i - 1].time);
+          const expectedGap = Math.max(1 / 18, reverseSpan / 180);
+          const cacheCoversSelection = firstCachedTime <= start + Math.max(0.18, expectedGap * 2.5) &&
+            lastCachedTime >= safeEnd - Math.max(0.24, expectedGap * 3) &&
+            largestGap <= Math.max(0.42, expectedGap * 4);
+          if (cacheCoversSelection && videoReverseCanvas) {
+            const context = videoReverseCanvas.getContext('2d', { alpha: false });
+            if (context) {
+              const firstBitmap = cachedFrames[0].bitmap;
+              videoReverseCanvas.width = firstBitmap.width || 240;
+              videoReverseCanvas.height = firstBitmap.height || 135;
+              videoReverseCanvas.hidden = false;
+              media.hidden = true;
+              let cursor = cachedFrames.length - 1;
+              const drawCachedReverseFrame = () => {
+                if (done || !loop || !videoReverseActive || generation !== videoReverseGeneration) return;
+                const frame = cachedFrames[cursor];
+                try {
+                  context.clearRect(0, 0, videoReverseCanvas.width, videoReverseCanvas.height);
+                  context.drawImage(frame.bitmap, 0, 0, videoReverseCanvas.width, videoReverseCanvas.height);
+                } catch (error) {
+                  logDebug('Cached reverse preview draw failed', error?.message || error);
+                  stopVideoPreview(false);
+                  return;
+                }
+                videoReverseDisplayTime = frame.time;
+                syncVideoPosition(frame.time);
+                if (cursor <= 0) {
+                  videoReverseTimer = window.setTimeout(async () => {
+                    videoReverseTimer = 0;
+                    if (done || !videoReverseActive || generation !== videoReverseGeneration || !loop) return;
+                    videoReverseCanvas.hidden = true;
+                    media.hidden = false;
+                    videoReverseDisplayTime = null;
+                    const positioned = await waitForVideoSeek(start, generation);
+                    if (!positioned || done || !videoReverseActive || generation !== videoReverseGeneration || !loop) {
+                      if (!done && videoReverseActive && generation === videoReverseGeneration) stopVideoPreview(false);
+                      return;
+                    }
+                    videoReverseActive = false;
+                    videoPingPongDirection = 1;
+                    media.playbackRate = getVideoPingPongPlaybackRate(start);
+                    try { await media.play(); } catch (_) { stopVideoPreview(false); }
+                  }, 1000 / 30);
+                  return;
+                }
+                const currentProgress = Math.max(0, Math.min(1, (safeEnd - frame.time) / reverseSpan));
+                const nextFrame = cachedFrames[cursor - 1];
+                const nextProgress = Math.max(currentProgress, Math.min(1, (safeEnd - nextFrame.time) / reverseSpan));
+                const elapsed = getPingPongInverseEaseProgress(nextProgress) - getPingPongInverseEaseProgress(currentProgress);
+                const delay = Math.max(8, elapsed * reverseSpan / Math.max(0.25, speed) * 1000);
+                cursor--;
+                videoReverseTimer = window.setTimeout(drawCachedReverseFrame, delay);
+              };
+              drawCachedReverseFrame();
+              return;
+            }
+          }
+        }
         const totalSteps = Math.max(1, Math.ceil(reverseSpan / Math.max(0.25, speed) * fps));
         let stepIndex = 0;
         const reverseStep = async () => {
@@ -3600,7 +3748,7 @@
         });
       };
       const onVideoTime = () => {
-        if (!Number.isFinite(media.currentTime)) return;
+        if (videoReverseActive || !Number.isFinite(media.currentTime)) return;
         if (!media.paused && !videoReverseActive && duration > 0 &&
             media.currentTime >= end - getVideoEndGuard()) {
           if (loop) startVideoReverse();
