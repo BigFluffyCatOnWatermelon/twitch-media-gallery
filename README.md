@@ -5,6 +5,7 @@ Tampermonkey userscript that adds a media gallery and a local media editor to Tw
 ## Install / update
 
 Install `twitch-helper.user.js` through Tampermonkey using the Raw file URL from this repository. Tampermonkey checks the userscript metadata version for updates.
+https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 
 ## Project documentation
 
