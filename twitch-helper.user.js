@@ -3443,7 +3443,7 @@
       };
       const animateVideoPlayhead = () => {
         playheadRaf = 0;
-        if (done || info.kind !== 'video' || (media.paused && !videoReverseActive) || duration <= 0) return;
+        if (done || info.kind !== 'video' || media.paused || videoReverseActive || duration <= 0) return;
         const time = Number(media.currentTime) || 0;
         if (!videoReverseActive && time >= end - getVideoEndGuard()) {
           if (loop) startVideoReverse();
@@ -3784,8 +3784,7 @@
       };
       const performPreviewSeek = (value, fast = false) => {
         if (info.kind === 'video') {
-          if (fast && typeof media.fastSeek === 'function') media.fastSeek(value);
-          else media.currentTime = value;
+          queueVideoPreviewSeek(value, fast);
         } else if (animationDecoder) {
           seekAnimationPreview(value);
         }
@@ -3801,13 +3800,14 @@
       const seekPreviewTime = (seconds, defer = false) => {
         const value = Math.max(0, Math.min(duration || 0, Number(seconds) || 0));
         cancelVideoReverse();
+        if (info.kind === 'video') clearVideoReverseCache();
         currentLabel.textContent = formatEditorTime(value);
         scrub.value = String(value);
         updateTimelineControls(value);
         paintPlayhead(value);
         if (defer) {
           pendingSeekTime = value;
-          if (!seekTimer) seekTimer = window.setTimeout(() => flushPendingPreviewSeek(true), 18);
+          if (!seekTimer) seekTimer = window.setTimeout(() => flushPendingPreviewSeek(true), 36);
           return;
         }
         if (seekTimer) clearTimeout(seekTimer);
