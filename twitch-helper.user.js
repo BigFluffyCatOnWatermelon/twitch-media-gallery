@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.81
+// @version      5.9.82
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -39,7 +39,7 @@
 
   // Shared fallback for preview callbacks that may outlive the editor's local scope.
   let videoReverseDisplayTime = null;
-  const APP_VERSION = '5.9.81';
+  const APP_VERSION = '5.9.82';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -2802,7 +2802,7 @@
       let drag = null, dragId = null, resizeObserver = null, resizeHandler = null;
       let playheadDrag = null, seekTimer = 0, pendingSeekTime = null, playheadRaf = 0, isTimelineScrubbing = false;
       let userChangedTrim = false, videoReverseTimer = 0, videoPingPongDirection = 1;
-      let videoReverseFrames = [], videoReverseCacheCanvas = null, videoReverseCacheContext = null;
+      let videoReverseFrames = [], videoReverseCacheBytes = 0, videoReverseCacheFrameLimit = 180;
       let videoReverseCapturePending = false, videoReverseCacheLastTime = -Infinity, videoReverseCacheGeneration = 0;
       let videoSeekInFlight = false, pendingVideoSeekTarget = null, pendingVideoSeekFast = false;
       let videoSeekTimeout = 0, videoSeekDispatchTimer = 0, videoSeekHandler = null;
@@ -2834,8 +2834,8 @@
         pendingVideoSeekTarget = null;
         videoReverseFrames.forEach(frame => { try { frame.bitmap.close(); } catch (_) {} });
         videoReverseFrames.length = 0;
-        videoReverseCacheCanvas = null;
-        videoReverseCacheContext = null;
+        videoReverseCacheBytes = 0;
+        videoReverseCacheFrameLimit = 180;
         if (videoReverseCanvas) videoReverseCanvas.hidden = true;
         media.hidden = false;
         if (playheadRaf) window.cancelAnimationFrame(playheadRaf);
@@ -3528,41 +3528,40 @@
         videoReverseCacheGeneration++;
         for (const frame of videoReverseFrames) { try { frame.bitmap.close(); } catch (_) {} }
         videoReverseFrames.length = 0;
+        videoReverseCacheBytes = 0;
+        videoReverseCacheFrameLimit = 180;
         videoReverseCacheLastTime = -Infinity;
         videoReverseCapturePending = false;
       };
       const captureVideoReverseFrame = () => {
+        const reverseCacheBudgetBytes = 256 * 1024 * 1024;
         if (done || info.kind !== 'video' || !loop || videoReverseActive || media.paused || media.readyState < 2 ||
             !videoReverseCanvas || typeof createImageBitmap !== 'function' || videoReverseCapturePending ||
-            end <= start + 0.05 || videoReverseFrames.length >= 180) return;
+            end <= start + 0.05) return;
         const time = Number(media.currentTime) || 0;
         if (time < start - 0.03 || time > end + 0.03) return;
         if (time < videoReverseCacheLastTime - 0.05) clearVideoReverseCache();
-        const sampleInterval = Math.max(1 / 18, (end - start) / 180);
-        if (time - videoReverseCacheLastTime < sampleInterval * 0.85) return;
         const sourceWidth = Number(media.videoWidth) || 0;
         const sourceHeight = Number(media.videoHeight) || 0;
         if (!sourceWidth || !sourceHeight) return;
-        const scale = Math.min(1, 240 / Math.max(sourceWidth, sourceHeight));
-        const frameWidth = Math.max(2, Math.round(sourceWidth * scale));
-        const frameHeight = Math.max(2, Math.round(sourceHeight * scale));
-        if (!videoReverseCacheCanvas) {
-          videoReverseCacheCanvas = document.createElement('canvas');
-          videoReverseCacheContext = videoReverseCacheCanvas.getContext('2d', { alpha: false });
-        }
-        if (!videoReverseCacheContext) return;
-        if (videoReverseCacheCanvas.width !== frameWidth) videoReverseCacheCanvas.width = frameWidth;
-        if (videoReverseCacheCanvas.height !== frameHeight) videoReverseCacheCanvas.height = frameHeight;
+        const estimatedFrameBytes = sourceWidth * sourceHeight * 4;
+        const frameLimit = Math.min(180, Math.floor(reverseCacheBudgetBytes / estimatedFrameBytes));
+        if (frameLimit < 3 || videoReverseFrames.length >= frameLimit || videoReverseCacheBytes + estimatedFrameBytes > reverseCacheBudgetBytes) return;
+        videoReverseCacheFrameLimit = frameLimit;
+        const sampleInterval = Math.max(1 / 18, (end - start) / frameLimit);
+        if (time - videoReverseCacheLastTime < sampleInterval * 0.85) return;
         try {
-          videoReverseCacheContext.drawImage(media, 0, 0, frameWidth, frameHeight);
           videoReverseCapturePending = true;
           const snapshotTime = time;
           const cacheGeneration = videoReverseCacheGeneration;
-          createImageBitmap(videoReverseCacheCanvas).then(bitmap => {
-            if (done || !loop || cacheGeneration !== videoReverseCacheGeneration || videoReverseFrames.length >= 180) { try { bitmap.close(); } catch (_) {} return; }
+          createImageBitmap(media).then(bitmap => {
+            const bitmapBytes = (Number(bitmap.width) || sourceWidth) * (Number(bitmap.height) || sourceHeight) * 4;
+            if (done || !loop || cacheGeneration !== videoReverseCacheGeneration || videoReverseFrames.length >= frameLimit ||
+                videoReverseCacheBytes + bitmapBytes > reverseCacheBudgetBytes) { try { bitmap.close(); } catch (_) {} return; }
             videoReverseFrames.push({ time: snapshotTime, bitmap });
+            videoReverseCacheBytes += bitmapBytes;
             videoReverseCacheLastTime = snapshotTime;
-          }).catch(error => { logDebug('Reverse preview frame cache failed', error?.message || error); })
+          }).catch(error => { logDebug('Full-resolution reverse preview frame cache failed', error?.message || error); })
             .finally(() => { videoReverseCapturePending = false; });
         } catch (_) { videoReverseCapturePending = false; }
       };
@@ -3659,16 +3658,16 @@
           const lastCachedTime = cachedFrames[cachedFrames.length - 1].time;
           let largestGap = 0;
           for (let i = 1; i < cachedFrames.length; i++) largestGap = Math.max(largestGap, cachedFrames[i].time - cachedFrames[i - 1].time);
-          const expectedGap = Math.max(1 / 18, reverseSpan / 180);
-          const cacheCoversSelection = firstCachedTime <= start + Math.max(0.18, expectedGap * 2.5) &&
-            lastCachedTime >= safeEnd - Math.max(0.24, expectedGap * 3) &&
-            largestGap <= Math.max(0.42, expectedGap * 4);
+          const expectedGap = reverseSpan / Math.max(1, cachedFrames.length - 1);
+          const cacheCoversSelection = firstCachedTime <= start + Math.max(0.18, expectedGap * 1.5) &&
+            lastCachedTime >= safeEnd - Math.max(0.24, expectedGap * 1.5) &&
+            largestGap <= Math.max(0.42, expectedGap * 1.8);
           if (cacheCoversSelection && videoReverseCanvas) {
             const context = videoReverseCanvas.getContext('2d', { alpha: false });
             if (context) {
               const firstBitmap = cachedFrames[0].bitmap;
-              videoReverseCanvas.width = firstBitmap.width || 240;
-              videoReverseCanvas.height = firstBitmap.height || 135;
+              videoReverseCanvas.width = firstBitmap.width || Number(media.videoWidth) || 1;
+              videoReverseCanvas.height = firstBitmap.height || Number(media.videoHeight) || 1;
               videoReverseCanvas.hidden = false;
               media.hidden = true;
               let cursor = cachedFrames.length - 1;
@@ -3909,7 +3908,7 @@
       });
       frame.addEventListener('pointermove', e => {
         if (!drag || e.pointerId !== dragId) return;
-        cropPreset = 'free';
+        if (drag.mode !== 'move') cropPreset = 'free';
         const dx = (e.clientX - drag.sx) / Math.max(1, drag.rect.width) * 100;
         const dy = (e.clientY - drag.sy) / Math.max(1, drag.rect.height) * 100;
         const c = drag.crop;
