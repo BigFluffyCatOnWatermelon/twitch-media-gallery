@@ -1,5 +1,21 @@
 # Changelog
 
+## [5.9.88] — 2026-10-30
+
+### Fixed
+- Fixed the animated WebP export failure caused by debug logging reading frame counters outside their local scope.
+- Replaced source-file metadata in the editor footer with a live estimate of the exported file's FPS, pixel dimensions, and file size. The estimate updates when trimming, crop geometry, speed, export format, or preset settings change.
+- Animated WebP output estimates are calculated from frame timing, frame positions and compressed payload sizes, crop intersections, output scale, trim range, and optional ping-pong duplication.
+- Video FPS sampling now uses presented-frame timestamps and media-time deltas from requestVideoFrameCallback instead of trying to infer FPS from timeupdate events.
+- Bumped the userscript version to 5.9.88.
+
+### Notes
+- The displayed weight is a pre-encoding estimate, not a guaranteed final byte count. Re-encoded edge frames and codec behavior can change the actual size.
+
+### Verification
+- Full userscript JavaScript syntax check passed.
+- Export, estimate updates, and real video FPS sampling still require browser validation with media files.
+
 ## [5.9.87] — 2026-10-30
 
 ### Fixed
