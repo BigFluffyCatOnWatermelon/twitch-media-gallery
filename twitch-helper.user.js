@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.89
+// @version      5.9.90
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -39,7 +39,7 @@
 
   // Shared fallback for preview callbacks that may outlive the editor's local scope.
   let videoReverseDisplayTime = null;
-  const APP_VERSION = '5.9.89';
+  const APP_VERSION = '5.9.90';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -2054,16 +2054,34 @@
     const sourceIsStillImage = mime.startsWith('image/') && !sourceIsAnimation;
     const editOptions = rawEditOptions ? normalizeMediaEditOptions(rawEditOptions) : null;
     const outputIsVideo = outputFormat === 'mp4' || outputFormat === 'webm';
+    // Cropping forces video re-encoding, so CRF 0 ("lossless") can inflate
+    // small MP4s dramatically. In the no-compression preset keep original
+    // dimensions/FPS but cap the output to ~94% of the source's average total
+    // bitrate, reserving a small share for audio when a source audio stream exists.
+    const sourceDurationForBitrate = editOptions && Number(editOptions.duration) > 0
+      ? Number(editOptions.duration) : 0;
+    const sourceAverageBitrateKbps = sourceDurationForBitrate > 0
+      ? (file.size * 8) / (sourceDurationForBitrate * 1000)
+      : Math.max(64, (Number(videoBitrate) || 1200) + (Number(audioBitrate) || 128));
+    const noCompressionTotalBitrateKbps = Math.max(32, Math.round(sourceAverageBitrateKbps * 0.94));
+    const noCompressionAudioBitrateKbps = Math.max(1, Math.round(noCompressionTotalBitrateKbps * 0.08));
+    const noCompressionVideoBitrateKbps = Math.max(1,
+      noCompressionTotalBitrateKbps - noCompressionAudioBitrateKbps);
+    const noCompressionVideoRateArgs = [
+      '-b:v', noCompressionVideoBitrateKbps + 'k',
+      '-maxrate', Math.max(1, Math.round(noCompressionVideoBitrateKbps * 1.15)) + 'k',
+      '-bufsize', Math.max(2, noCompressionVideoBitrateKbps * 2) + 'k'
+    ];
     const scaleFilter = compressEnabled
       ? 'scale=' + width + ':' + width + ':force_original_aspect_ratio=decrease:force_divisible_by=2:flags=' + scaleMethod
       : '';
     const videoRateArgs = !compressEnabled
-      ? ['-crf', '0']
+      ? noCompressionVideoRateArgs
       : (videoBitrate > 0
         ? ['-b:v', videoBitrate + 'k', '-maxrate', Math.round(videoBitrate * 1.25) + 'k', '-bufsize', (videoBitrate * 2) + 'k']
         : ['-crf', String(videoCrf)]);
     const webmRateArgs = !compressEnabled
-      ? ['-crf', '0', '-b:v', '0']
+      ? noCompressionVideoRateArgs
       : (videoBitrate > 0
         ? ['-b:v', videoBitrate + 'k', '-maxrate', Math.round(videoBitrate * 1.25) + 'k', '-bufsize', (videoBitrate * 2) + 'k']
         : ['-crf', String(videoCrf), '-b:v', '0']);
@@ -2186,7 +2204,7 @@
         '-c:v', 'libx264', '-preset', compressEnabled ? speedPreset : 'medium',
         ...videoRateArgs,
         '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
-        '-c:a', 'aac', '-b:a', (compressEnabled ? audioBitrate : 320) + 'k', outputPath
+        '-c:a', 'aac', '-b:a', (compressEnabled ? audioBitrate : noCompressionAudioBitrateKbps) + 'k', outputPath
       );
     } else if (outputFormat === 'webm') {
       const videoFilters = videoFiltersWithCompression(compressEnabled ? ['fps=' + videoFps, scaleFilter] : []);
@@ -2201,7 +2219,7 @@
         '-c:v', 'libvpx', '-deadline', compressEnabled ? 'realtime' : 'good',
         '-cpu-used', String(compressEnabled ? cpuUsed : 0),
         ...webmRateArgs,
-        '-c:a', 'libopus', '-b:a', (compressEnabled ? audioBitrate : 320) + 'k', outputPath
+        '-c:a', 'libopus', '-b:a', (compressEnabled ? audioBitrate : noCompressionAudioBitrateKbps) + 'k', outputPath
       );
     }
 
@@ -2797,7 +2815,7 @@
 '<label class="twgif-editor-export-field">Скорость кодирования<select class="twgif-editor-select" data-export-speed-preset><option value="ultrafast">Максимальная</option><option value="superfast">Очень быстро</option><option value="veryfast">Быстро</option><option value="fast">Сбалансированно</option><option value="medium">Медленно, эффективнее</option></select></label>',
 '<label class="twgif-editor-export-field">Фильтр масштабирования<select class="twgif-editor-select" data-export-scale-filter><option value="fast_bilinear">Самый быстрый</option><option value="bilinear">Сбалансированный</option><option value="bicubic">Чётче</option><option value="lanczos">Максимальная чёткость</option></select></label>',
 '<label class="twgif-editor-export-field">Усилие WebP (0–6)<input class="twgif-editor-select" type="number" min="0" max="6" step="1" data-export-webp-effort></label>',
-'</div><div class="twgif-editor-help">«Без сжатия» отключает уменьшение разрешения и ограничение FPS, используя режимы без потерь там, где они поддерживаются. После перекодирования (особенно MP4 → WebP) итоговый файл может быть тяжелее исходника даже после кадрирования. Остальные параметры можно менять вручную и сохранять кнопкой выше.</div></div></details>',
+'</div><div class="twgif-editor-help">«Без сжатия» сохраняет исходное разрешение и FPS. Для MP4/WebM битрейт рассчитывается по исходному файлу, чтобы после кадрирования размер не раздувался из-за lossless-кодирования. Кадрирование всё равно требует перекодирования. Остальные параметры можно менять вручную и сохранять кнопкой выше.</div></div></details>',
         '</aside>',
         '<div class="twgif-editor-timeline-wrap">',
         '<div class="twgif-editor-timeline-head"><strong>Таймлайн</strong><span data-timeline-readout>00:00.00 / —:—</span></div><div class="twgif-editor-timeline-visual" data-timeline-track>',
@@ -3242,7 +3260,12 @@
           const sourceFrameRate = sourceFps > 0 ? sourceFps : outputFps > 0 ? outputFps : 1;
           const frameRateRatio = outputFps > 0 ? outputFps / sourceFrameRate : 1;
           const loopFactor = loop ? 1.95 : 1;
-          if (isVideoOutput && editorExportState.compressEnabled &&
+          if (isVideoOutput && outputDuration > 0 && !editorExportState.compressEnabled) {
+            const sourceAverageKbps = duration > 0 ? (file.size * 8) / (duration * 1000) : 0;
+            const preservedTotalKbps = sourceAverageKbps > 0 ? sourceAverageKbps * 0.94 : 0;
+            estimatedBytes = outputDuration * (loop ? 2 : 1) *
+              preservedTotalKbps * 125 * 1.04;
+          } else if (isVideoOutput && editorExportState.compressEnabled &&
               Number(editorExportState.compression.videoBitrateKbps) > 0 && outputDuration > 0) {
             const videoRate = Number(editorExportState.compression.videoBitrateKbps) || 0;
             const audioRate = Number(editorExportState.compression.audioBitrateKbps) || 0;
