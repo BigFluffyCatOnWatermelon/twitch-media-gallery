@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.87
+// @version      5.9.88
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -39,7 +39,7 @@
 
   // Shared fallback for preview callbacks that may outlive the editor's local scope.
   let videoReverseDisplayTime = null;
-  const APP_VERSION = '5.9.87';
+  const APP_VERSION = '5.9.88';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -1213,9 +1213,9 @@
           outputBytes: output.size,
           quality: qualities[attempt],
           sourceFrames: sourceFrames.length,
-          preservedOriginalFrames: preservedFrameCount,
-          reencodedFrames: reencodedFrameCount,
-          omittedOutsideCropFrames: sourceFrames.length - preservedFrameCount - reencodedFrameCount,
+          preservedOriginalFrames: lastEncodePreservedFrameCount,
+          reencodedFrames: lastEncodeReencodedFrameCount,
+          omittedOutsideCropFrames: sourceFrames.length - lastEncodePreservedFrameCount - lastEncodeReencodedFrameCount,
           outputWidth: canvasWidth,
           trimStartMs,
           trimEndMs,
@@ -2807,7 +2807,7 @@
         '<button class="twgif-editor-trim-handle twgif-editor-trim-start" type="button" role="slider" aria-label="Начало фрагмента" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="00:00.00" data-trim-start disabled><span class="twgif-editor-handle-time" data-trim-start-time>00:00.00</span></button>',
         '<button class="twgif-editor-trim-handle twgif-editor-trim-end" type="button" role="slider" aria-label="Конец фрагмента" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="—:—" data-trim-end disabled><span class="twgif-editor-handle-time" data-trim-end-time>—:—</span></button>',
         '</div><div class="twgif-editor-timeline-edges"><span data-timeline-edge-start>00:00.00</span><span data-timeline-edge-end>—:—</span></div></div>',
-        '<footer class="twgif-editor-footer"><div class="twgif-editor-summary" data-summary>Итоговая длительность: <strong>—</strong></div><div class="twgif-editor-summary" data-media-info>FPS: — · — × — px</div><div class="twgif-editor-actions"><button class="twgif-editor-btn" data-cancel>Отмена</button><button class="twgif-editor-btn twgif-editor-btn-primary" data-apply>Применить и продолжить →</button></div></footer></section>'
+        '<footer class="twgif-editor-footer"><div class="twgif-editor-summary" data-summary>Итоговая длительность: <strong>—</strong></div><div class="twgif-editor-summary" data-media-info title="Предварительная оценка характеристик экспортируемого файла">На выходе: расчёт…</div><div class="twgif-editor-actions"><button class="twgif-editor-btn" data-cancel>Отмена</button><button class="twgif-editor-btn twgif-editor-btn-primary" data-apply>Применить и продолжить →</button></div></footer></section>'
       ].join('');
       document.body.appendChild(overlay);
 
@@ -2891,6 +2891,7 @@
         };
         exportPresetSelect.value = presetName;
         writeExportStateToControls();
+        updateOutputEstimate();
       };
       const readEditorExportControls = () => {
         editorExportState = {
@@ -2908,6 +2909,7 @@
           isCustom: true
         };
         exportPresetSelect.value = 'custom';
+        updateOutputEstimate();
       };
       const exportControls = [exportFormatInput, exportMaxWidthInput, exportImageQualityInput, exportAnimationQualityInput, exportVideoFpsInput, exportAnimationFpsInput, exportVideoBitrateInput, exportVideoCrfInput, exportAudioBitrateInput, exportSpeedPresetInput, exportScaleFilterInput, exportWebpEffortInput];
       exportControls.forEach(control => { control.addEventListener('input', readEditorExportControls); control.addEventListener('change', readEditorExportControls); });
@@ -2984,7 +2986,9 @@
       let drag = null, dragId = null, resizeObserver = null, resizeHandler = null;
       let playheadDrag = null, seekTimer = 0, pendingSeekTime = null, playheadRaf = 0, isTimelineScrubbing = false;
       let userChangedTrim = false, videoReverseTimer = 0, videoPingPongDirection = 1;
-      let previewLoop = false, trimHandleActive = false, fpsSamples = [], fpsSampleLastTime = 0;
+      let previewLoop = false, trimHandleActive = false;
+      let fpsSamples = [], lastVideoFrameMediaTime = null, lastPresentedFrameCount = null, frameRateCallbackId = 0;
+      let webpEstimateFrames = null, webpEstimateBaseBytes = 0, webpEstimateDurationMs = 0;
       let videoReverseFrames = [], videoReverseCacheBytes = 0, videoReverseCacheFrameLimit = 180;
       let videoReverseCapturePending = false, videoReverseCacheLastTime = -Infinity, videoReverseCacheGeneration = 0;
       let videoSeekInFlight = false, pendingVideoSeekTarget = null, pendingVideoSeekFast = false;
@@ -3020,6 +3024,7 @@
         videoReverseCacheBytes = 0;
         videoReverseCacheFrameLimit = 180;
         if (videoReverseCanvas) videoReverseCanvas.hidden = true;
+        stopVideoFrameRateSampling();
         media.hidden = false;
         if (playheadRaf) window.cancelAnimationFrame(playheadRaf);
         playheadRaf = 0;
@@ -3065,6 +3070,7 @@
         const cropHeightPx = height > 1 ? Math.max(2, Math.min(evenSourceHeight, Math.floor(height * crop.h / 100 / 2) * 2)) : 0;
         $('[data-crop-readout]').textContent = cropWidthPx && cropHeightPx ? cropWidthPx + ' × ' + cropHeightPx + ' px' : '— × — px';
         overlay.querySelectorAll('[data-preset]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.preset === cropPreset)));
+        updateOutputEstimate();
       };
       const paintPlayhead = seconds => {
         if (trimHandleActive) {
@@ -3133,19 +3139,220 @@
         muteButton.title = muted ? 'Звук выключен' : 'Звук включён';
       };
       updateMuteButton();
-      const updateMediaInfo = () => {
+      const updateOutputEstimate = () => {
         const node = $('[data-media-info]');
         if (!node) return;
-        const fps = Number(media.__twgifFrameRate) || 0;
-        const dimensions = width > 0 && height > 0 ? Math.round(width) + ' × ' + Math.round(height) + ' px' : '— × — px';
-        node.textContent = (fps > 0 ? 'FPS: ' + fps.toLocaleString('ru-RU', { maximumFractionDigits: 2 }) : 'FPS: —') + ' · ' + dimensions + ' · Вес: ' + formatBytes(file.size);
+        if (!(width > 1 && height > 1)) { node.textContent = 'На выходе: ожидаю размеры…'; return; }
+
+        const sourceEvenWidth = Math.floor(width / 2) * 2;
+        const sourceEvenHeight = Math.floor(height / 2) * 2;
+        const cropLeft = Math.floor((sourceEvenWidth * crop.x / 100) / 2) * 2;
+        const cropTop = Math.floor((sourceEvenHeight * crop.y / 100) / 2) * 2;
+        const cropWidth = Math.max(2, Math.min(sourceEvenWidth - cropLeft,
+          Math.floor((sourceEvenWidth * crop.w / 100) / 2) * 2));
+        const cropHeight = Math.max(2, Math.min(sourceEvenHeight - cropTop,
+          Math.floor((sourceEvenHeight * crop.h / 100) / 2) * 2));
+        const maxSide = editorExportState.compressEnabled ? editorExportState.maxWidth : 16383;
+        const scale = Math.min(1, maxSide / Math.max(1, cropWidth));
+        const outputWidth = Math.max(2, Math.min(16383, Math.round(cropWidth * scale)));
+        const outputHeight = Math.max(2, Math.min(16383, Math.round(cropHeight * scale)));
+        const selectedDuration = duration > 0 ? Math.max(0, end - start) : 0;
+        const outputDuration = selectedDuration > 0 ? selectedDuration / speed : 0;
+        const outputFormat = editorExportState.outputFormat;
+        const isVideoOutput = outputFormat === 'mp4' || outputFormat === 'webm';
+        let sourceFps = 0;
+        let outputFps = 0;
+        let estimatedBytes = 0;
+
+        if (info.kind === 'video') {
+          sourceFps = Number(media.__twgifFrameRate) || 0;
+        } else if (webpEstimateFrames && webpEstimateDurationMs > 0) {
+          sourceFps = webpEstimateFrames.length / (webpEstimateDurationMs / 1000);
+        } else if (animationFrameDurations.length && duration > 0) {
+          sourceFps = animationFrameDurations.length / duration;
+        }
+
+        if (isVideoOutput) {
+          outputFps = editorExportState.compressEnabled
+            ? Number(editorExportState.compression.videoFps) || 24
+            : sourceFps;
+        } else if (outputFormat === 'webp' && info.animationFormat === 'webp') {
+          outputFps = sourceFps > 0 ? sourceFps * speed : 0;
+        } else if (editorExportState.compressEnabled) {
+          outputFps = Number(editorExportState.compression.animationFps) || 12;
+        } else {
+          outputFps = sourceFps > 0 ? sourceFps * speed : 0;
+        }
+
+        if (outputFormat === 'webp' && info.animationFormat === 'webp' && Array.isArray(webpEstimateFrames) &&
+            webpEstimateFrames.length && webpEstimateDurationMs > 0 && selectedDuration > 0) {
+          const timelineScale = duration > 0 ? webpEstimateDurationMs / (duration * 1000) : 1;
+          const trimStartMs = Math.max(0, start * 1000 * timelineScale);
+          const trimEndMs = Math.min(webpEstimateDurationMs, end * 1000 * timelineScale);
+          let timelineMs = 0;
+          const retainedFrameBytes = [];
+          const retainedFrameDurations = [];
+          let sum = webpEstimateBaseBytes;
+          for (const frameInfo of webpEstimateFrames) {
+            const frameStartMs = timelineMs;
+            const frameEndMs = timelineMs + frameInfo.durationMs;
+            timelineMs = frameEndMs;
+            const visibleMs = Math.min(frameEndMs, trimEndMs) - Math.max(frameStartMs, trimStartMs);
+            if (visibleMs <= 0) continue;
+            const left = Math.max(frameInfo.x, cropLeft);
+            const top = Math.max(frameInfo.y, cropTop);
+            const right = Math.min(frameInfo.x + frameInfo.width, cropLeft + cropWidth);
+            const bottom = Math.min(frameInfo.y + frameInfo.height, cropTop + cropHeight);
+            if (right <= left || bottom <= top) continue;
+            const fullyKept = left === frameInfo.x && top === frameInfo.y &&
+              right === frameInfo.x + frameInfo.width && bottom === frameInfo.y + frameInfo.height && scale === 1;
+            let chunkBytes;
+            if (fullyKept) {
+              chunkBytes = 8 + frameInfo.dataBytes + (frameInfo.dataBytes & 1);
+            } else {
+              const areaRatio = ((right - left) * (bottom - top)) /
+                Math.max(1, frameInfo.width * frameInfo.height);
+              const scaledArea = Math.min(1, areaRatio * scale * scale);
+              const compressedPayload = Math.max(24, frameInfo.dataBytes - 16);
+              const qualityFactor = editorExportState.compressEnabled
+                ? (0.48 + (Number(editorExportState.compression.animationQuality) || 68) / 190)
+                : 1.12;
+              const estimatedDataBytes = 16 + compressedPayload * scaledArea * qualityFactor;
+              chunkBytes = 8 + Math.ceil(estimatedDataBytes) + (Math.ceil(estimatedDataBytes) & 1);
+            }
+            retainedFrameBytes.push(chunkBytes);
+            retainedFrameDurations.push(visibleMs / speed);
+            sum += chunkBytes;
+          }
+          let outputAnimationDurationMs = retainedFrameDurations.reduce((total, value) => total + value, 0);
+          if (loop && retainedFrameBytes.length > 2) {
+            for (let i = retainedFrameBytes.length - 2; i > 0; i--) {
+              sum += retainedFrameBytes[i];
+              outputAnimationDurationMs += retainedFrameDurations[i];
+            }
+          }
+          estimatedBytes = sum;
+          if (outputAnimationDurationMs > 0 && retainedFrameBytes.length) {
+            outputFps = retainedFrameBytes.length / (outputAnimationDurationMs / 1000);
+          }
+          if (!editorExportState.compressEnabled && estimatedBytes > file.size) {
+            // The no-compression crop path retries re-encoded boundary frames
+            // at lower quality to stay near the source size when possible.
+            estimatedBytes = Math.min(estimatedBytes, file.size);
+          }
+        } else {
+          const selectedRatio = duration > 0 ? selectedDuration / duration : 1;
+          const cropRatio = (outputWidth * outputHeight) / Math.max(1, width * height);
+          const sourceFrameRate = sourceFps > 0 ? sourceFps : outputFps > 0 ? outputFps : 1;
+          const frameRateRatio = outputFps > 0 ? outputFps / sourceFrameRate : 1;
+          const loopFactor = loop ? 1.95 : 1;
+          if (isVideoOutput && editorExportState.compressEnabled &&
+              Number(editorExportState.compression.videoBitrateKbps) > 0 && outputDuration > 0) {
+            const videoRate = Number(editorExportState.compression.videoBitrateKbps) || 0;
+            const audioRate = Number(editorExportState.compression.audioBitrateKbps) || 0;
+            estimatedBytes = outputDuration * (videoRate + audioRate) * 125 * 1.04;
+          } else {
+            const formatFactor = outputFormat === 'gif' ? 1.5
+              : outputFormat === 'webp' ? 0.9
+                : isVideoOutput ? 0.85 : 1;
+            const qualityFactor = editorExportState.compressEnabled
+              ? (outputFormat === 'gif' || outputFormat === 'webp'
+                ? 0.45 + (Number(editorExportState.compression.animationQuality) || 68) / 190
+                : 0.65 + (100 - Number(editorExportState.compression.videoCrf || 28)) / 100)
+              : 1;
+            estimatedBytes = file.size * selectedRatio * cropRatio *
+              Math.min(2, Math.max(0.2, frameRateRatio)) * loopFactor * formatFactor * qualityFactor;
+          }
+        }
+
+        const fpsLabel = outputFps > 0
+          ? '≈' + outputFps.toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' FPS'
+          : 'FPS: расчёт…';
+        const sizeLabel = estimatedBytes > 0
+          ? '≈' + formatBytes(Math.max(1, Math.round(estimatedBytes)))
+          : 'вес: расчёт…';
+        node.textContent = 'На выходе: ' + fpsLabel + ' · ' + outputWidth + ' × ' + outputHeight +
+          ' px · ' + sizeLabel;
+      };
+      const loadWebPEstimateData = async () => {
+        if (info.animationFormat !== 'webp' || webpEstimateFrames) return;
+        try {
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          if (done) return;
+          const chunks = webpParseChunks(bytes, 12, bytes.length);
+          const canvasChunk = chunks.find(chunk => chunk.type === 'VP8X');
+          const frameChunks = chunks.filter(chunk => chunk.type === 'ANMF' && chunk.data.length >= 16);
+          if (!canvasChunk || !frameChunks.length) return;
+          const rawDurations = frameChunks.map(chunk => webpReadU24LE(chunk.data, 12));
+          const rawTotal = rawDurations.reduce((sum, value) => sum + value, 0);
+          const fallbackDuration = rawTotal > 0 ? 100 : Math.max(10, (duration || 1) * 1000 / frameChunks.length);
+          webpEstimateFrames = frameChunks.map((chunk, index) => ({
+            x: webpReadU24LE(chunk.data, 0) * 2,
+            y: webpReadU24LE(chunk.data, 3) * 2,
+            width: webpReadU24LE(chunk.data, 6) + 1,
+            height: webpReadU24LE(chunk.data, 9) + 1,
+            durationMs: rawDurations[index] > 0 ? rawDurations[index] : fallbackDuration,
+            dataBytes: chunk.data.length
+          }));
+          webpEstimateDurationMs = webpEstimateFrames.reduce((sum, item) => sum + item.durationMs, 0);
+          const icc = chunks.find(chunk => chunk.type === 'ICCP');
+          webpEstimateBaseBytes = 12 + 18 + 14 + (icc ? 8 + icc.data.length + (icc.data.length & 1) : 0);
+          updateOutputEstimate();
+        } catch (error) {
+          logDebug('Could not estimate animated WebP output size', error?.message || error);
+        }
+      };
+      const sampleVideoFrameRate = (_now, metadata) => {
+        frameRateCallbackId = 0;
+        if (done || media.paused || info.kind !== 'video' || typeof media.requestVideoFrameCallback !== 'function') return;
+        const mediaTime = Number(metadata && metadata.mediaTime);
+        const presentedFrames = Number(metadata && metadata.presentedFrames);
+        if (Number.isFinite(mediaTime) && Number.isFinite(presentedFrames)) {
+          if (lastVideoFrameMediaTime !== null && lastPresentedFrameCount !== null) {
+            const deltaTime = mediaTime - lastVideoFrameMediaTime;
+            const deltaFrames = presentedFrames - lastPresentedFrameCount;
+            if (deltaTime > 0.001 && deltaTime <= 0.5 && deltaFrames > 0) {
+              fpsSamples.push({ frames: deltaFrames, seconds: deltaTime });
+              if (fpsSamples.length > 25) fpsSamples.shift();
+              const totalFrames = fpsSamples.reduce((sum, item) => sum + item.frames, 0);
+              const totalSeconds = fpsSamples.reduce((sum, item) => sum + item.seconds, 0);
+              if (totalSeconds > 0) {
+                media.__twgifFrameRate = Math.round((totalFrames / totalSeconds) * 10) / 10;
+                updateOutputEstimate();
+              }
+            } else if (deltaTime > 0.5) {
+              fpsSamples = [];
+            }
+          }
+          lastVideoFrameMediaTime = mediaTime;
+          lastPresentedFrameCount = presentedFrames;
+        }
+        try { frameRateCallbackId = media.requestVideoFrameCallback(sampleVideoFrameRate); }
+        catch (_) { frameRateCallbackId = 0; }
+      };
+      const startVideoFrameRateSampling = () => {
+        if (info.kind !== 'video' || media.paused || frameRateCallbackId ||
+            typeof media.requestVideoFrameCallback !== 'function') return;
+        lastVideoFrameMediaTime = null;
+        lastPresentedFrameCount = null;
+        fpsSamples = [];
+        try { frameRateCallbackId = media.requestVideoFrameCallback(sampleVideoFrameRate); }
+        catch (_) { frameRateCallbackId = 0; }
+      };
+      const stopVideoFrameRateSampling = () => {
+        if (frameRateCallbackId && typeof media.cancelVideoFrameCallback === 'function') {
+          try { media.cancelVideoFrameCallback(frameRateCallbackId); } catch (_) {}
+        }
+        frameRateCallbackId = 0;
+        lastVideoFrameMediaTime = null;
+        lastPresentedFrameCount = null;
       };
       const updateSummary = () => {
         const selected = duration > 0 ? Math.max(0, end - start) : 0;
         $('[data-summary]').innerHTML = 'Итоговая длительность: <strong>' +
           (selected > 0 ? formatEditorTime(selected / speed) : 'полная') + '</strong> <span style="color:#888">· ' + speed.toLocaleString('ru-RU') + '×</span>';
         $('[data-speed-summary]').textContent = speed.toLocaleString('ru-RU') + '× · ' + (speed < 1 ? 'замедление' : speed > 1 ? 'ускорение' : 'обычная');
-        updateMediaInfo();
+        updateOutputEstimate();
         speedInput.value = String(speed);
         updateTimelineControls();
       };
@@ -3441,7 +3648,7 @@
           if (animationCanvas.height !== frameHeight) animationCanvas.height = frameHeight;
           width = frameWidth;
           height = frameHeight;
-          updateMediaInfo();
+          updateOutputEstimate();
           context.clearRect(0, 0, frameWidth, frameHeight);
           context.drawImage(image, 0, 0, frameWidth, frameHeight);
           try { image.close(); } catch (_) {}
@@ -3621,6 +3828,7 @@
           rebuildAnimationFrameStarts();
           if (!userChangedTrim) { start = 0; end = initialDuration; }
           setDuration(initialDuration);
+          updateOutputEstimate();
           animationCanvas.hidden = false;
           media.hidden = true;
           animationNote.hidden = true;
@@ -3682,6 +3890,8 @@
       };
       const onPlayState = () => {
         const playing = !media.paused || videoReverseActive;
+        if (!media.paused && !videoReverseActive) startVideoFrameRateSampling();
+        else stopVideoFrameRateSampling();
         playButton.textContent = playing ? 'Ⅱ' : '▶';
         playButton.setAttribute('aria-label', playing ? 'Пауза' : 'Воспроизвести');
         if (playing && !videoReverseActive && !playheadRaf && info.kind === 'video') {
@@ -3699,7 +3909,7 @@
             populateVideoStoryboard().catch(error => logDebug('Video storyboard failed', error?.message || error));
           }
         }
-        width = media.videoWidth || width; height = media.videoHeight || height; updateFrame(); updateMediaInfo();
+        width = media.videoWidth || width; height = media.videoHeight || height; updateFrame(); updateOutputEstimate();
       };
       const getPingPongEasePower = () => pingPongMode === 'soft' ? 1.3 :
         pingPongMode === 'balanced' ? 1.65 : pingPongMode === 'smooth' ? 2 : 1;
@@ -3977,15 +4187,6 @@
       };
       const onVideoTime = () => {
         if (videoReverseActive || !Number.isFinite(media.currentTime)) return;
-        if (!media.paused && typeof media.requestVideoFrameCallback === 'function') {
-          const now = performance.now();
-          if (fpsSampleLastTime > 0 && now > fpsSampleLastTime) {
-            fpsSamples.push(1000 / (now - fpsSampleLastTime));
-            if (fpsSamples.length > 24) fpsSamples.shift();
-            if (fpsSamples.length >= 6) { media.__twgifFrameRate = Math.round(fpsSamples.reduce((a,b)=>a+b,0) / fpsSamples.length * 10) / 10; updateMediaInfo(); }
-          }
-          fpsSampleLastTime = now;
-        }
         if (!media.paused && !videoReverseActive && duration > 0 &&
             media.currentTime >= end - 0.005) {
           if (loop) startVideoReverse();
@@ -4295,6 +4496,7 @@
       if (typeof ResizeObserver === 'function') { resizeObserver = new ResizeObserver(updateFrame); resizeObserver.observe(stage); }
       else { resizeHandler = updateFrame; window.addEventListener('resize', resizeHandler, { passive: true }); }
       document.addEventListener('keydown', onKey, true); updateSummary();
+      loadWebPEstimateData();
       window.requestAnimationFrame(() => { updateFrame(); $('[data-cancel]').focus(); });
     });
   }
