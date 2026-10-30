@@ -2777,6 +2777,13 @@
       if (info.kind === 'video') { media.preload = 'auto'; media.playsInline = true; }
       else { media.alt = 'Предпросмотр анимации'; media.draggable = false; }
       stage.insertBefore(media, frame);
+      const videoReverseCanvas = info.kind === 'video' ? document.createElement('canvas') : null;
+      if (videoReverseCanvas) {
+        videoReverseCanvas.className = 'twgif-editor-preview-reverse-canvas';
+        videoReverseCanvas.hidden = true;
+        videoReverseCanvas.setAttribute('aria-label', 'Кэшированный обратный предпросмотр');
+        stage.insertBefore(videoReverseCanvas, frame);
+      }
       const animationCanvas = info.kind === 'animation' ? document.createElement('canvas') : null;
       if (animationCanvas) {
         animationCanvas.className = 'twgif-editor-preview-media';
@@ -2792,6 +2799,10 @@
       let drag = null, dragId = null, resizeObserver = null, resizeHandler = null;
       let playheadDrag = null, seekTimer = 0, pendingSeekTime = null, playheadRaf = 0, isTimelineScrubbing = false;
       let userChangedTrim = false, videoReverseTimer = 0, videoPingPongDirection = 1;
+      let videoReverseFrames = [], videoReverseCacheCanvas = null, videoReverseCacheContext = null;
+      let videoReverseCapturePending = false, videoReverseCacheLastTime = -Infinity, videoReverseDisplayTime = null;
+      let videoSeekInFlight = false, pendingVideoSeekTarget = null, pendingVideoSeekFast = false;
+      let videoSeekTimeout = 0, videoSeekDispatchTimer = 0, videoSeekHandler = null;
       let animationDecoder = null, animationFrameDurations = [], animationFrameStarts = [];
       let animationFrameIndex = 0, animationPaintedFrameIndex = -1, animationDirection = 1, animationPlaying = false, animationTimer = 0, animationGeneration = 0;
       let animationSeekBusy = false, pendingAnimationSeek = null;
@@ -2811,6 +2822,19 @@
         if (seekTimer) clearTimeout(seekTimer);
         seekTimer = 0;
         pendingSeekTime = null;
+        if (videoSeekTimeout) clearTimeout(videoSeekTimeout);
+        if (videoSeekDispatchTimer) clearTimeout(videoSeekDispatchTimer);
+        videoSeekTimeout = videoSeekDispatchTimer = 0;
+        if (videoSeekHandler) media.removeEventListener('seeked', videoSeekHandler);
+        videoSeekHandler = null;
+        videoSeekInFlight = false;
+        pendingVideoSeekTarget = null;
+        videoReverseFrames.forEach(frame => { try { frame.bitmap.close(); } catch (_) {} });
+        videoReverseFrames.length = 0;
+        videoReverseCacheCanvas = null;
+        videoReverseCacheContext = null;
+        if (videoReverseCanvas) videoReverseCanvas.hidden = true;
+        media.hidden = false;
         if (playheadRaf) window.cancelAnimationFrame(playheadRaf);
         playheadRaf = 0;
         if (animationTimer) clearTimeout(animationTimer);
