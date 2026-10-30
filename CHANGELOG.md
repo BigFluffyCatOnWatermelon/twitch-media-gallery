@@ -1,5 +1,19 @@
 # Changelog
 
+## [5.9.83] — 2026-10-30
+
+### Added
+- Added a mute toggle beside Play in the media editor. Video preview starts muted by default; the setting affects preview playback only and does not remove the audio track from exported video.
+
+### Fixed
+- Animated WebP files no longer go through the pinned FFmpeg.wasm decoder when the output is WebP. The browser-native frame pipeline now applies trimming, speed changes, cropping, and ping-pong while rebuilding the animated WebP container.
+- Static WebP files that the browser cannot re-encode are kept as-is when the requested output is also WebP, instead of being sent to FFmpeg and failing with an unreadable input stream.
+- Bumped the userscript version to 5.9.83.
+
+### Verification
+- Full userscript JavaScript syntax check passed.
+- Real animated WebP export, crop, trim, and playback must still be verified in Twitch with test files.
+
 ## [5.9.82] — 2026-10-30
 
 ### Fixed
