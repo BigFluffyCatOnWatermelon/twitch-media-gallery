@@ -3274,7 +3274,7 @@
         videoPingPongDirection = 1;
         videoReverseGeneration++;
       };
-      const startVideoReverse = () => {
+      const startVideoReverse = (resumeFromCurrent = false) => {
         if (!loop || end <= start + .05 || done || videoReverseActive) return;
         videoReverseActive = true;
         videoPingPongDirection = -1;
@@ -3285,7 +3285,9 @@
         const fps = getVideoPingPongFps();
         const frameInterval = 1000 / fps;
         const mediaStep = speed / fps;
-        const safeEnd = Math.max(start, end - getVideoEndGuard());
+        const safeEnd = resumeFromCurrent
+          ? Math.max(start, Math.min(end - getVideoEndGuard(), Number(media.currentTime) || start))
+          : Math.max(start, end - getVideoEndGuard());
         const reverseStep = async () => {
           videoReverseTimer = 0;
           if (done || !loop || !videoReverseActive || generation !== videoReverseGeneration) return;
@@ -3328,7 +3330,10 @@
         }
         syncVideoPosition(media.currentTime);
       };
-      const onVideoEnd = () => { stopVideoPreview(true); };
+      const onVideoEnd = () => {
+        if (loop && !videoReverseActive) startVideoReverse();
+        else if (!videoReverseActive) stopVideoPreview(true);
+      };
       const onKey = e => {
         if (e.code === 'Space' || e.key === ' ') {
           e.preventDefault();
@@ -3490,13 +3495,17 @@
         updateSummary();
       });
       loopInput.addEventListener('change', () => {
+        const wasVideoReversing = videoReverseActive;
         pingPongMode = ['eco', 'balanced', 'smooth'].includes(loopInput.value) ? loopInput.value : 'off';
         loop = pingPongMode !== 'off';
         animationDirection = 1;
-        if (!loop && videoReverseActive) {
+        if (!loop && wasVideoReversing) {
           cancelVideoReverse();
           media.playbackRate = speed;
           if (media.paused) media.play().catch(() => {});
+        } else if (loop && wasVideoReversing) {
+          cancelVideoReverse();
+          startVideoReverse(true);
         } else if (info.kind === 'animation' && animationPlaying) {
           seekAnimationPreview(animationFrameStarts[animationFrameIndex] || start);
         }
