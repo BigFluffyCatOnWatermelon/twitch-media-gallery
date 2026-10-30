@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.85
+// @version      5.9.86
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -39,7 +39,7 @@
 
   // Shared fallback for preview callbacks that may outlive the editor's local scope.
   let videoReverseDisplayTime = null;
-  const APP_VERSION = '5.9.85';
+  const APP_VERSION = '5.9.86';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -1017,6 +1017,7 @@
       const outputFrames = [];
       let timelineMs = 0;
       let leadingOmittedDuration = 0;
+      let preservedFrameCount = 0;
       for (let index = 0; index < sourceFrames.length; index++) {
         ensureProcessingRun(runId);
         const sourceFrame = sourceFrames[index];
@@ -1051,6 +1052,30 @@
         if (intersectionRight <= intersectionLeft || intersectionBottom <= intersectionTop) {
           if (outputFrames.length) addFrameDuration(outputFrames[outputFrames.length - 1], outputDurationMs);
           else leadingOmittedDuration += outputDurationMs;
+          continue;
+        }
+
+        // Lossless crop optimization: ANMF stores each frame as an independently
+        // compressed image patch. If the patch is fully inside the crop and no
+        // resize is requested, keep its original VP8/VP8L bytes and only move
+        // its canvas offset. Re-encoding every patch through Canvas destroys
+        // the source animation's delta-frame compression and can inflate files.
+        const patchFitsCrop = sourceX >= cropX && sourceY >= cropY &&
+          sourceX + sourceFrameWidth <= cropRight &&
+          sourceY + sourceFrameHeight <= cropBottom;
+        if (scale === 1 && patchFitsCrop) {
+          const frameHeader = sourceFrame.data.slice(0, 16);
+          const frameX = sourceX - cropX;
+          const frameY = sourceY - cropY;
+          webpWriteU24LE(frameHeader, 0, Math.floor(frameX / 2));
+          webpWriteU24LE(frameHeader, 3, Math.floor(frameY / 2));
+          webpWriteU24LE(frameHeader, 12, Math.min(0xffffff, outputDurationMs + leadingOmittedDuration));
+          leadingOmittedDuration = 0;
+          outputFrames.push(webpMakeChunk('ANMF', webpJoinBytes([
+            frameHeader,
+            sourceFrame.data.subarray(16)
+          ])));
+          preservedFrameCount++;
           continue;
         }
 
@@ -1168,6 +1193,8 @@
           outputBytes: output.size,
           quality: qualities[attempt],
           sourceFrames: sourceFrames.length,
+          preservedOriginalFrames: preservedFrameCount,
+          reencodedFrames: sourceFrames.length - preservedFrameCount,
           outputWidth: canvasWidth,
           trimStartMs,
           trimEndMs,
