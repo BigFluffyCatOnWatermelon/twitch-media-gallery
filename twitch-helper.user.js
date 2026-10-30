@@ -3251,21 +3251,24 @@
       };
       const waitForVideoSeek = (target, generation) => new Promise(resolve => {
         let settled = false;
-        const finish = () => {
+        const finish = fromSeeked => {
           if (settled) return;
           settled = true;
           media.removeEventListener('seeked', onSeeked);
           clearTimeout(timeout);
-          if (!done && generation === videoReverseGeneration) syncVideoPosition(media.currentTime);
-          resolve(!done && generation === videoReverseGeneration);
+          const stillCurrent = !done && generation === videoReverseGeneration;
+          const landed = !media.seeking && Math.abs((Number(media.currentTime) || 0) - target) <= 0.035;
+          const success = stillCurrent && (fromSeeked || landed);
+          if (success) syncVideoPosition(media.currentTime);
+          resolve(success);
         };
-        const onSeeked = () => finish();
-        const timeout = window.setTimeout(finish, 450);
+        const onSeeked = () => finish(true);
+        const timeout = window.setTimeout(() => finish(false), 700);
         media.addEventListener('seeked', onSeeked, { once: true });
         try {
-          if (Math.abs((Number(media.currentTime) || 0) - target) < 0.004 && !media.seeking) finish();
+          if (Math.abs((Number(media.currentTime) || 0) - target) < 0.004 && !media.seeking) finish(false);
           else media.currentTime = target;
-        } catch (_) { finish(); }
+        } catch (_) { finish(false); }
       });
       const cancelVideoReverse = () => {
         if (videoReverseTimer) clearTimeout(videoReverseTimer);
@@ -3295,7 +3298,10 @@
           const target = current - mediaStep;
           if (target <= start + mediaStep * 0.5) {
             const positioned = await waitForVideoSeek(start, generation);
-            if (!positioned || done || !videoReverseActive || generation !== videoReverseGeneration) return;
+            if (!positioned || done || !videoReverseActive || generation !== videoReverseGeneration) {
+              if (!done && videoReverseActive && generation === videoReverseGeneration) stopVideoPreview(false);
+              return;
+            }
             videoReverseActive = false;
             videoPingPongDirection = 1;
             videoReverseTimer = 0;
@@ -3305,14 +3311,20 @@
             return;
           }
           const positioned = await waitForVideoSeek(target, generation);
-          if (!positioned || done || !videoReverseActive || generation !== videoReverseGeneration || !loop) return;
+          if (!positioned || done || !videoReverseActive || generation !== videoReverseGeneration || !loop) {
+            if (!done && videoReverseActive && generation === videoReverseGeneration) stopVideoPreview(false);
+            return;
+          }
           videoReverseTimer = window.setTimeout(reverseStep, frameInterval);
           playButton.textContent = 'Ⅱ';
           playButton.setAttribute('aria-label', 'Пауза');
         };
         const positionAtSafeEnd = async () => {
           const positioned = await waitForVideoSeek(safeEnd, generation);
-          if (!positioned || done || !videoReverseActive || generation !== videoReverseGeneration) return;
+          if (!positioned || done || !videoReverseActive || generation !== videoReverseGeneration) {
+            if (!done && videoReverseActive && generation === videoReverseGeneration) stopVideoPreview(false);
+            return;
+          }
           videoReverseTimer = window.setTimeout(reverseStep, frameInterval);
         };
         positionAtSafeEnd().catch(error => {
