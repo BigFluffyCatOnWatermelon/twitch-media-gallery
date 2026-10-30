@@ -3246,8 +3246,10 @@
       };
       const getVideoPingPongFps = () => pingPongMode === 'eco' ? 15 : pingPongMode === 'balanced' ? 24 : 30;
       const getVideoEndGuard = () => {
-        const frameStep = speed / getVideoPingPongFps();
-        return Math.max(0.045, Math.min(0.2, frameStep * 1.35));
+        // Guard against a whole source frame being presented between two UI ticks.
+        // This is deliberately independent from the selected reverse-preview cadence.
+        const sourceFrameStep = speed / 24;
+        return Math.max(0.05, Math.min(0.24, sourceFrameStep * 1.25));
       };
       const waitForVideoSeek = (target, generation) => new Promise(resolve => {
         let settled = false;
