@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.86
+// @version      5.9.87
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -39,7 +39,7 @@
 
   // Shared fallback for preview callbacks that may outlive the editor's local scope.
   let videoReverseDisplayTime = null;
-  const APP_VERSION = '5.9.86';
+  const APP_VERSION = '5.9.87';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -1006,6 +1006,11 @@
     if (trimEndMs <= trimStartMs) throw new Error('Выбранный фрагмент WebP пустой.');
     const playbackSpeed = edit ? Math.max(0.25, Math.min(4, edit.speed || 1)) : 1;
     const mustApplyEdits = Boolean(edit && mediaEditHasChanges(edit, 'webp'));
+    const protectOriginalSizeDuringCrop = Boolean(
+      edit && cropEnabled && edit.exportSettings && edit.exportSettings.compressEnabled === false
+    );
+    let lastEncodePreservedFrameCount = 0;
+    let lastEncodeReencodedFrameCount = 0;
 
     const addFrameDuration = (frameChunk, milliseconds) => {
       if (!frameChunk || milliseconds <= 0) return;
@@ -1018,6 +1023,7 @@
       let timelineMs = 0;
       let leadingOmittedDuration = 0;
       let preservedFrameCount = 0;
+      let reencodedFrameCount = 0;
       for (let index = 0; index < sourceFrames.length; index++) {
         ensureProcessingRun(runId);
         const sourceFrame = sourceFrames[index];
@@ -1128,6 +1134,7 @@
             frameHeader,
             ...encodedChunks.map(chunk => webpMakeChunk(chunk.type, chunk.data))
           ])));
+          reencodedFrameCount++;
         } finally {
           if (bitmap && typeof bitmap.close === 'function') bitmap.close();
         }
@@ -1140,6 +1147,8 @@
         }
       }
 
+      lastEncodePreservedFrameCount = preservedFrameCount;
+      lastEncodeReencodedFrameCount = reencodedFrameCount;
       if (leadingOmittedDuration > 0 && outputFrames.length) {
         addFrameDuration(outputFrames[0], leadingOmittedDuration);
       }
@@ -1172,18 +1181,29 @@
     };
 
     const initialQuality = clampInt(Math.round((Number(quality) || 0.68) * 100), 20, 100, 68) / 100;
-    const qualities = mustApplyEdits ? [initialQuality] : [...new Set([
-      initialQuality,
-      Math.min(initialQuality, 0.54),
-      Math.min(initialQuality, 0.40),
-      Math.min(initialQuality, 0.28)
-    ])];
+    // If a no-compression export needs to re-encode crop-edge patches, try the
+    // highest quality first. Only if that makes the cropped file larger than
+    // its source, lower quality on those re-encoded patches until the source
+    // size is met; fully-contained ANMF payloads remain byte-for-byte intact.
+    const qualities = protectOriginalSizeDuringCrop
+      ? [...new Set([initialQuality, 0.92, 0.84, 0.76, 0.68, 0.60, 0.52, 0.44, 0.36, 0.28, 0.20])]
+      : mustApplyEdits ? [initialQuality] : [...new Set([
+        initialQuality,
+        Math.min(initialQuality, 0.54),
+        Math.min(initialQuality, 0.40),
+        Math.min(initialQuality, 0.28)
+      ])];
     let smallest = null;
     for (let attempt = 0; attempt < qualities.length; attempt++) {
       ensureProcessingRun(runId);
       const candidate = await encodeAtQuality(qualities[attempt]);
       if (!smallest || candidate.size < smallest.size) smallest = candidate;
-      if (mustApplyEdits || candidate.size < file.size) {
+      const editedExportCanReturn = mustApplyEdits && (
+        !protectOriginalSizeDuringCrop ||
+        lastEncodeReencodedFrameCount === 0 ||
+        candidate.size <= file.size
+      );
+      if (editedExportCanReturn || (!mustApplyEdits && candidate.size < file.size)) {
         const output = new File([candidate], (String(file.name || 'animated.webp').replace(/\.[^.]+$/i, '') || 'animated') + '.webp', {
           type: 'image/webp',
           lastModified: Date.now()
@@ -1194,7 +1214,8 @@
           quality: qualities[attempt],
           sourceFrames: sourceFrames.length,
           preservedOriginalFrames: preservedFrameCount,
-          reencodedFrames: sourceFrames.length - preservedFrameCount,
+          reencodedFrames: reencodedFrameCount,
+          omittedOutsideCropFrames: sourceFrames.length - preservedFrameCount - reencodedFrameCount,
           outputWidth: canvasWidth,
           trimStartMs,
           trimEndMs,
@@ -1203,11 +1224,34 @@
           pingPong: Boolean(edit && edit.loop)
         });
         setStatus(mustApplyEdits
-          ? 'Изменения анимированного WebP применены в браузере.'
+          ? (protectOriginalSizeDuringCrop && output.size <= file.size
+            ? 'WebP обрезан. Исходные данные кадров сохранены, а качество изменено только у пересобранных краевых кадров, чтобы итог не превышал исходный вес.'
+            : 'Изменения анимированного WebP применены в браузере.')
           : 'Анимированный WebP сжат: ' + formatBytes(file.size) + ' → ' + formatBytes(output.size) + '.', 'success');
         setProgress(95, true);
         return output;
       }
+    }
+
+    if (mustApplyEdits && smallest) {
+      // Keep the requested crop/trim even if the source is so compact that
+      // re-encoding clipped frame patches cannot fit within its original size.
+      const output = new File([smallest], (String(file.name || 'animated.webp').replace(/\.[^.]+$/i, '') || 'animated') + '.webp', {
+        type: 'image/webp',
+        lastModified: Date.now()
+      });
+      logDebug('Animated WebP edited; smallest valid crop candidate retained', {
+        inputBytes: file.size,
+        outputBytes: output.size,
+        sourceFrames: sourceFrames.length,
+        preservedOriginalFrames: lastEncodePreservedFrameCount,
+        reencodedFrames: lastEncodeReencodedFrameCount
+      });
+      setStatus(protectOriginalSizeDuringCrop && output.size > file.size
+        ? 'WebP обрезан, но исходник настолько компактный, что даже после адаптации качества итог всё ещё тяжелее. Кадрирование сохранено.'
+        : 'Изменения анимированного WebP применены в браузере.', 'info');
+      setProgress(95, true);
+      return output;
     }
 
     logDebug('Animated WebP compression was not smaller; original retained', {
