@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.9.90] — 2026-10-30
+
+### Fixed
+- The “No compression” preset no longer encodes MP4 with H.264 CRF 0 or WebM with VP8 CRF 0, which could turn a sub-megabyte cropped clip into a multi-megabyte lossless encode.
+- MP4/WebM exports with this preset now retain source dimensions and frame cadence while using a bitrate budget derived from the source file's average bitrate. A small share of the budget is reserved for audio, rather than forcing 320 kbps audio.
+- Updated the editor's predicted MP4/WebM output size to use the same source-bitrate budget and selected output duration.
+- Updated the preset help text to explain that cropping still requires re-encoding even though resolution and FPS are retained.
+- Bumped the userscript version to 5.9.90.
+
+### Verification
+- Full userscript JavaScript syntax check passed.
+- MP4/WebM file sizes must still be verified with the user's sample video in the browser.
+
 ## [5.9.89] — 2026-10-30
 
 ### Fixed
