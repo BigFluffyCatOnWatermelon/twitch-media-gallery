@@ -1,5 +1,16 @@
 # Changelog
 
+## [5.9.86] — 2026-10-30
+
+### Fixed
+- Animated WebP crop export now reuses the original compressed ANMF frame payloads whenever a frame remains fully inside the crop and no resize is needed. Only frame patches intersecting the crop boundary are decoded and re-encoded, retaining the source animation's compact delta-frame encoding instead of expanding every frame through Canvas.
+- Added debug counts for preserved versus re-encoded animation frames.
+- Bumped the userscript version to 5.9.86.
+
+### Verification
+- Full userscript JavaScript syntax check passed.
+- Animated WebP crop size and playback still need a real browser test with the user's source file.
+
 ## [5.9.85] — 2026-10-30
 
 ### Added
