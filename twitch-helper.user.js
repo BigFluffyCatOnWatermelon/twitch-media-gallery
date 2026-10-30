@@ -3610,7 +3610,7 @@
           clearTimeout(timeout);
           const stillCurrent = !done && generation === videoReverseGeneration;
           const landed = !media.seeking && Math.abs((Number(media.currentTime) || 0) - target) <= 0.035;
-          const success = stillCurrent && (fromSeeked || landed);
+          const success = stillCurrent && landed;
           if (success) syncVideoPosition(media.currentTime);
           resolve(success);
         };
@@ -3926,7 +3926,9 @@
         speed = Math.max(.25, Math.min(4, Number(speedInput.value) || 1));
         if (info.kind === 'video') {
           if (videoReverseActive) {
+            const reversePosition = videoReverseDisplayTime;
             cancelVideoReverse();
+            if (reversePosition !== null && Number.isFinite(reversePosition)) { try { media.currentTime = reversePosition; } catch (_) {} }
             startVideoReverse(true);
           } else {
             try { media.playbackRate = getVideoPingPongPlaybackRate(media.currentTime); } catch (_) {}
@@ -3938,15 +3940,19 @@
       });
       loopInput.addEventListener('change', () => {
         const wasVideoReversing = videoReverseActive;
+        const reversePosition = wasVideoReversing ? videoReverseDisplayTime : null;
         pingPongMode = ['linear', 'soft', 'balanced', 'smooth'].includes(loopInput.value) ? loopInput.value : 'off';
         loop = pingPongMode !== 'off';
+        if (!loop) clearVideoReverseCache();
         animationDirection = 1;
         if (!loop && wasVideoReversing) {
           cancelVideoReverse();
+          if (reversePosition !== null && Number.isFinite(reversePosition)) { try { media.currentTime = reversePosition; } catch (_) {} }
           media.playbackRate = speed;
           if (media.paused) media.play().catch(() => {});
         } else if (loop && wasVideoReversing) {
           cancelVideoReverse();
+          if (reversePosition !== null && Number.isFinite(reversePosition)) { try { media.currentTime = reversePosition; } catch (_) {} }
           startVideoReverse(true);
         } else if (info.kind === 'video') {
           try { media.playbackRate = getVideoPingPongPlaybackRate(media.currentTime); } catch (_) {}
