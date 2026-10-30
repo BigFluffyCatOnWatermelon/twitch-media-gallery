@@ -3525,6 +3525,7 @@
         for (const frame of videoReverseFrames) { try { frame.bitmap.close(); } catch (_) {} }
         videoReverseFrames.length = 0;
         videoReverseCacheLastTime = -Infinity;
+        videoReverseCapturePending = false;
       };
       const captureVideoReverseFrame = () => {
         if (done || info.kind !== 'video' || !loop || videoReverseActive || media.paused || media.readyState < 2 ||
@@ -3678,8 +3679,9 @@
                   stopVideoPreview(false);
                   return;
                 }
-                videoReverseDisplayTime = frame.time;
-                syncVideoPosition(frame.time);
+                const displayTime = cursor === cachedFrames.length - 1 ? end : frame.time;
+                videoReverseDisplayTime = displayTime;
+                syncVideoPosition(displayTime);
                 if (cursor <= 0) {
                   videoReverseTimer = window.setTimeout(async () => {
                     videoReverseTimer = 0;
@@ -3805,7 +3807,6 @@
       const seekPreviewTime = (seconds, defer = false) => {
         const value = Math.max(0, Math.min(duration || 0, Number(seconds) || 0));
         cancelVideoReverse();
-        if (info.kind === 'video') clearVideoReverseCache();
         currentLabel.textContent = formatEditorTime(value);
         scrub.value = String(value);
         updateTimelineControls(value);
