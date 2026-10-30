@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.73
+// @version      5.9.74
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.73';
+  const APP_VERSION = '5.9.74';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -2550,6 +2550,7 @@
       '.twgif-editor-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 22px;border-top:1px solid #ffffff12}.twgif-editor-summary{color:#aaaab5;font-size:11px}.twgif-editor-summary strong{color:#eee}.twgif-editor-actions{display:flex;gap:8px}.twgif-editor-btn{padding:10px 14px;border:1px solid #3b3b46;border-radius:9px;background:#ffffff08;color:#ddd;font:inherit;font-size:12px;font-weight:650;cursor:pointer}.twgif-editor-btn-primary{border-color:#9147ff;background:linear-gradient(135deg,#9c5bff,#7a32e5);color:white}',
       '@media(max-width:760px){#twgif-media-editor-overlay{padding:7px;align-items:flex-start}#twgif-media-editor{max-height:calc(100vh - 14px)}.twgif-editor-body{grid-template-columns:1fr;padding:10px;gap:10px}.twgif-editor-stage{height:34vh;min-height:175px}.twgif-editor-footer{align-items:flex-start;flex-direction:column;padding:12px 14px}.twgif-editor-actions{width:100%}.twgif-editor-actions .twgif-editor-btn{flex:1}}',
       '#twgif-media-editor{display:flex;flex-direction:column;width:min(1180px,calc(100vw - 32px));height:min(820px,calc(100vh - 32px));max-height:calc(100vh - 32px)}.twgif-editor-header{flex:0 0 auto;align-items:center;padding:10px 16px;gap:10px}.twgif-editor-title{font-size:18px;margin:3px 0}.twgif-editor-subtitle{margin:3px 0}.twgif-editor-safe{margin-top:4px}.twgif-editor-close{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:34px;height:34px;flex:0 0 34px;padding:0;border:1px solid #ffffff18;border-radius:9px;background:#ffffff08;color:#ddd;font-size:22px;line-height:1;cursor:pointer}.twgif-editor-body{display:grid;flex:1 1 auto;grid-template-columns:minmax(0,1.55fr) minmax(275px,.85fr);grid-template-rows:minmax(180px,1fr) auto;align-content:start;gap:10px 12px;min-height:0;padding:10px 16px;overflow:auto}.twgif-editor-preview-column{grid-column:1;grid-row:1;display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0}.twgif-editor-stage{height:clamp(150px,31vh,320px);min-height:140px;flex:0 1 auto}.twgif-editor-body>aside{grid-column:2;grid-row:1;display:flex;flex-direction:column;gap:6px;min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden}.twgif-editor-body>aside>.twgif-editor-section{padding:8px;margin:0;flex:0 0 auto}.twgif-editor-section+.twgif-editor-section{margin-top:0}.twgif-editor-section-head{align-items:center;margin-bottom:5px}.twgif-editor-help{margin-top:4px;font-size:9px;line-height:1.35}.twgif-editor-speed-ends{font-size:9px}.twgif-editor-crop-readout{margin-bottom:5px}.twgif-editor-output{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px;flex:0 0 auto}.twgif-editor-footer{flex:0 0 auto;padding:10px 16px}.twgif-editor-btn{padding:9px 12px}.twgif-editor-play{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:34px;height:34px;flex:0 0 34px;padding:0;border:1px solid #a970ff66;border-radius:9px;background:#9147ff24;color:#eadcff;line-height:1;cursor:pointer}.twgif-editor-timeline-wrap{grid-column:1/-1;grid-row:2;min-width:0;margin:0;padding:9px 10px;border:1px solid #ffffff12;border-radius:12px;background:linear-gradient(135deg,#ffffff07,#ffffff02)}.twgif-editor-timeline-head{margin-bottom:24px}.twgif-editor-timeline-visual{height:76px;touch-action:none;cursor:crosshair;overflow:visible}.twgif-editor-storyboard{position:absolute;inset:0;display:flex;align-items:stretch;gap:0;overflow:hidden;border-radius:8px;pointer-events:none}.twgif-editor-frame-thumb{display:block;flex:0 0 auto;width:auto;height:100%;max-width:none;object-fit:contain;background:#0c0c10;opacity:.9;user-select:none;-webkit-user-select:none;-webkit-user-drag:none;pointer-events:none;cursor:default}.twgif-editor-playhead{left:0;will-change:transform}.twgif-editor-playhead-label{position:absolute;z-index:7;top:-25px;left:0;transform:translate3d(0,0,0) translateX(-50%);padding:2px 5px;border:1px solid #604783;border-radius:5px;background:#20162d;color:#f0e2ff;font-size:10px;font-variant-numeric:tabular-nums;line-height:1.2;white-space:nowrap;pointer-events:none;will-change:transform}.twgif-editor-timeline-wrap .twgif-editor-player{display:flex;align-items:center;gap:8px;padding:5px 0 0;border:0;background:transparent}.twgif-editor-player-time[hidden],.twgif-editor-player-range[hidden]{display:none!important}.twgif-editor-timeline-wrap .twgif-editor-help{margin-top:5px}.twgif-editor-close:focus-visible,.twgif-editor-play:focus-visible{outline:2px solid #e2c5ff;outline-offset:2px}@media(max-width:760px){#twgif-media-editor-overlay{padding:7px;align-items:flex-start}#twgif-media-editor{height:auto;max-height:calc(100vh - 14px)}.twgif-editor-body{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto auto;padding:10px;gap:10px;overflow:auto}.twgif-editor-preview-column{grid-column:1;grid-row:1}.twgif-editor-body>aside{grid-column:1;grid-row:2;overflow:visible}.twgif-editor-timeline-wrap{grid-column:1;grid-row:3}.twgif-editor-stage{height:34vh;min-height:175px}.twgif-editor-footer{align-items:flex-start;flex-direction:column;padding:12px 14px}.twgif-editor-actions{width:100%}.twgif-editor-actions .twgif-editor-btn{flex:1}}',
+      '#twgif-media-editor{width:min(1380px,calc(100vw - 24px));height:min(940px,calc(100vh - 24px));max-height:calc(100vh - 24px)}.twgif-editor-header{min-height:42px;padding:7px 14px;align-items:center}.twgif-editor-eyebrow,.twgif-editor-subtitle,.twgif-editor-safe{display:none!important}.twgif-editor-title{margin:0;font-size:17px}.twgif-editor-body{grid-template-columns:minmax(0,2.3fr) minmax(230px,.74fr);grid-template-rows:minmax(300px,1fr) auto;gap:8px 12px;padding:8px 14px;overflow:auto}.twgif-editor-preview-column{gap:0;min-height:0}.twgif-editor-stage{height:clamp(300px,52vh,600px);min-height:280px;max-height:none;flex:1 1 auto}.twgif-editor-body>aside{gap:5px;overflow-y:auto;overscroll-behavior:contain}.twgif-editor-body>aside>.twgif-editor-section{padding:8px}.twgif-editor-output{display:none!important}.twgif-editor-timeline-wrap{padding:8px 10px}.twgif-editor-timeline-head{margin-bottom:24px}.twgif-editor-timeline-visual{height:80px}.twgif-editor-frame-thumb{flex:1 1 0;width:0;min-width:0;height:100%;object-fit:contain}.twgif-editor-timeline-wrap .twgif-editor-help{margin-top:3px}.twgif-editor-footer{padding:8px 14px}.twgif-editor-summary{font-size:10px}@media(max-width:760px){#twgif-media-editor{width:100%;height:auto;max-height:calc(100vh - 14px)}.twgif-editor-body{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto auto;padding:10px;gap:10px;overflow:auto}.twgif-editor-preview-column{grid-column:1;grid-row:1}.twgif-editor-body>aside{grid-column:1;grid-row:2;overflow:visible}.twgif-editor-timeline-wrap{grid-column:1;grid-row:3}.twgif-editor-stage{height:46vh;min-height:220px;flex:none}.twgif-editor-footer{align-items:flex-start;flex-direction:column;padding:12px 14px}.twgif-editor-actions{width:100%}.twgif-editor-actions .twgif-editor-btn{flex:1}}',
     ].join('\n');
     (document.head || document.documentElement).appendChild(st);
   }
@@ -2573,7 +2574,7 @@
         '<div data-crop-controls hidden><div class="twgif-editor-presets"><button class="twgif-editor-preset" type="button" data-preset="free" aria-pressed="true">Свободно</button><button class="twgif-editor-preset" type="button" data-preset="16:9">16:9</button><button class="twgif-editor-preset" type="button" data-preset="9:16">9:16</button><button class="twgif-editor-preset" type="button" data-preset="1:1">1:1</button><button class="twgif-editor-preset" type="button" data-preset="4:3">4:3</button></div>',
         '<div class="twgif-editor-crop-readout"><span>Область кадра</span><strong data-crop-readout>100% × 100%</strong></div><button class="twgif-editor-preset" type="button" data-reset>Сбросить кадрирование</button><div class="twgif-editor-help">Перетаскивай рамку или углы. Сетка видна только в этом режиме.</div></div></section>',
         '<section class="twgif-editor-section"><label class="twgif-editor-toggle"><input type="checkbox" data-loop><span><strong>Ping-pong</strong><small>Проигрывать выбранный фрагмент вперёд и назад. Для GIF/WebP режим сохраняется в файле.</small></span></label></section>',
-        '<div class="twgif-editor-output"><span><span class="twgif-editor-output-label">Формат результата</span><br><span class="twgif-editor-output-label" data-output-note>С учётом конвертации</span></span><strong class="twgif-editor-output-value" data-output>—</strong></div></aside>',
+        '</aside>',
         '<div class="twgif-editor-timeline-wrap">',
         '<div class="twgif-editor-timeline-head"><span class="twgif-editor-section-title">Таймлайн</span><span class="twgif-editor-section-meta" data-selected>Весь файл</span></div>',
         '<div class="twgif-editor-timeline-visual" data-timeline-track>',
@@ -2621,13 +2622,6 @@
         animationCanvas.setAttribute('aria-label', 'Покадровый предпросмотр анимации');
         stage.insertBefore(animationCanvas, frame);
       }
-
-      const cfg = loadConfig(), category = info.kind === 'video' ? 'video' : 'gif';
-      const chosen = getEditedOutputFormat(file, category, info.animationFormat === 'webp', cfg.conversionRules[category] || 'keep');
-      $('[data-output]').textContent = chosen.toUpperCase();
-      $('[data-output-note]').textContent = ['gif','webp'].includes(chosen)
-        ? 'Ping-pong сохраняется в анимации'
-        : 'Ping-pong будет запечён в видео';
 
       let done = false, duration = 0, width = 0, height = 0, start = 0, end = 0, speed = 1, loop = false;
       let crop = { x: 0, y: 0, w: 100, h: 100 }, cropMode = false, trimDrag = null;
@@ -2792,11 +2786,15 @@
         if (Math.abs(canvas.width / canvas.height - sourceWidth / sourceHeight) > 0.02) {
           canvas.width = Math.max(30, Math.min(360, Math.round(canvas.height * sourceWidth / sourceHeight)));
         }
+        const isVideo = source && source.tagName === 'VIDEO';
+        if (isVideo && (source.readyState < 2 || !source.videoWidth || !source.videoHeight)) return false;
         const ctx = canvas.getContext('2d');
-        if (!ctx) return;
+        if (!ctx) return false;
         ctx.fillStyle = '#0c0c10';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+        try { ctx.drawImage(source, 0, 0, canvas.width, canvas.height); }
+        catch (_) { return false; }
+        return true;
       };
 
       const populateVideoStoryboard = async () => {
@@ -2825,7 +2823,7 @@
           const aspect = probe.videoWidth && probe.videoHeight ? probe.videoWidth / probe.videoHeight : 16 / 9;
           const thumbHeight = Math.max(40, timelineTrack.clientHeight || 76);
           const thumbWidth = Math.max(30, thumbHeight * aspect);
-          const count = Math.max(1, Math.min(36, Math.floor((timelineTrack.clientWidth || 840) / thumbWidth)));
+          const count = Math.max(1, Math.min(36, Math.round((timelineTrack.clientWidth || 840) / thumbWidth)));
           const canvas = document.createElement('canvas');
           canvas.height = 90;
           canvas.width = Math.max(30, Math.min(360, Math.round(canvas.height * aspect)));
@@ -2836,16 +2834,32 @@
             await waitForPreviewIdle();
             if (done || run !== storyboardRun) return;
             if (isTimelineScrubbing) { i--; continue; }
-            const time = duration <= 0 ? 0 : duration * i / Math.max(1, count - 1);
+            const edgeInset = Math.min(0.12, Math.max(0.015, duration * 0.02));
+            const sampleStart = Math.min(duration / 2, edgeInset);
+            const sampleEnd = Math.max(sampleStart, duration - edgeInset);
+            const time = count <= 1 ? duration / 2
+              : sampleStart + (sampleEnd - sampleStart) * i / Math.max(1, count - 1);
             if (Math.abs((Number(probe.currentTime) || 0) - time) > 0.015) {
               const seeked = waitForEvent('seeked', 2200);
-              try { probe.currentTime = Math.max(0, Math.min(Math.max(0, probe.duration - 0.03), time)); } catch (_) {}
+              try { probe.currentTime = Math.max(0, Math.min(Math.max(0, probe.duration - edgeInset), time)); } catch (_) {}
               await seeked;
             }
+            if (probe.readyState < 2) {
+              try { await waitForEvent('loadeddata', 900); } catch (_) {}
+            }
+            await new Promise(resolve => {
+              let settled = false;
+              const finish = () => { if (settled) return; settled = true; clearTimeout(fallback); resolve(); };
+              const fallback = setTimeout(finish, 180);
+              if (typeof probe.requestVideoFrameCallback === 'function') {
+                try { probe.requestVideoFrameCallback(finish); } catch (_) { requestAnimationFrame(() => requestAnimationFrame(finish)); }
+              } else requestAnimationFrame(() => requestAnimationFrame(finish));
+            });
             await waitForPreviewIdle();
             if (done || run !== storyboardRun) return;
-            drawStoryboardFrame(context, probe, canvas);
-            addStoryboardThumb(await canvasToStoryboardUrl(canvas), time, i, run);
+            if (drawStoryboardFrame(context, probe, canvas)) {
+              addStoryboardThumb(await canvasToStoryboardUrl(canvas), time, i, run);
+            }
             await new Promise(yieldToBrowser => window.setTimeout(yieldToBrowser, 0));
           }
         } catch (error) {
@@ -2859,36 +2873,69 @@
 
       const populateAnimationStoryboard = async () => {
         if (!animationDecoder || !animationFrameStarts.length || done) return;
+        const decoderRef = animationDecoder;
         const run = ++storyboardRun;
         storyboard.replaceChildren();
         const aspect = width && height ? width / height : 16 / 9;
-        const thumbHeight = Math.max(40, timelineTrack.clientHeight || 76);
+        const thumbHeight = Math.max(40, timelineTrack.clientHeight || 80);
         const thumbWidth = Math.max(30, thumbHeight * aspect);
-        const count = Math.max(1, Math.min(36, Math.floor((timelineTrack.clientWidth || 840) / thumbWidth)));
-        for (let i = 0; i < count; i++) {
-          if (done || run !== storyboardRun || !animationDecoder) return;
-          await waitForPreviewIdle();
-          if (done || run !== storyboardRun || !animationDecoder) return;
-          if (isTimelineScrubbing || animationPlaying) { i--; continue; }
-          const index = Math.round(i * (animationFrameStarts.length - 1) / Math.max(1, count - 1));
+        const count = Math.max(1, Math.min(36, Math.round((timelineTrack.clientWidth || 840) / thumbWidth)));
+        const thumbSlots = new Map();
+        for (let slot = 0; slot < count; slot++) {
+          const frameIndex = Math.round(slot * (animationFrameStarts.length - 1) / Math.max(1, count - 1));
+          thumbSlots.set(frameIndex, slot);
+        }
+
+        let measuredTotal = 0;
+        for (let index = 0; index < animationFrameStarts.length; index++) {
+          if (done || run !== storyboardRun || animationDecoder !== decoderRef) return;
+          while (!done && run === storyboardRun && animationDecoder === decoderRef &&
+            (isTimelineScrubbing || animationPlaying || animationSeekBusy || pendingAnimationSeek)) {
+            await new Promise(resolve => window.setTimeout(resolve, 28));
+          }
+          if (done || run !== storyboardRun || animationDecoder !== decoderRef) return;
+
+          let image = null;
           try {
             const result = await decodeAnimationFrame(index);
-            const image = result && result.image;
-            if (!image) continue;
-            const imageAspect = image.displayWidth && image.displayHeight ? image.displayWidth / image.displayHeight : aspect;
-            const canvas = document.createElement('canvas');
-            canvas.height = 90;
-            canvas.width = Math.max(30, Math.min(360, Math.round(canvas.height * imageAspect)));
-            const context = canvas.getContext('2d');
-            if (context) {
-              drawStoryboardFrame(context, image, canvas);
-              addStoryboardThumb(await canvasToStoryboardUrl(canvas), animationFrameStarts[index] || 0, i, run);
+            image = result && result.image;
+            if (image) {
+              const durationMicros = Number(image.duration);
+              if (Number.isFinite(durationMicros) && durationMicros > 0) {
+                animationFrameDurations[index] = Math.max(0.01, Math.min(60, durationMicros / 1000000));
+              }
+              rebuildAnimationFrameStarts();
+              measuredTotal += animationFrameDurations[index] || 0.1;
+
+              if (thumbSlots.has(index)) {
+                const imageAspect = image.displayWidth && image.displayHeight
+                  ? image.displayWidth / image.displayHeight : aspect;
+                const canvas = document.createElement('canvas');
+                canvas.height = 90;
+                canvas.width = Math.max(30, Math.min(360, Math.round(canvas.height * imageAspect)));
+                const context = canvas.getContext('2d');
+                if (context && drawStoryboardFrame(context, image, canvas)) {
+                  const thumbUrl = await canvasToStoryboardUrl(canvas);
+                  addStoryboardThumb(thumbUrl, animationFrameStarts[index] || 0, thumbSlots.get(index), run);
+                }
+              }
             }
-            try { image.close(); } catch (_) {}
           } catch (error) {
             logDebug('Animation storyboard frame unavailable', error?.message || error);
+            measuredTotal += animationFrameDurations[index] || 0.1;
+          } finally {
+            try { if (image) image.close(); } catch (_) {}
           }
-          if (i % 3 === 2) await new Promise(yieldToBrowser => window.setTimeout(yieldToBrowser, 0));
+          if (index % 2 === 1) await new Promise(resolve => window.setTimeout(resolve, 12));
+        }
+
+        if (!done && run === storyboardRun && animationDecoder === decoderRef) {
+          const exactDuration = rebuildAnimationFrameStarts() || measuredTotal;
+          if (exactDuration > 0) {
+            if (!userChangedTrim) { start = 0; end = exactDuration; }
+            setDuration(exactDuration);
+            updateSummary();
+          }
         }
       };
 
@@ -2927,12 +2974,23 @@
       const findAnimationFrameAt = seconds => {
         if (!animationFrameStarts.length) return 0;
         const target = Math.max(0, Number(seconds) || 0);
-        let index = 0;
-        for (let i = 1; i < animationFrameStarts.length; i++) {
-          if (animationFrameStarts[i] > target) break;
-          index = i;
+        let low = 0, high = animationFrameStarts.length - 1;
+        while (low < high) {
+          const middle = Math.ceil((low + high) / 2);
+          if (animationFrameStarts[middle] <= target) low = middle;
+          else high = middle - 1;
         }
-        return index;
+        return low;
+      };
+
+      const rebuildAnimationFrameStarts = () => {
+        let elapsed = 0;
+        for (let index = 0; index < animationFrameDurations.length; index++) {
+          animationFrameStarts[index] = elapsed;
+          const frameDuration = Number(animationFrameDurations[index]);
+          elapsed += Number.isFinite(frameDuration) && frameDuration > 0 ? frameDuration : 0.1;
+        }
+        return elapsed;
       };
 
       const decodeAnimationFrame = async index => {
@@ -2957,6 +3015,11 @@
           if (done || generation !== animationGeneration || !animationCanvas) {
             try { image.close(); } catch (_) {}
             return false;
+          }
+          const durationMicros = Number(image.duration);
+          if (Number.isFinite(durationMicros) && durationMicros > 0 && index < animationFrameDurations.length) {
+            animationFrameDurations[index] = Math.max(0.01, Math.min(60, durationMicros / 1000000));
+            rebuildAnimationFrameStarts();
           }
           const frameWidth = Number(image.displayWidth || image.codedWidth) || width;
           const frameHeight = Number(image.displayHeight || image.codedHeight) || height;
@@ -3092,37 +3155,18 @@
             fallbackAnimationPreview();
             return;
           }
+
           const estimatedDuration = Math.max(0, Number(await durationPromise) || 0);
-          const frameDurations = [];
-          let measuredTotal = 0;
-          for (let index = 0; index < frameCount; index++) {
-            if (done) { try { decoder.close(); } catch (_) {} return; }
-            const result = await decoder.decode({ frameIndex: index });
-            const image = result && result.image;
-            const durationMicros = Number(image && image.duration);
-            const frameDuration = Number.isFinite(durationMicros) && durationMicros > 0
-              ? durationMicros / 1000000
-              : (estimatedDuration > 0 ? estimatedDuration / frameCount : 0.1);
-            frameDurations.push(Math.max(0.01, Math.min(60, frameDuration)));
-            measuredTotal += frameDurations[frameDurations.length - 1];
-            if (index === 0 && image) {
-              width = Number(image.displayWidth || image.codedWidth) || width;
-              height = Number(image.displayHeight || image.codedHeight) || height;
-            }
-            try { if (image) image.close(); } catch (_) {}
-            if (index > 0 && index % 20 === 0) await new Promise(yieldToBrowser => window.setTimeout(yieldToBrowser, 0));
-          }
-          if (done) { try { decoder.close(); } catch (_) {} return; }
+          const initialDuration = estimatedDuration > 0 ? estimatedDuration : frameCount * 0.1;
+          const averageFrameDuration = Math.max(0.01, Math.min(60, initialDuration / frameCount));
+
+          // Make the decoder available immediately. The first visible frame is decoded
+          // before the low-priority timing/storyboard pass starts.
           animationDecoder = decoder;
-          animationFrameDurations = frameDurations;
-          animationFrameStarts = [];
-          let elapsed = 0;
-          for (const frameDuration of frameDurations) {
-            animationFrameStarts.push(elapsed);
-            elapsed += frameDuration;
-          }
-          if (!userChangedTrim) { start = 0; end = measuredTotal; }
-          setDuration(measuredTotal);
+          animationFrameDurations = new Array(frameCount).fill(averageFrameDuration);
+          rebuildAnimationFrameStarts();
+          if (!userChangedTrim) { start = 0; end = initialDuration; }
+          setDuration(initialDuration);
           animationCanvas.hidden = false;
           media.hidden = true;
           animationNote.hidden = true;
@@ -3132,12 +3176,14 @@
           currentLabel.hidden = false;
           scrub.disabled = false;
           $('[data-preview-help]').textContent =
-            'Покадровый предпросмотр: диапазон, скорость и ping-pong можно проверить до обработки.';
+            'Покадровый предпросмотр: кадры загружаются по запросу, раскадровка строится в фоне.';
           updateFrame();
           seekAnimationPreview(start);
           window.setTimeout(() => {
-            if (!done && !animationPlaying) populateAnimationStoryboard().catch(error => logDebug('Animation storyboard failed', error?.message || error));
-          }, 180);
+            if (!done && animationDecoder === decoder) {
+              populateAnimationStoryboard().catch(error => logDebug('Animation storyboard failed', error?.message || error));
+            }
+          }, 100);
         } catch (error) {
           try { if (decoder) decoder.close(); } catch (_) {}
           if (animationDecoder === decoder) animationDecoder = null;
@@ -3146,14 +3192,35 @@
         }
       };
 
+      const syncVideoPosition = seconds => {
+        const value = Math.max(0, Math.min(duration || 0, Number(seconds) || 0));
+        paintPlayhead(value);
+        currentLabel.textContent = formatEditorTime(value);
+        scrub.value = String(value);
+        updateTimelineControls(value);
+      };
+      const stopVideoPreview = (atEnd = false) => {
+        if (videoReverseTimer) clearTimeout(videoReverseTimer);
+        videoReverseTimer = 0;
+        videoPingPongDirection = 1;
+        try { media.pause(); } catch (_) {}
+        if (playheadRaf) window.cancelAnimationFrame(playheadRaf);
+        playheadRaf = 0;
+        const value = atEnd ? end : Math.max(0, Math.min(duration || 0, Number(media.currentTime) || 0));
+        if (atEnd) { try { media.currentTime = end; } catch (_) {} }
+        playButton.textContent = '▶';
+        playButton.setAttribute('aria-label', 'Воспроизвести');
+        syncVideoPosition(value);
+      };
       const animateVideoPlayhead = () => {
         playheadRaf = 0;
         if (done || info.kind !== 'video' || media.paused || duration <= 0) return;
         const time = Number(media.currentTime) || 0;
-        paintPlayhead(time);
-        const timeLabel = formatEditorTime(time);
-        if (currentLabel.textContent !== timeLabel) currentLabel.textContent = timeLabel;
-        scrub.value = String(time);
+        if (time >= end - 0.018) {
+          stopVideoPreview(true);
+          return;
+        }
+        syncVideoPosition(time);
         playheadRaf = window.requestAnimationFrame(animateVideoPlayhead);
       };
       const onPlayState = () => {
@@ -3204,15 +3271,13 @@
       };
       const onVideoTime = () => {
         if (!Number.isFinite(media.currentTime)) return;
-        currentLabel.textContent = formatEditorTime(media.currentTime);
-        scrub.value = String(media.currentTime);
-        updateTimelineControls();
-        if (!media.paused && duration > 0 && media.currentTime >= end - .035) {
-          media.pause();
-          try { media.currentTime = end; } catch (_) {}
+        if (!media.paused && duration > 0 && media.currentTime >= end - 0.018) {
+          stopVideoPreview(true);
+          return;
         }
+        syncVideoPosition(media.currentTime);
       };
-      const onVideoEnd = () => { media.pause(); try { media.currentTime = start; } catch (_) {} paintPlayhead(start); currentLabel.textContent = formatEditorTime(start); };
+      const onVideoEnd = () => { stopVideoPreview(true); };
       const onKey = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); } };
       const preset = value => {
         if (value === 'free') crop = { x: 0, y: 0, w: 100, h: 100 };
@@ -3251,7 +3316,7 @@
         paintPlayhead(value);
         if (defer) {
           pendingSeekTime = value;
-          if (!seekTimer) seekTimer = window.setTimeout(() => flushPendingPreviewSeek(true), 70);
+          if (!seekTimer) seekTimer = window.setTimeout(() => flushPendingPreviewSeek(true), 18);
           return;
         }
         if (seekTimer) clearTimeout(seekTimer);
@@ -3423,7 +3488,7 @@
             catch (_) { $('[data-preview-help]').textContent = 'Не удалось запустить предпросмотр; настройки всё равно применятся.'; }
           };
           playFromSelection();
-        } else media.pause();
+        } else stopVideoPreview(false);
       });
       overlay.querySelectorAll('[data-editor-close],[data-cancel]').forEach(b => b.addEventListener('click', () => finish(null)));
       overlay.addEventListener('pointerdown', e => { if (e.target === overlay) finish(null); });
