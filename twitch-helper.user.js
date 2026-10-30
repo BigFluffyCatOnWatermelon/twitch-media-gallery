@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.77
+// @version      5.9.78
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.77';
+  const APP_VERSION = '5.9.78';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -2471,8 +2471,9 @@
     const end = duration ? Math.max(start, Math.min(duration, Number.isFinite(rawEnd) ? rawEnd : duration)) : 0;
     const c = raw && raw.crop || {};
     const requestedPingPongMode = String(raw && raw.pingPongMode || '');
-    const pingPongMode = ['eco', 'balanced', 'smooth'].includes(requestedPingPongMode)
-      ? requestedPingPongMode : raw && raw.loop === true ? 'smooth' : 'off';
+    const pingPongMode = requestedPingPongMode === 'eco' ? 'soft' :
+      ['linear', 'soft', 'balanced', 'smooth'].includes(requestedPingPongMode)
+        ? requestedPingPongMode : raw && raw.loop === true ? 'smooth' : 'off';
     const w = Math.max(5, Math.min(100, Number(c.w) || 100));
     const h = Math.max(5, Math.min(100, Number(c.h) || 100));
     return { kind: raw && raw.kind === 'animation' ? 'animation' : 'video', duration, start, end,
@@ -2578,7 +2579,7 @@
         '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Кадрирование</span><button class="twgif-editor-preset" type="button" data-crop-toggle aria-pressed="false">Включить</button></div>',
         '<div data-crop-controls hidden><div class="twgif-editor-presets"><button class="twgif-editor-preset" type="button" data-preset="free" aria-pressed="true">Свободно</button><button class="twgif-editor-preset" type="button" data-preset="16:9">16:9</button><button class="twgif-editor-preset" type="button" data-preset="9:16">9:16</button><button class="twgif-editor-preset" type="button" data-preset="1:1">1:1</button><button class="twgif-editor-preset" type="button" data-preset="4:3">4:3</button></div>',
         '<div class="twgif-editor-crop-readout"><span>Область кадра</span><strong data-crop-readout>100% × 100%</strong></div><button class="twgif-editor-preset" type="button" data-reset>Сбросить кадрирование</button><div class="twgif-editor-help">Перетаскивай рамку или углы. Сетка видна только в этом режиме.</div></div></section>',
-        '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Ping-pong</span><span class="twgif-editor-section-meta">Просмотр в обе стороны</span></div><select class="twgif-editor-select" data-loop aria-label="Режим ping-pong"><option value="off">Выключен</option><option value="eco">Лёгкий · 15 FPS</option><option value="balanced">Сбалансированный · 24 FPS</option><option value="smooth">Плавный · 30 FPS</option></select><div class="twgif-editor-help">Обратное движение в предпросмотре. Раскадровка при этом приостанавливается.</div></section>',
+        '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Ping-pong</span><span class="twgif-editor-section-meta">Плавность отскока</span></div><select class="twgif-editor-select" data-loop aria-label="Плавность отскока ping-pong"><option value="off">Выключен</option><option value="linear">Обычный</option><option value="soft">Мягкий отскок</option><option value="balanced">Сбалансированный</option><option value="smooth">Плавный отскок</option></select><div class="twgif-editor-help">Замедление у края и плавное ускорение после разворота.</div></section>',
         '<section class="twgif-editor-section"><label class="twgif-editor-toggle"><input type="checkbox" data-hd><span><strong>HD</strong><small>Сохранить исходное разрешение и качество без сжатия.</small></span></label></section>',
         '</aside>',
         '<div class="twgif-editor-timeline-wrap">',
@@ -3064,17 +3065,55 @@
         }
         return animationFrameIndex - 1;
       };
+      const getAnimationPingPongFrameDelay = (currentIndex, nextIndex, previousDirection, nextDirection, firstFrame, lastFrame) => {
+        const firstTime = Number(animationFrameStarts[firstFrame]) || 0;
+        const lastTime = Number(animationFrameStarts[lastFrame]) || firstTime;
+        const span = lastTime - firstTime;
+        if (!loop || span <= 0.001) {
+          const frameDuration = Math.max(0.01, Number(animationFrameDurations[currentIndex]) || 0.1);
+          return Math.max(10, Math.min(10000, frameDuration / speed * 1000));
+        }
+        const getPositionProgress = index => Math.max(0, Math.min(1,
+          ((Number(animationFrameStarts[index]) || firstTime) - firstTime) / span));
+        const getLegProgress = (index, direction) => {
+          const position = getPositionProgress(index);
+          return direction >= 0
+            ? getPingPongInverseEaseProgress(position)
+            : getPingPongInverseEaseProgress(1 - position);
+        };
+        const nextProgress = getLegProgress(nextIndex, nextDirection);
+        const elapsedProgress = previousDirection === nextDirection
+          ? nextProgress - getLegProgress(currentIndex, previousDirection)
+          : nextProgress;
+        return Math.max(10, Math.min(10000, elapsedProgress * span / speed * 1000));
+      };
       const runAnimationPreview = async generation => {
         if (!animationPlaying || !animationDecoder || done || generation !== animationGeneration) return;
         const drawn = animationPaintedFrameIndex === animationFrameIndex
           ? true : await drawAnimationFrame(animationFrameIndex, generation);
         if (!drawn || !animationPlaying || generation !== animationGeneration) return;
+        const firstFrame = findAnimationFrameAt(start);
+        const lastFrame = Math.max(firstFrame, findAnimationFrameAt(Math.max(start, end - 0.001)));
+        if (loop) {
+          const previousDirection = animationDirection;
+          const nextIndex = nextAnimationPlaybackFrame(firstFrame, lastFrame);
+          if (nextIndex < firstFrame || nextIndex > lastFrame) { pauseAnimationPreview(); return; }
+          const nextDirection = animationDirection;
+          const delay = getAnimationPingPongFrameDelay(
+            animationFrameIndex, nextIndex, previousDirection, nextDirection, firstFrame, lastFrame
+          );
+          animationTimer = window.setTimeout(() => {
+            animationTimer = 0;
+            if (!animationPlaying || !animationDecoder || done || generation !== animationGeneration) return;
+            animationFrameIndex = nextIndex;
+            runAnimationPreview(generation).catch(() => pauseAnimationPreview());
+          }, delay);
+          return;
+        }
         const frameDuration = Math.max(0.01, Number(animationFrameDurations[animationFrameIndex]) || 0.1);
         animationTimer = window.setTimeout(() => {
           animationTimer = 0;
           if (!animationPlaying || !animationDecoder || done || generation !== animationGeneration) return;
-          const firstFrame = findAnimationFrameAt(start);
-          const lastFrame = Math.max(firstFrame, findAnimationFrameAt(Math.max(start, end - 0.001)));
           const nextIndex = nextAnimationPlaybackFrame(firstFrame, lastFrame);
           if (nextIndex < firstFrame || nextIndex > lastFrame) { pauseAnimationPreview(); return; }
           animationFrameIndex = nextIndex;
@@ -3220,6 +3259,7 @@
           else stopVideoPreview(true);
           return;
         }
+        if (loop && !videoReverseActive) updateVideoPingPongPlaybackRate(time);
         syncVideoPosition(time);
         playheadRaf = window.requestAnimationFrame(animateVideoPlayhead);
       };
@@ -3244,7 +3284,42 @@
         }
         width = media.videoWidth || width; height = media.videoHeight || height; updateFrame();
       };
-      const getVideoPingPongFps = () => pingPongMode === 'eco' ? 15 : pingPongMode === 'balanced' ? 24 : 30;
+      const getPingPongEasePower = () => pingPongMode === 'soft' ? 1.3 :
+        pingPongMode === 'balanced' ? 1.65 : pingPongMode === 'smooth' ? 2 : 1;
+      const getPingPongEaseProgress = progress => {
+        const t = Math.max(0, Math.min(1, Number(progress) || 0));
+        const power = getPingPongEasePower();
+        if (power <= 1.001) return t;
+        const a = Math.pow(t, power), b = Math.pow(1 - t, power);
+        return a / Math.max(1e-9, a + b);
+      };
+      const getPingPongInverseEaseProgress = progress => {
+        const t = Math.max(0, Math.min(1, Number(progress) || 0));
+        const inversePower = 1 / getPingPongEasePower();
+        if (inversePower >= 0.999) return t;
+        const a = Math.pow(t, inversePower), b = Math.pow(1 - t, inversePower);
+        return a / Math.max(1e-9, a + b);
+      };
+      const getPingPongVelocityFactor = progress => {
+        const power = getPingPongEasePower();
+        if (power <= 1.001) return 1;
+        const t = getPingPongInverseEaseProgress(progress);
+        if (t <= 0 || t >= 1) return 0;
+        const a = Math.pow(t, power), b = Math.pow(1 - t, power);
+        return power * Math.pow(t * (1 - t), power - 1) / Math.max(1e-9, (a + b) ** 2);
+      };
+      const getVideoPingPongPlaybackRate = seconds => {
+        if (!loop || end <= start) return speed;
+        const progress = Math.max(0, Math.min(1, ((Number(seconds) || 0) - start) / (end - start)));
+        return Math.max(0.1, Math.min(12, speed * getPingPongVelocityFactor(progress)));
+      };
+      const updateVideoPingPongPlaybackRate = seconds => {
+        if (media.paused || videoReverseActive) return;
+        const nextRate = getVideoPingPongPlaybackRate(seconds);
+        try {
+          if (Math.abs(media.playbackRate - nextRate) > 0.02) media.playbackRate = nextRate;
+        } catch (_) {}
+      };
       const getVideoEndGuard = () => {
         // Guard against a whole source frame being presented between two UI ticks.
         // This is deliberately independent from the selected reverse-preview cadence.
@@ -3287,34 +3362,33 @@
         media.pause();
         playButton.textContent = 'Ⅱ';
         playButton.setAttribute('aria-label', 'Пауза');
-        const fps = getVideoPingPongFps();
+        const fps = 30;
         const frameInterval = 1000 / fps;
-        const mediaStep = speed / fps;
         const safeEnd = resumeFromCurrent
           ? Math.max(start, Math.min(end - getVideoEndGuard(), Number(media.currentTime) || start))
           : Math.max(start, end - getVideoEndGuard());
+        const reverseSpan = Math.max(0, safeEnd - start);
+        const totalSteps = Math.max(1, Math.ceil(reverseSpan / Math.max(0.25, speed) * fps));
+        let stepIndex = 0;
         const reverseStep = async () => {
           videoReverseTimer = 0;
           if (done || !loop || !videoReverseActive || generation !== videoReverseGeneration) return;
-          const current = Number(media.currentTime) || safeEnd;
-          const target = current - mediaStep;
-          if (target <= start + mediaStep * 0.5) {
-            const positioned = await waitForVideoSeek(start, generation);
-            if (!positioned || done || !videoReverseActive || generation !== videoReverseGeneration) {
-              if (!done && videoReverseActive && generation === videoReverseGeneration) stopVideoPreview(false);
-              return;
-            }
-            videoReverseActive = false;
-            videoPingPongDirection = 1;
-            videoReverseTimer = 0;
-            media.playbackRate = speed;
-            try { await media.play(); }
-            catch (_) { stopVideoPreview(false); }
-            return;
-          }
+          stepIndex++;
+          const easedProgress = getPingPongEaseProgress(Math.min(1, stepIndex / totalSteps));
+          const reachedStart = stepIndex >= totalSteps;
+          const target = reachedStart ? start : Math.max(start, safeEnd - reverseSpan * easedProgress);
           const positioned = await waitForVideoSeek(target, generation);
           if (!positioned || done || !videoReverseActive || generation !== videoReverseGeneration || !loop) {
             if (!done && videoReverseActive && generation === videoReverseGeneration) stopVideoPreview(false);
+            return;
+          }
+          if (reachedStart) {
+            videoReverseActive = false;
+            videoPingPongDirection = 1;
+            videoReverseTimer = 0;
+            media.playbackRate = getVideoPingPongPlaybackRate(start);
+            try { await media.play(); }
+            catch (_) { stopVideoPreview(false); }
             return;
           }
           videoReverseTimer = window.setTimeout(reverseStep, frameInterval);
@@ -3342,6 +3416,7 @@
           else stopVideoPreview(true);
           return;
         }
+        if (loop && !videoReverseActive) updateVideoPingPongPlaybackRate(media.currentTime);
         syncVideoPosition(media.currentTime);
       };
       const onVideoEnd = () => {
@@ -3504,13 +3579,21 @@
       scrub.addEventListener('input', () => seekPreviewTime(Number(scrub.value) || 0));
       speedInput.addEventListener('input', () => {
         speed = Math.max(.25, Math.min(4, Number(speedInput.value) || 1));
-        if (info.kind === 'video') { try { media.playbackRate = speed; } catch (_) {} }
-        else if (animationDecoder && animationPlaying) seekAnimationPreview(animationFrameStarts[animationFrameIndex] || start);
+        if (info.kind === 'video') {
+          if (videoReverseActive) {
+            cancelVideoReverse();
+            startVideoReverse(true);
+          } else {
+            try { media.playbackRate = getVideoPingPongPlaybackRate(media.currentTime); } catch (_) {}
+          }
+        } else if (animationDecoder && animationPlaying) {
+          seekAnimationPreview(animationFrameStarts[animationFrameIndex] || start);
+        }
         updateSummary();
       });
       loopInput.addEventListener('change', () => {
         const wasVideoReversing = videoReverseActive;
-        pingPongMode = ['eco', 'balanced', 'smooth'].includes(loopInput.value) ? loopInput.value : 'off';
+        pingPongMode = ['linear', 'soft', 'balanced', 'smooth'].includes(loopInput.value) ? loopInput.value : 'off';
         loop = pingPongMode !== 'off';
         animationDirection = 1;
         if (!loop && wasVideoReversing) {
@@ -3520,6 +3603,8 @@
         } else if (loop && wasVideoReversing) {
           cancelVideoReverse();
           startVideoReverse(true);
+        } else if (info.kind === 'video') {
+          try { media.playbackRate = getVideoPingPongPlaybackRate(media.currentTime); } catch (_) {}
         } else if (info.kind === 'animation' && animationPlaying) {
           seekAnimationPreview(animationFrameStarts[animationFrameIndex] || start);
         }
@@ -3568,7 +3653,7 @@
               }
             }
             if (done) return;
-            media.playbackRate = speed;
+            media.playbackRate = getVideoPingPongPlaybackRate(media.currentTime);
             try { await media.play(); }
             catch (error) { logDebug('Could not start preview playback', error?.message || error); }
           };
