@@ -8,7 +8,7 @@ All user-visible changes to the userscript are recorded here. New entries go at 
 - Fixed restarting video preview when playback stops at the guarded end of the selected trim range. Pressing Play now returns to the selected start instead of issuing a seek just beyond the real stopping point.
 - Coalesced rapid timeline scrubbing input and serialized video seek requests. Dragging the playhead no longer floods the media element with overlapping seek operations.
 - Added a bounded, downscaled frame cache for reverse ping-pong preview. Reverse playback uses cached preview frames where coverage is available, then seeks to the exact selection start before forward playback resumes. Original media and exported output quality are not reduced by this preview cache.
-- Prevented stale asynchronous frame captures from being added back to the reverse cache after a manual seek.
+- Prevented stale asynchronous frame captures from being added back to the reverse cache after the cache is invalidated (for example, when playback jumps backwards).
 
 ### Editor
 - Restored timecodes above the timeline, on both trim handles, and at the timeline edges.
