@@ -3025,6 +3025,7 @@
           try { image.close(); } catch (_) {}
           animationFrameIndex = index;
           animationPaintedFrameIndex = index;
+          playButton.disabled = false;
           const frameTime = animationFrameStarts[index] || 0;
           currentLabel.textContent = formatEditorTime(frameTime);
           scrub.value = String(frameTime);
@@ -3161,9 +3162,9 @@
           media.hidden = true;
           animationNote.hidden = true;
           playButton.hidden = false;
-          playButton.disabled = false;
-          scrub.hidden = false;
-          currentLabel.hidden = false;
+          playButton.disabled = true;
+          scrub.hidden = true;
+          currentLabel.hidden = true;
           scrub.disabled = false;
           updateFrame();
           seekAnimationPreview(start);
