@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.9.87] — 2026-10-30
+
+### Fixed
+- For animated WebP exports using the “No compression” preset with cropping, preserve original compressed frame payloads whenever possible and reuse them after shifting their frame offsets.
+- If crop-edge frames must be re-encoded and the first full-quality result would exceed the source file size, retry at progressively lower quality only for those re-encoded frames. Unchanged in-crop frames remain byte-for-byte intact.
+- Keep the requested crop even if an exceptionally compact source cannot be matched in size; report that exception instead of silently reverting to the original un-cropped file.
+- Corrected debug accounting for preserved, re-encoded, and cropped-away frames.
+- Bumped the userscript version to 5.9.87.
+
+### Verification
+- Full userscript JavaScript syntax check passed.
+- Animated WebP crop export must still be verified against the user's actual file in a browser.
+
 ## [5.9.86] — 2026-10-30
 
 ### Fixed
