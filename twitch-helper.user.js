@@ -2644,13 +2644,129 @@
       const trimSelection = $('[data-trim-selection]');
       const trimShadeLeft = $('[data-trim-shade-left]'), trimShadeRight = $('[data-trim-shade-right]');
       const playhead = $('[data-playhead]');
+      const playheadLabel = $('[data-playhead-label]');
+      const startTimeLabel = $('[data-trim-start-time]');
+      const endTimeLabel = $('[data-trim-end-time]');
+      const timelineReadout = $('[data-timeline-readout]');
+      const timelineEdgeStart = $('[data-timeline-edge-start]');
+      const timelineEdgeEnd = $('[data-timeline-edge-end]');
       const speedInput = $('[data-speed]'), loopInput = $('[data-loop]');
-      const hdInput = $('[data-hd]');
       const cropToggle = $('[data-crop-toggle]'), cropControls = $('[data-crop-controls]');
       const playButton = $('[data-play]');
       const currentLabel = $('[data-current]');
       const durationLabel = $('[data-duration]');
-      hdInput.checked = !isCompressionEnabled();
+
+      let editorExportState = { ...editorDefaultExportSettings, compression: { ...editorDefaultExportSettings.compression } };
+      const exportPresetSelect = $('[data-export-preset]');
+      const exportFormatInput = $('[data-export-format]');
+      const exportMaxWidthInput = $('[data-export-max-width]');
+      const exportImageQualityInput = $('[data-export-image-quality]');
+      const exportAnimationQualityInput = $('[data-export-animation-quality]');
+      const exportVideoFpsInput = $('[data-export-video-fps]');
+      const exportAnimationFpsInput = $('[data-export-animation-fps]');
+      const exportVideoBitrateInput = $('[data-export-video-bitrate]');
+      const exportVideoCrfInput = $('[data-export-video-crf]');
+      const exportAudioBitrateInput = $('[data-export-audio-bitrate]');
+      const exportSpeedPresetInput = $('[data-export-speed-preset]');
+      const exportScaleFilterInput = $('[data-export-scale-filter]');
+      const exportWebpEffortInput = $('[data-export-webp-effort]');
+      const writeExportStateToControls = () => {
+        const state = editorExportState, compression = state.compression;
+        exportFormatInput.value = state.outputFormat;
+        exportMaxWidthInput.value = String(state.maxWidth);
+        exportImageQualityInput.value = String(compression.imageQuality);
+        exportAnimationQualityInput.value = String(compression.animationQuality);
+        exportVideoFpsInput.value = String(compression.videoFps);
+        exportAnimationFpsInput.value = String(compression.animationFps);
+        exportVideoBitrateInput.value = String(compression.videoBitrateKbps);
+        exportVideoCrfInput.value = String(compression.videoCrf);
+        exportAudioBitrateInput.value = String(compression.audioBitrateKbps);
+        exportSpeedPresetInput.value = compression.speedPreset;
+        exportScaleFilterInput.value = compression.scaleFilter;
+        exportWebpEffortInput.value = String(compression.webpCompressionLevel);
+      };
+      const buildEditorExportPreset = presetName => {
+        const state = { ...editorDefaultExportSettings, compression: { ...editorDefaultExportSettings.compression }, isCustom: presetName !== 'default' };
+        if (presetName === 'low') {
+          state.maxWidth = 360;
+          state.compression = { ...state.compression, imageQuality: 45, animationQuality: 35, videoMaxWidth: 360, videoFps: 15, animationFps: 8, videoBitrateKbps: 500, audioBitrateKbps: 64, videoCrf: 36, speedPreset: 'ultrafast', scaleFilter: 'fast_bilinear', webpCompressionLevel: 2 };
+        } else if (presetName === 'medium') {
+          state.maxWidth = 640;
+          state.compression = { ...state.compression, imageQuality: 72, animationQuality: 60, videoMaxWidth: 640, videoFps: 24, animationFps: 12, videoBitrateKbps: 1200, audioBitrateKbps: 96, videoCrf: 29, speedPreset: 'fast', scaleFilter: 'bilinear', webpCompressionLevel: 4 };
+        } else if (presetName === 'high') {
+          state.maxWidth = 1080;
+          state.compression = { ...state.compression, imageQuality: 92, animationQuality: 85, videoMaxWidth: 1080, videoFps: 30, animationFps: 20, videoBitrateKbps: 4000, audioBitrateKbps: 160, videoCrf: 21, speedPreset: 'medium', scaleFilter: 'lanczos', webpCompressionLevel: 6 };
+        } else if (presetName === 'none') {
+          state.compressEnabled = false;
+          state.maxWidth = 4000;
+        }
+        return state;
+      };
+      const applyEditorExportPreset = (presetName, savedSettings = null) => {
+        const next = savedSettings || buildEditorExportPreset(presetName);
+        editorExportState = {
+          outputFormat: ['webp', 'gif', 'jpg', 'png', 'mp4', 'webm'].includes(next.outputFormat) ? next.outputFormat : editorOutputFormat,
+          compressEnabled: next.compressEnabled !== false,
+          maxWidth: clampInt(next.maxWidth, 100, 4000, editorDefaultMaxWidth),
+          compression: normalizeCompressionSettings(next.compression, editorDefaultExportSettings.compression),
+          isCustom: presetName !== 'default'
+        };
+        exportPresetSelect.value = presetName;
+        writeExportStateToControls();
+      };
+      const readEditorExportControls = () => {
+        editorExportState = {
+          outputFormat: exportFormatInput.value,
+          compressEnabled: editorExportState.compressEnabled,
+          maxWidth: clampInt(exportMaxWidthInput.value, 100, 4000, editorDefaultMaxWidth),
+          compression: normalizeCompressionSettings({
+            imageQuality: exportImageQualityInput.value, animationQuality: exportAnimationQualityInput.value,
+            videoFps: exportVideoFpsInput.value, animationFps: exportAnimationFpsInput.value,
+            videoBitrateKbps: exportVideoBitrateInput.value, videoCrf: exportVideoCrfInput.value,
+            audioBitrateKbps: exportAudioBitrateInput.value, speedPreset: exportSpeedPresetInput.value,
+            scaleFilter: exportScaleFilterInput.value, webpCompressionLevel: exportWebpEffortInput.value,
+            videoMaxWidth: exportMaxWidthInput.value
+          }, editorDefaultExportSettings.compression),
+          isCustom: true
+        };
+        exportPresetSelect.value = 'custom';
+      };
+      const exportControls = [exportFormatInput, exportMaxWidthInput, exportImageQualityInput, exportAnimationQualityInput, exportVideoFpsInput, exportAnimationFpsInput, exportVideoBitrateInput, exportVideoCrfInput, exportAudioBitrateInput, exportSpeedPresetInput, exportScaleFilterInput, exportWebpEffortInput];
+      exportControls.forEach(control => { control.addEventListener('input', readEditorExportControls); control.addEventListener('change', readEditorExportControls); });
+      savedExportPresets.forEach((item, index) => {
+        const option = document.createElement('option');
+        option.value = 'saved:' + index;
+        option.textContent = item.name.slice(0, 36);
+        exportPresetSelect.appendChild(option);
+      });
+      exportPresetSelect.addEventListener('change', () => {
+        const value = exportPresetSelect.value;
+        if (value.startsWith('saved:')) {
+          const saved = savedExportPresets[Number(value.slice(6))];
+          if (saved) applyEditorExportPreset(value, saved.settings);
+        } else if (value !== 'custom') applyEditorExportPreset(value);
+      });
+      $('[data-export-save-preset]').addEventListener('click', () => {
+        readEditorExportControls();
+        const name = window.prompt('Название пресета экспорта:', 'Мой пресет');
+        if (!name || !name.trim()) return;
+        savedExportPresets.push({ name: name.trim().slice(0, 36), settings: {
+          outputFormat: editorExportState.outputFormat, compressEnabled: editorExportState.compressEnabled,
+          maxWidth: editorExportState.maxWidth, compression: { ...editorExportState.compression }
+        } });
+        if (savedExportPresets.length > 30) savedExportPresets.shift();
+        try { GM_setValue('twgif_media_editor_export_presets_v1', savedExportPresets); }
+        catch (error) { logDebug('Unable to save editor export preset', error?.message || error); }
+        exportPresetSelect.querySelectorAll('option[value^="saved:"]').forEach(option => option.remove());
+        savedExportPresets.forEach((item, index) => {
+          const option = document.createElement('option');
+          option.value = 'saved:' + index;
+          option.textContent = item.name.slice(0, 36);
+          exportPresetSelect.appendChild(option);
+        });
+        exportPresetSelect.value = 'saved:' + (savedExportPresets.length - 1);
+      });
+      writeExportStateToControls();
       const animationNote = document.createElement('span');
       animationNote.className = 'twgif-editor-player-note';
       animationNote.textContent = 'Анимация воспроизводится браузером';
@@ -2672,6 +2788,7 @@
       let done = false, duration = 0, width = 0, height = 0, start = 0, end = 0, speed = 1, loop = false;
       let pingPongMode = 'off', videoReverseActive = false, videoReverseGeneration = 0;
       let crop = { x: 0, y: 0, w: 100, h: 100 }, cropMode = false, trimDrag = null;
+      let cropPreset = 'free', cropBeforeToggle = null, cropPresetBeforeToggle = 'free';
       let drag = null, dragId = null, resizeObserver = null, resizeHandler = null;
       let playheadDrag = null, seekTimer = 0, pendingSeekTime = null, playheadRaf = 0, isTimelineScrubbing = false;
       let userChangedTrim = false, videoReverseTimer = 0, videoPingPongDirection = 1;
@@ -2732,9 +2849,10 @@
         frame.style.top = (r.top + r.height * crop.y / 100) + 'px';
         frame.style.width = (r.width * crop.w / 100) + 'px';
         frame.style.height = (r.height * crop.h / 100) + 'px';
-        $('[data-crop-readout]').textContent = Math.round(crop.w) + '% × ' + Math.round(crop.h) + '%';
-        overlay.querySelectorAll('[data-preset]').forEach(b => b.setAttribute('aria-pressed',
-          String(b.dataset.preset === 'free' && crop.x === 0 && crop.y === 0 && crop.w === 100 && crop.h === 100)));
+        const cropWidthPx = width > 0 ? Math.max(2, Math.round(width * crop.w / 100 / 2) * 2) : 0;
+        const cropHeightPx = height > 0 ? Math.max(2, Math.round(height * crop.h / 100 / 2) * 2) : 0;
+        $('[data-crop-readout]').textContent = cropWidthPx && cropHeightPx ? cropWidthPx + ' × ' + cropHeightPx + ' px' : '— × — px';
+        overlay.querySelectorAll('[data-preset]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.preset === cropPreset)));
       };
       const paintPlayhead = seconds => {
         const safeDuration = Math.max(0, Number(duration) || 0);
@@ -2742,6 +2860,10 @@
         const pct = safeDuration ? Math.max(0, Math.min(100, value / safeDuration * 100)) : 0;
         const translateX = Math.round((timelineTrack.clientWidth || 0) * pct / 100);
         playhead.style.transform = 'translate3d(' + translateX + 'px,0,0)';
+        if (playheadLabel) {
+          playheadLabel.textContent = formatEditorTime(value);
+          playheadLabel.style.transform = 'translate3d(' + translateX + 'px,0,0) translateX(-50%)';
+        }
       };
       const updateTimelineControls = (timeOverride = null) => {
         const safeDuration = Math.max(0, Number(duration) || 0);
@@ -2759,10 +2881,15 @@
         endInput.setAttribute('aria-valuemax', String(safeDuration));
         endInput.setAttribute('aria-valuenow', String(end));
         endInput.setAttribute('aria-valuetext', safeDuration ? formatEditorTime(end) : '—:—');
+        if (startTimeLabel) startTimeLabel.textContent = formatEditorTime(start);
+        if (endTimeLabel) endTimeLabel.textContent = safeDuration ? formatEditorTime(end) : '—:—';
+        if (timelineEdgeStart) timelineEdgeStart.textContent = formatEditorTime(0);
+        if (timelineEdgeEnd) timelineEdgeEnd.textContent = safeDuration ? formatEditorTime(safeDuration) : '—:—';
         const previewTime = timeOverride !== null ? timeOverride
-          : info.kind === 'video' ? (Number(media.currentTime) || 0)
+          : info.kind === 'video' ? (videoReverseDisplayTime !== null ? videoReverseDisplayTime : (Number(media.currentTime) || 0))
             : animationDecoder ? (Number(animationFrameStarts[animationFrameIndex]) || 0)
               : (Number(scrub.value) || 0);
+        if (timelineReadout) timelineReadout.textContent = formatEditorTime(previewTime) + ' / ' + (safeDuration ? formatEditorTime(safeDuration) : '—:—');
         paintPlayhead(previewTime);
         scrub.max = String(safeDuration);
         if (Number.isFinite(previewTime)) scrub.value = String(Math.max(0, Math.min(safeDuration || previewTime, previewTime)));
@@ -3474,6 +3601,7 @@
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); }
       };
       const preset = value => {
+        cropPreset = value;
         if (value === 'free') crop = { x: 0, y: 0, w: 100, h: 100 };
         else if (width && height) {
           const a = value.split(':').map(Number), target = a[0] / a[1], sourceAspect = width / height;
@@ -3481,7 +3609,6 @@
           else { const w = target / sourceAspect * 100; crop = { x: (100 - w) / 2, y: 0, w, h: 100 }; }
         }
         updateFrame();
-        overlay.querySelectorAll('[data-preset]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.preset === value)));
       };
       const performPreviewSeek = (value, fast = false) => {
         if (info.kind === 'video') {
@@ -3600,6 +3727,7 @@
       });
       frame.addEventListener('pointermove', e => {
         if (!drag || e.pointerId !== dragId) return;
+        cropPreset = 'free';
         const dx = (e.clientX - drag.sx) / Math.max(1, drag.rect.width) * 100;
         const dy = (e.clientY - drag.sy) / Math.max(1, drag.rect.height) * 100;
         const c = drag.crop;
@@ -3651,10 +3779,19 @@
         updateSummary();
       });
       cropToggle.addEventListener('click', () => {
-        cropMode = !cropMode;
+        if (!cropMode) {
+          cropBeforeToggle = { ...crop };
+          cropPresetBeforeToggle = cropPreset;
+          cropMode = true;
+        } else {
+          if (cropBeforeToggle) crop = { ...cropBeforeToggle };
+          cropPreset = cropPresetBeforeToggle || 'free';
+          cropBeforeToggle = null;
+          cropMode = false;
+        }
         dialog.classList.toggle('twgif-cropping', cropMode);
         cropControls.hidden = !cropMode;
-        cropToggle.textContent = cropMode ? 'Готово' : 'Включить';
+        cropToggle.textContent = cropMode ? 'Отмена' : 'Включить';
         cropToggle.setAttribute('aria-pressed', String(cropMode));
         updateFrame();
       });
@@ -3672,7 +3809,7 @@
           return;
         }
         if (media.paused) {
-          const restartAtStart = duration && (media.currentTime < start || media.currentTime >= end - 0.025 || media.ended);
+          const restartAtStart = duration && (media.currentTime < start || media.currentTime >= end - getVideoEndGuard() - 0.015 || media.ended);
           const playFromSelection = async () => {
             if (restartAtStart) {
               const target = start;
@@ -3704,7 +3841,10 @@
       overlay.addEventListener('pointerdown', e => { if (e.target === overlay) finish(null); });
       $('[data-apply]').addEventListener('click', () => {
         if (!isProcessingRunCurrent(runId)) { finish(null); return; }
-        finish(normalizeMediaEditOptions({ kind: info.kind, duration, start, end, speed, loop, pingPongMode, hd: hdInput.checked, crop, sourceWidth: width, sourceHeight: height }));
+        finish(normalizeMediaEditOptions({
+          kind: info.kind, duration, start, end, speed, loop, pingPongMode, crop,
+          sourceWidth: width, sourceHeight: height, exportSettings: editorExportState
+        }));
       });
 
       if (info.kind === 'video') {
