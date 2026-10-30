@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.83
+// @version      5.9.84
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -39,7 +39,7 @@
 
   // Shared fallback for preview callbacks that may outlive the editor's local scope.
   let videoReverseDisplayTime = null;
-  const APP_VERSION = '5.9.83';
+  const APP_VERSION = '5.9.84';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -2648,7 +2648,9 @@
       '.twgif-cropping .twgif-editor-crop-frame{opacity:1;pointer-events:auto}.twgif-editor-crop-frame:after{content:"";display:none;position:absolute;inset:0;pointer-events:none;background:linear-gradient(to right,transparent 33%,#ffffff55 33.3%,transparent 33.6%,transparent 66.3%,#ffffff55 66.6%,transparent 66.9%),linear-gradient(to bottom,transparent 33%,#ffffff55 33.3%,transparent 33.6%,transparent 66.3%,#ffffff55 66.6%,transparent 66.9%)}.twgif-cropping .twgif-editor-crop-frame:after{display:block}',
       '.twgif-editor-handle{position:absolute;z-index:4;width:13px;height:13px;border:2px solid white;border-radius:4px;background:#a970ff;touch-action:none}.twgif-editor-handle[data-handle=nw]{left:-6px;top:-6px;cursor:nwse-resize}.twgif-editor-handle[data-handle=ne]{right:-6px;top:-6px;cursor:nesw-resize}.twgif-editor-handle[data-handle=sw]{left:-6px;bottom:-6px;cursor:nesw-resize}.twgif-editor-handle[data-handle=se]{right:-6px;bottom:-6px;cursor:nwse-resize}',
       '.twgif-editor-preview-reverse-canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;user-select:none;pointer-events:none}',
-      '.twgif-editor-mute svg{width:18px;height:18px;display:block}',
+      '.twgif-editor-mute svg,.twgif-editor-preview-loop svg{width:18px;height:18px;display:block}',
+      '.twgif-editor-preview-loop[aria-pressed=true]{border-color:#a970ff;background:#9147ff55;color:#fff}',
+      '.twgif-editor-playhead.is-hidden,.twgif-editor-playhead-label.is-hidden{display:none!important}',
       '.twgif-editor-export{padding:0!important;overflow:hidden}.twgif-editor-export>summary{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px;cursor:pointer;list-style:none}.twgif-editor-export>summary::-webkit-details-marker{display:none}.twgif-editor-export[open]>summary{border-bottom:1px solid #ffffff12}.twgif-editor-export-body{padding:8px}.twgif-editor-export-preset-row{display:flex;gap:6px;margin-bottom:8px}.twgif-editor-export-preset-row select{flex:1;min-width:0}.twgif-editor-export-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 7px}.twgif-editor-export-field{display:flex;flex-direction:column;gap:3px;color:#bdbdc8;font-size:9px;min-width:0}.twgif-editor-export-field .twgif-editor-select{box-sizing:border-box;min-width:0;padding:6px 7px;font-size:10px}.twgif-editor-export .twgif-editor-preset{white-space:nowrap}.twgif-editor-timeline-head{font-size:10px;color:#c9c2d6}.twgif-editor-timeline-head span{font-variant-numeric:tabular-nums;color:#a6a6b2}',
       '.twgif-editor-player{display:flex;align-items:center;gap:9px;padding:10px;border:1px solid #ffffff12;border-radius:11px;background:#ffffff05}.twgif-editor-play{width:34px;height:34px;border:1px solid #a970ff66;border-radius:9px;background:#9147ff24;color:#eadcff;cursor:pointer}.twgif-editor-play:disabled{opacity:.4;cursor:not-allowed}.twgif-editor-player-time{min-width:70px;color:#c9c9d2;font-size:11px;font-variant-numeric:tabular-nums}.twgif-editor-player-range{width:100%;accent-color:#a970ff}.twgif-editor-player-note{color:#bbbcca;font-size:11px}',
       '.twgif-editor-timeline-wrap{margin-top:2px;padding:12px;border:1px solid #ffffff12;border-radius:13px;background:linear-gradient(135deg,#ffffff07,#ffffff02)}.twgif-editor-timeline-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:28px}',
@@ -2701,7 +2703,7 @@
         '<header class="twgif-editor-header"><div><span class="twgif-editor-eyebrow">Перед загрузкой · локально</span><h2 id="twgif-editor-title" class="twgif-editor-title">Редактор медиа</h2>',
         '<p class="twgif-editor-subtitle">Обрезай фрагмент, меняй скорость и кадрируй. Изменения применяются до загрузки.</p><span class="twgif-editor-safe">Файл обрабатывается на устройстве</span></div><button class="twgif-editor-close" data-editor-close aria-label="Закрыть">×</button></header>',
         '<div class="twgif-editor-body"><div class="twgif-editor-preview-column"><div class="twgif-editor-stage" data-stage>',
-        '<div class="twgif-editor-crop-frame" data-crop-frame><span class="twgif-editor-handle" data-handle="nw"></span><span class="twgif-editor-handle" data-handle="ne"></span><span class="twgif-editor-handle" data-handle="sw"></span><span class="twgif-editor-handle" data-handle="se"></span></div></div><div class="twgif-editor-preview-controls"><button class="twgif-editor-play" type="button" data-play aria-label="Воспроизвести">▶</button><button class="twgif-editor-play twgif-editor-mute" type="button" data-mute aria-label="Включить звук" aria-pressed="true" title="Звук выключен"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="m16 9 5 6m0-6-5 6"/></svg></button><span class="twgif-editor-player-time" data-current hidden>00:00.00</span><input class="twgif-editor-player-range" type="range" min="0" max="0" step=".01" data-scrub aria-label="Позиция воспроизведения" hidden disabled><span class="twgif-editor-player-time" data-duration hidden>—:—</span></div></div><aside>',
+        '<div class="twgif-editor-crop-frame" data-crop-frame><span class="twgif-editor-handle" data-handle="nw"></span><span class="twgif-editor-handle" data-handle="ne"></span><span class="twgif-editor-handle" data-handle="sw"></span><span class="twgif-editor-handle" data-handle="se"></span></div></div><div class="twgif-editor-preview-controls"><button class="twgif-editor-play" type="button" data-play aria-label="Воспроизвести">▶</button><button class="twgif-editor-play twgif-editor-preview-loop" type="button" data-preview-loop aria-label="Включить повтор предпросмотра" aria-pressed="false" title="Повтор выключен"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/></svg></button><button class="twgif-editor-play twgif-editor-mute" type="button" data-mute aria-label="Включить звук" aria-pressed="true" title="Звук выключен"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="m16 9 5 6m0-6-5 6"/></svg></button><span class="twgif-editor-player-time" data-current hidden>00:00.00</span><input class="twgif-editor-player-range" type="range" min="0" max="0" step=".01" data-scrub aria-label="Позиция воспроизведения" hidden disabled><span class="twgif-editor-player-time" data-duration hidden>—:—</span></div></div><aside>',
         '<section class="twgif-editor-section"><div class="twgif-editor-section-head"><span class="twgif-editor-section-title">Скорость</span><span class="twgif-editor-section-meta" data-speed-summary>1× · обычная</span></div>',
         '<input class="twgif-editor-speed-slider" type="range" data-speed min=".25" max="4" step=".05" value="1" aria-label="Скорость воспроизведения">',
         '<div class="twgif-editor-speed-ends"><span>0,25×</span><span>4×</span></div><div class="twgif-editor-help">Скорость видна в предпросмотре и применяется к итоговому файлу.</div></section>',
@@ -2734,7 +2736,7 @@
         '<button class="twgif-editor-trim-handle twgif-editor-trim-start" type="button" role="slider" aria-label="Начало фрагмента" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="00:00.00" data-trim-start disabled><span class="twgif-editor-handle-time" data-trim-start-time>00:00.00</span></button>',
         '<button class="twgif-editor-trim-handle twgif-editor-trim-end" type="button" role="slider" aria-label="Конец фрагмента" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="—:—" data-trim-end disabled><span class="twgif-editor-handle-time" data-trim-end-time>—:—</span></button>',
         '</div><div class="twgif-editor-timeline-edges"><span data-timeline-edge-start>00:00.00</span><span data-timeline-edge-end>—:—</span></div></div>',
-        '<footer class="twgif-editor-footer"><div class="twgif-editor-summary" data-summary>Итоговая длительность: <strong>—</strong></div><div class="twgif-editor-actions"><button class="twgif-editor-btn" data-cancel>Отмена</button><button class="twgif-editor-btn twgif-editor-btn-primary" data-apply>Применить и продолжить →</button></div></footer></section>'
+        '<footer class="twgif-editor-footer"><div class="twgif-editor-summary" data-summary>Итоговая длительность: <strong>—</strong></div><div class="twgif-editor-summary" data-media-info>FPS: — · — × — px</div><div class="twgif-editor-actions"><button class="twgif-editor-btn" data-cancel>Отмена</button><button class="twgif-editor-btn twgif-editor-btn-primary" data-apply>Применить и продолжить →</button></div></footer></section>'
       ].join('');
       document.body.appendChild(overlay);
 
@@ -2757,6 +2759,7 @@
       const cropToggle = $('[data-crop-toggle]'), cropControls = $('[data-crop-controls]');
       const playButton = $('[data-play]');
       const muteButton = $('[data-mute]');
+      const previewLoopButton = $('[data-preview-loop]');
       const currentLabel = $('[data-current]');
       const durationLabel = $('[data-duration]');
 
@@ -2910,6 +2913,7 @@
       let drag = null, dragId = null, resizeObserver = null, resizeHandler = null;
       let playheadDrag = null, seekTimer = 0, pendingSeekTime = null, playheadRaf = 0, isTimelineScrubbing = false;
       let userChangedTrim = false, videoReverseTimer = 0, videoPingPongDirection = 1;
+      let previewLoop = false, trimHandleActive = false, fpsSamples = [], fpsSampleLastTime = 0;
       let videoReverseFrames = [], videoReverseCacheBytes = 0, videoReverseCacheFrameLimit = 180;
       let videoReverseCapturePending = false, videoReverseCacheLastTime = -Infinity, videoReverseCacheGeneration = 0;
       let videoSeekInFlight = false, pendingVideoSeekTarget = null, pendingVideoSeekFast = false;
@@ -2992,6 +2996,13 @@
         overlay.querySelectorAll('[data-preset]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.preset === cropPreset)));
       };
       const paintPlayhead = seconds => {
+        if (trimHandleActive) {
+          playhead.classList.add('is-hidden');
+          if (playheadLabel) playheadLabel.classList.add('is-hidden');
+          return;
+        }
+        playhead.classList.remove('is-hidden');
+        if (playheadLabel) playheadLabel.classList.remove('is-hidden');
         const safeDuration = Math.max(0, Number(duration) || 0);
         const value = Math.max(0, Math.min(safeDuration || Number(seconds) || 0, Number(seconds) || 0));
         const pct = safeDuration ? Math.max(0, Math.min(100, value / safeDuration * 100)) : 0;
@@ -3034,6 +3045,12 @@
         endInput.disabled = safeDuration <= 0;
         $('[data-duration]').textContent = safeDuration > 0 ? formatEditorTime(safeDuration) : '—:—';
       };
+      const updatePreviewLoopButton = () => {
+        previewLoopButton.setAttribute('aria-pressed', String(previewLoop));
+        previewLoopButton.setAttribute('aria-label', previewLoop ? 'Выключить повтор предпросмотра' : 'Включить повтор предпросмотра');
+        previewLoopButton.title = previewLoop ? 'Повтор включён' : 'Повтор выключен';
+      };
+      updatePreviewLoopButton();
       const updateMuteButton = () => {
         if (!muteButton) return;
         const muted = info.kind !== 'video' || Boolean(media.muted);
@@ -3045,11 +3062,19 @@
         muteButton.title = muted ? 'Звук выключен' : 'Звук включён';
       };
       updateMuteButton();
+      const updateMediaInfo = () => {
+        const node = $('[data-media-info]');
+        if (!node) return;
+        const fps = Number(media.__twgifFrameRate) || 0;
+        const dimensions = width > 0 && height > 0 ? Math.round(width) + ' × ' + Math.round(height) + ' px' : '— × — px';
+        node.textContent = (fps > 0 ? 'FPS: ' + fps.toLocaleString('ru-RU', { maximumFractionDigits: 2 }) : 'FPS: —') + ' · ' + dimensions;
+      };
       const updateSummary = () => {
         const selected = duration > 0 ? Math.max(0, end - start) : 0;
         $('[data-summary]').innerHTML = 'Итоговая длительность: <strong>' +
           (selected > 0 ? formatEditorTime(selected / speed) : 'полная') + '</strong> <span style="color:#888">· ' + speed.toLocaleString('ru-RU') + '×</span>';
         $('[data-speed-summary]').textContent = speed.toLocaleString('ru-RU') + '× · ' + (speed < 1 ? 'замедление' : speed > 1 ? 'ускорение' : 'обычная');
+        updateMediaInfo();
         speedInput.value = String(speed);
         updateTimelineControls();
       };
@@ -3345,6 +3370,7 @@
           if (animationCanvas.height !== frameHeight) animationCanvas.height = frameHeight;
           width = frameWidth;
           height = frameHeight;
+          updateMediaInfo();
           context.clearRect(0, 0, frameWidth, frameHeight);
           context.drawImage(image, 0, 0, frameWidth, frameHeight);
           try { image.close(); } catch (_) {}
@@ -3426,6 +3452,7 @@
           return;
         }
         const frameDuration = Math.max(0.01, Number(animationFrameDurations[animationFrameIndex]) || 0.1);
+        if (animationFrameIndex >= lastFrame && previewLoop) animationFrameIndex = firstFrame - 1;
         animationTimer = window.setTimeout(() => {
           animationTimer = 0;
           if (!animationPlaying || !animationDecoder || done || generation !== animationGeneration) return;
@@ -3571,8 +3598,9 @@
         playheadRaf = 0;
         if (done || info.kind !== 'video' || media.paused || videoReverseActive || duration <= 0) return;
         const time = Number(media.currentTime) || 0;
-        if (!videoReverseActive && time >= end - getVideoEndGuard()) {
+        if (!videoReverseActive && time >= end - 0.005) {
           if (loop) startVideoReverse();
+          else if (previewLoop) { try { media.currentTime = start; media.playbackRate = speed; media.play().catch(() => stopVideoPreview(false)); } catch (_) { stopVideoPreview(false); } }
           else stopVideoPreview(true);
           return;
         }
@@ -3600,7 +3628,7 @@
             populateVideoStoryboard().catch(error => logDebug('Video storyboard failed', error?.message || error));
           }
         }
-        width = media.videoWidth || width; height = media.videoHeight || height; updateFrame();
+        width = media.videoWidth || width; height = media.videoHeight || height; updateFrame(); updateMediaInfo();
       };
       const getPingPongEasePower = () => pingPongMode === 'soft' ? 1.3 :
         pingPongMode === 'balanced' ? 1.65 : pingPongMode === 'smooth' ? 2 : 1;
@@ -3641,7 +3669,7 @@
       const getVideoEndGuard = () => {
         // Guard against a whole source frame being presented between two UI ticks.
         const sourceFrameStep = speed / 24;
-        return Math.max(0.05, Math.min(0.24, sourceFrameStep * 1.25));
+        return Math.max(0.005, Math.min(0.08, sourceFrameStep * 0.35));
       };
       const clearVideoReverseCache = () => {
         videoReverseCacheGeneration++;
@@ -3878,17 +3906,27 @@
       };
       const onVideoTime = () => {
         if (videoReverseActive || !Number.isFinite(media.currentTime)) return;
+        if (!media.paused && typeof media.requestVideoFrameCallback === 'function') {
+          const now = performance.now();
+          if (fpsSampleLastTime > 0 && now > fpsSampleLastTime) {
+            fpsSamples.push(1000 / (now - fpsSampleLastTime));
+            if (fpsSamples.length > 24) fpsSamples.shift();
+            if (fpsSamples.length >= 6) { media.__twgifFrameRate = Math.round(fpsSamples.reduce((a,b)=>a+b,0) / fpsSamples.length * 10) / 10; updateMediaInfo(); }
+          }
+          fpsSampleLastTime = now;
+        }
         if (!media.paused && !videoReverseActive && duration > 0 &&
-            media.currentTime >= end - getVideoEndGuard()) {
+            media.currentTime >= end - 0.005) {
           if (loop) startVideoReverse();
           else stopVideoPreview(true);
           return;
         }
         if (loop && !videoReverseActive) updateVideoPingPongPlaybackRate(media.currentTime);
-        syncVideoPosition(media.currentTime);
+        if (!isTimelineScrubbing) syncVideoPosition(media.currentTime);
       };
       const onVideoEnd = () => {
         if (loop && !videoReverseActive) startVideoReverse();
+        else if (!videoReverseActive && previewLoop) { try { media.currentTime = start; media.playbackRate = speed; media.play().catch(() => stopVideoPreview(false)); } catch (_) { stopVideoPreview(false); } }
         else if (!videoReverseActive) stopVideoPreview(true);
       };
       const onKey = e => {
@@ -3932,7 +3970,7 @@
         currentLabel.textContent = formatEditorTime(value);
         scrub.value = String(value);
         updateTimelineControls(value);
-        paintPlayhead(value);
+        if (!trimHandleActive) paintPlayhead(value);
         if (defer) {
           pendingSeekTime = value;
           if (!seekTimer) seekTimer = window.setTimeout(() => flushPendingPreviewSeek(true), 36);
@@ -3962,6 +4000,8 @@
         if (event.button !== 0 && event.pointerType !== 'touch') return;
         if (!duration) return;
         isTimelineScrubbing = true;
+        trimHandleActive = true;
+        paintPlayhead(Number(scrub.value) || start);
         trimDrag = { which, pointerId: event.pointerId };
         try { event.currentTarget.setPointerCapture(event.pointerId); } catch (_) {}
         event.preventDefault();
@@ -3984,6 +4024,7 @@
         if (trimDrag && (!event || event.pointerId === trimDrag.pointerId)) trimDrag = null;
         if (playheadDrag && (!event || event.pointerId === playheadDrag.pointerId)) playheadDrag = null;
         if (!trimDrag && !playheadDrag) {
+          trimHandleActive = false;
           isTimelineScrubbing = false;
           flushPendingPreviewSeek(false);
         }
@@ -4103,6 +4144,10 @@
       });
       overlay.querySelectorAll('[data-preset]').forEach(b => b.addEventListener('click', () => preset(b.dataset.preset)));
       $('[data-reset]').addEventListener('click', () => preset('free'));
+      previewLoopButton.addEventListener('click', event => {
+        event.preventDefault(); event.stopPropagation();
+        previewLoop = !previewLoop; updatePreviewLoopButton();
+      });
       muteButton.addEventListener('click', event => {
         event.preventDefault();
         event.stopPropagation();
