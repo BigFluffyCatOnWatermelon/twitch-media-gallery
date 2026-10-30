@@ -1,5 +1,20 @@
 # Changelog
 
+## [5.9.84] — 2026-10-30
+
+### Added
+- Added a separate preview-repeat toggle beside Play, disabled by default and independent from Ping-pong.
+- Added source FPS (estimated from decoded frames during playback when supported) and pixel dimensions beside the final-duration summary.
+
+### Fixed
+- Reduced the playback stop guard so the playhead can reach the trim endpoint much more closely.
+- Hid the playhead while dragging a trim boundary and prevented playback callbacks from repainting the timeline while scrubbing.
+- Bumped the userscript version to 5.9.84.
+
+### Verification
+- Full userscript syntax check passed.
+- Timeline behavior, FPS estimation, and repeat playback still need a real browser test in Twitch.
+
 ## [5.9.83] — 2026-10-30
 
 ### Added
