@@ -1,5 +1,15 @@
 # Changelog
 
+## [5.9.81] — 2026-10-30
+
+### Fixed
+- Fixed an editor startup failure reported after media import (`videoReverseDisplayTime is not defined`). The reverse-preview display position now lives in the editor's shared script scope, so playback and cleanup callbacks can always access it.
+- Bumped the userscript version to 5.9.81 so Tampermonkey can detect the correction.
+
+### Verification
+- Full userscript JavaScript syntax check passed.
+- Runtime import and playback must still be confirmed in Twitch.
+
 All user-visible changes to the userscript are recorded here. New entries go at the top and must describe the behavior change, the affected area, and any compatibility or migration notes.
 
 ## [5.9.80] — 2026-10-30
