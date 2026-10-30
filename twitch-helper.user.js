@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.78
+// @version      5.9.79
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.78';
+  const APP_VERSION = '5.9.79';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -2605,7 +2605,6 @@
       const playhead = $('[data-playhead]');
       const speedInput = $('[data-speed]'), loopInput = $('[data-loop]');
       const hdInput = $('[data-hd]');
-      loopInput.value = pingPongMode;
       const cropToggle = $('[data-crop-toggle]'), cropControls = $('[data-crop-controls]');
       const playButton = $('[data-play]');
       const currentLabel = $('[data-current]');
