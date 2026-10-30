@@ -1,5 +1,19 @@
 # Changelog
 
+## [5.9.82] — 2026-10-30
+
+### Fixed
+- Reverse ping-pong preview now caches frames at the video's native resolution instead of shrinking them to 240 px. The cache adapts its sampling interval to the source dimensions and is capped at 256 MiB to avoid unbounded memory use; very large sources may therefore have fewer cached reverse frames.
+- Moving the crop rectangle no longer switches the selected aspect-ratio preset to “Свободно”. The preset changes to “Свободно” only when a corner handle changes the crop dimensions.
+- Bumped the userscript version to 5.9.82 for Tampermonkey updates.
+
+### Notes
+- The end-of-video preview keeps a safety offset of at least 50 ms before the trim boundary so the browser can present the final decoded frame. This offset can grow with playback speed; it is not a 5 ms setting.
+
+### Verification
+- Full userscript JavaScript syntax check passed.
+- Full-resolution reverse preview and crop interactions still require runtime verification in Twitch.
+
 ## [5.9.81] — 2026-10-30
 
 ### Fixed
