@@ -1,0 +1,34 @@
+name: Changelog requirement
+
+on:
+  pull_request:
+    paths:
+      - 'twitch-helper.user.js'
+
+permissions:
+  contents: read
+
+jobs:
+  changelog:
+    name: Require CHANGELOG.md entry
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out pull request
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Require changelog update
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          changed_files="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          if printf '%s\n' "$changed_files" | grep -Fxq 'twitch-helper.user.js' &&
+             ! printf '%s\n' "$changed_files" | grep -Fxq 'CHANGELOG.md'; then
+            echo 'A change to twitch-helper.user.js must include a CHANGELOG.md entry.'
+            exit 1
+          fi
+          echo 'Changelog entry found.'
