@@ -2874,8 +2874,10 @@
         frame.style.top = (r.top + r.height * crop.y / 100) + 'px';
         frame.style.width = (r.width * crop.w / 100) + 'px';
         frame.style.height = (r.height * crop.h / 100) + 'px';
-        const cropWidthPx = width > 0 ? Math.max(2, Math.round(width * crop.w / 100 / 2) * 2) : 0;
-        const cropHeightPx = height > 0 ? Math.max(2, Math.round(height * crop.h / 100 / 2) * 2) : 0;
+        const evenSourceWidth = Math.floor(width / 2) * 2;
+        const evenSourceHeight = Math.floor(height / 2) * 2;
+        const cropWidthPx = width > 1 ? Math.max(2, Math.min(evenSourceWidth, Math.floor(width * crop.w / 100 / 2) * 2)) : 0;
+        const cropHeightPx = height > 1 ? Math.max(2, Math.min(evenSourceHeight, Math.floor(height * crop.h / 100 / 2) * 2)) : 0;
         $('[data-crop-readout]').textContent = cropWidthPx && cropHeightPx ? cropWidthPx + ' × ' + cropHeightPx + ' px' : '— × — px';
         overlay.querySelectorAll('[data-preset]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.preset === cropPreset)));
       };
