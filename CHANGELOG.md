@@ -1,5 +1,17 @@
 # Changelog
 
+## [5.9.85] — 2026-10-30
+
+### Added
+- Added the original file size beside FPS and pixel dimensions in the media editor.
+
+### Clarified
+- Explained that the “No compression” export preset disables downscaling/FPS reduction and uses lossless encoding where supported; transcoding to another format can still produce a larger file.
+
+### Verification
+- Full userscript JavaScript syntax check passed.
+- The displayed weight is the input file's actual byte size; output size is determined after export.
+
 ## [5.9.84] — 2026-10-30
 
 ### Added
