@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.90
+// @version      5.9.91
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -39,7 +39,7 @@
 
   // Shared fallback for preview callbacks that may outlive the editor's local scope.
   let videoReverseDisplayTime = null;
-  const APP_VERSION = '5.9.90';
+  const APP_VERSION = '5.9.91';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -5849,6 +5849,46 @@
     return /(^|\.)w\.tv$/i.test(location.hostname);
   }
 
+  // w.tv may keep a hidden copy of the chat options control in its responsive
+  // layout. Always choose a rendered control and, when possible, the one nearest
+  // to the active chat composer.
+  function findWtvChatOptionsButton(input = null) {
+    if (!isWtvSite()) return null;
+    const selectors = [
+      'button[data-testid="chat-options-button"]',
+      'button[aria-label="toggle settings" i]'
+    ];
+    const candidates = new Set();
+    for (const selector of selectors) {
+      for (const button of document.querySelectorAll(selector)) candidates.add(button);
+    }
+    const visible = [...candidates].filter(button => {
+      if (!button.isConnected || !button.getClientRects().length || button.closest('#twgif-panel')) return false;
+      for (let node = button; node && node !== document.documentElement; node = node.parentElement) {
+        if (node.hidden) return false;
+        const style = getComputedStyle(node);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+      }
+      return true;
+    });
+    if (!visible.length) return null;
+    if (!input?.isConnected) return visible[0];
+
+    const inputRect = input.getBoundingClientRect();
+    const inputX = inputRect.right;
+    const inputY = inputRect.top + inputRect.height / 2;
+    visible.sort((a, b) => {
+      const ar = a.getBoundingClientRect();
+      const br = b.getBoundingClientRect();
+      const aScore = Math.abs(ar.left + ar.width / 2 - inputX) +
+        Math.abs(ar.top + ar.height / 2 - inputY) * 1.25;
+      const bScore = Math.abs(br.left + br.width / 2 - inputX) +
+        Math.abs(br.top + br.height / 2 - inputY) * 1.25;
+      return aScore - bScore;
+    });
+    return visible[0];
+  }
+
   function isKickSite() {
     return /(^|\.)kick\.com$/i.test(location.hostname);
   }
@@ -6541,15 +6581,12 @@
 
     // On w.tv use the common ancestor of the editor and the exact three-dot button,
     // then choose the widest visible ancestor that still looks like a chat column.
-    const anchor = isWtvSite()
-      ? (document.querySelector('button[data-testid="chat-options-button"]') ||
-         document.querySelector('button[aria-label="toggle settings" i]'))
-      : null;
-    let common = input;
+    const anchor = isWtvSite() ? findWtvChatOptionsButton(input) : null;
+    let common = input || anchor;
     if (anchor) {
       while (common && common !== document.body && !common.contains(anchor)) common = common.parentElement;
     }
-    const start = common || input;
+    const start = common || input || anchor;
     const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
     const maxColumnWidth = Math.min(1000, viewportWidth * 0.9);
     let best = null;
@@ -6565,7 +6602,7 @@
     }
     return best || common || input?.closest(
       '[data-testid*="chat-panel" i], [data-testid*="chat-room" i], [class*="chat-panel" i], [class*="chat-room" i], [class*="chat-container" i]'
-    ) || input?.parentElement?.parentElement || document.body;
+    ) || input?.parentElement?.parentElement || anchor?.parentElement || document.body;
   }
 
   function getToolbar(input) {
@@ -6825,8 +6862,7 @@
       return toolbar?.querySelector('[data-a-target="chat-settings-button"], [aria-label*="Chat settings" i], [aria-label*="Настройки чата" i]') || null;
     }
     if (isWtvSite()) {
-      return document.querySelector('button[data-testid="chat-options-button"]') ||
-        document.querySelector('button[aria-label="toggle settings" i]') || null;
+      return findWtvChatOptionsButton(input);
     }
 
     // On Kick, only search the footer/composer, not the chat header. Otherwise the icon
@@ -6879,8 +6915,7 @@
 
   function findInlineTriggerTarget(input, toolbar) {
     if (isWtvSite()) {
-      return document.querySelector('button[data-testid="chat-options-button"]') ||
-        document.querySelector('button[aria-label="toggle settings" i]');
+      return findWtvChatOptionsButton(input);
     }
 
     if (isKickSite()) {
@@ -6996,6 +7031,25 @@
   function ensureTrigger() {
     if (isTwitchSite() && clearUnavailableTwitchTrigger()) return false;
     const input = getChatInput();
+
+    // Do not make w.tv support depend on identifying its composer: the options
+    // button is a stable landmark and is enough to expose the gallery trigger.
+    if (!input && isWtvSite()) {
+      const anchor = findWtvChatOptionsButton();
+      if (!anchor) return false;
+      let button = document.getElementById('twgif-trigger');
+      if (!button) button = createTrigger();
+      activeTrigger = button;
+      syncTriggerUploadIndicator();
+      if (!mountInlineTrigger(button, anchor, 'twgif-inline-wtv')) {
+        button.classList.remove('twgif-inline-trigger', 'twgif-inline-kick', 'twgif-inline-wtv');
+        if (button.parentElement !== document.body) document.body.appendChild(button);
+        positionTriggerNearSettings(anchor, button);
+      }
+      logDebug('w.tv gallery trigger mounted from chat options button');
+      return true;
+    }
+
     if (!input) return false;
     activeComposer = input;
     const toolbar = getToolbar(input);
@@ -7045,15 +7099,18 @@
     if (!panel || panel.hidden) return;
     const visibleInput = getChatInput();
     const input = visibleInput || (activeComposer && activeComposer.isConnected ? activeComposer : null);
-    if (!input) return;
+    const wtvAnchor = !input && isWtvSite() ? findWtvChatOptionsButton() : null;
+    if (!input && !wtvAnchor) return;
 
-    const inputRect = input.getBoundingClientRect();
-    const region = getChatRegion(input);
-    const regionRect = region && region.getBoundingClientRect
-      ? region.getBoundingClientRect()
-      : { top: 0, left: 0, right: innerWidth, width: innerWidth };
     const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
     const viewportHeight = Math.max(1, document.documentElement.clientHeight || innerHeight);
+    const inputRect = input
+      ? input.getBoundingClientRect()
+      : { top: viewportHeight - 8, left: 0, right: viewportWidth, width: viewportWidth };
+    const region = getChatRegion(input || wtvAnchor);
+    const regionRect = region && region.getBoundingClientRect
+      ? region.getBoundingClientRect()
+      : { top: 0, left: 0, right: viewportWidth, width: viewportWidth };
     const rawRegionLeft = Number.isFinite(regionRect.left) ? regionRect.left : 0;
     const rawRegionRight = Number.isFinite(regionRect.right)
       ? regionRect.right
