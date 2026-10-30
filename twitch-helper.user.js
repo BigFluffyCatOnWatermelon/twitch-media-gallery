@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.79
+// @version      5.9.80
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.79';
+  const APP_VERSION = '5.9.80';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -2476,12 +2476,21 @@
         ? requestedPingPongMode : raw && raw.loop === true ? 'smooth' : 'off';
     const w = Math.max(5, Math.min(100, Number(c.w) || 100));
     const h = Math.max(5, Math.min(100, Number(c.h) || 100));
+    const exportRaw = raw && raw.exportSettings && typeof raw.exportSettings === 'object' ? raw.exportSettings : null;
+    const allowedOutputFormats = ['webp', 'gif', 'jpg', 'png', 'mp4', 'webm'];
+    const exportSettings = exportRaw ? {
+      outputFormat: allowedOutputFormats.includes(String(exportRaw.outputFormat)) ? String(exportRaw.outputFormat) : '',
+      compressEnabled: exportRaw.compressEnabled !== false,
+      maxWidth: clampInt(exportRaw.maxWidth, 100, 4000, DEFAULT_MAX_WIDTH),
+      compression: normalizeCompressionSettings(exportRaw.compression, DEFAULT_CONFIG().compression),
+      isCustom: Boolean(exportRaw.isCustom)
+    } : null;
     return { kind: raw && raw.kind === 'animation' ? 'animation' : 'video', duration, start, end,
       speed: Math.max(.25, Math.min(4, Number(raw && raw.speed) || 1)),
       loop: pingPongMode !== 'off', pingPongMode,
       crop: { x: Math.max(0, Math.min(100 - w, Number(c.x) || 0)),
         y: Math.max(0, Math.min(100 - h, Number(c.y) || 0)), w, h },
-      hd: Boolean(raw && raw.hd),
+      exportSettings,
       sourceWidth: Math.max(0, Math.floor(Number(raw && raw.sourceWidth) || 0)),
       sourceHeight: Math.max(0, Math.floor(Number(raw && raw.sourceHeight) || 0)) };
   }
@@ -2499,7 +2508,8 @@
     const pingPongChanged = e.loop === true && ['gif', 'webp', 'mp4', 'webm'].includes(outputFormat);
     return c.x > .5 || c.y > .5 || c.w < 99.5 || c.h < 99.5 ||
       (e.duration > 0 && (e.start > .03 || e.end < e.duration - .03)) ||
-      Math.abs(e.speed - 1) > .001 || pingPongChanged;
+      Math.abs(e.speed - 1) > .001 || pingPongChanged ||
+      Boolean(e.exportSettings && e.exportSettings.isCustom);
   }
 
   // A stale full-screen overlay can sit above every control if an earlier script run
@@ -3910,9 +3920,11 @@
       }
     }
 
+    const editorExport = editOptions && editOptions.exportSettings ? editOptions.exportSettings : null;
     let target = configuredTarget;
     if (editOptions) {
-      const editedFormat = getEditedOutputFormat(file, category, animatedWebP, configuredTarget);
+      const editedFormat = editorExport && editorExport.isCustom && editorExport.outputFormat
+        ? editorExport.outputFormat : getEditedOutputFormat(file, category, animatedWebP, configuredTarget);
       if (mediaEditHasChanges(editOptions, editedFormat)) {
         target = editedFormat;
       } else {
@@ -3966,8 +3978,11 @@
         logDebug('Canvas conversion failed; falling back to FFmpeg.wasm', { name: file.name, target, error: error.message || error });
       }
     }
-    const conversionWidth = category === 'video' ? config.compression.videoMaxWidth : config.maxWidth;
-    return ffmpegMediaToFormat(file, target, conversionWidth, config.compression, runId, compressEnabled, editOptions);
+    const conversionWidth = editorExport && editorExport.isCustom
+      ? editorExport.maxWidth : (category === 'video' ? config.compression.videoMaxWidth : config.maxWidth);
+    const conversionCompression = editorExport && editorExport.isCustom ? editorExport.compression : config.compression;
+    const conversionEnabled = editorExport && editorExport.isCustom ? editorExport.compressEnabled : compressEnabled;
+    return ffmpegMediaToFormat(file, target, conversionWidth, conversionCompression, runId, conversionEnabled, editOptions);
   }
 
 
@@ -4896,7 +4911,7 @@
     }
 
     const editorImport = suppliedEditOptions !== undefined && suppliedEditOptions !== null;
-    const compressEnabled = !(editorImport && suppliedEditOptions.hd === true) && isCompressionEnabled();
+    const compressEnabled = isCompressionEnabled();
     const runId = ++processingRunId;
     activeProcessingRunId = runId;
     syncTriggerUploadIndicator();
