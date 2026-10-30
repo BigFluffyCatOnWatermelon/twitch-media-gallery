@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.75
+// @version      5.9.76
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -37,7 +37,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5.9.75';
+  const APP_VERSION = '5.9.76';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -2584,7 +2584,7 @@
         '<div class="twgif-editor-trim-selection" data-trim-selection></div><div class="twgif-editor-playhead" data-playhead></div>',
         '<button class="twgif-editor-trim-handle twgif-editor-trim-start" type="button" role="slider" aria-label="Начало фрагмента" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="00:00.00" data-trim-start disabled></button>',
         '<button class="twgif-editor-trim-handle twgif-editor-trim-end" type="button" role="slider" aria-label="Конец фрагмента" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="—:—" data-trim-end disabled></button>',
-        '</div></div>',
+        '</div></div></div>',
         '<footer class="twgif-editor-footer"><div class="twgif-editor-summary" data-summary>Итоговая длительность: <strong>—</strong></div><div class="twgif-editor-actions"><button class="twgif-editor-btn" data-cancel>Отмена</button><button class="twgif-editor-btn twgif-editor-btn-primary" data-apply>Применить и продолжить →</button></div></footer></section>'
       ].join('');
       document.body.appendChild(overlay);
