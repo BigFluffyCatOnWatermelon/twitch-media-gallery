@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.84
+// @version      5.9.85
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -39,7 +39,7 @@
 
   // Shared fallback for preview callbacks that may outlive the editor's local scope.
   let videoReverseDisplayTime = null;
-  const APP_VERSION = '5.9.84';
+  const APP_VERSION = '5.9.85';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -2726,7 +2726,7 @@
 '<label class="twgif-editor-export-field">Скорость кодирования<select class="twgif-editor-select" data-export-speed-preset><option value="ultrafast">Максимальная</option><option value="superfast">Очень быстро</option><option value="veryfast">Быстро</option><option value="fast">Сбалансированно</option><option value="medium">Медленно, эффективнее</option></select></label>',
 '<label class="twgif-editor-export-field">Фильтр масштабирования<select class="twgif-editor-select" data-export-scale-filter><option value="fast_bilinear">Самый быстрый</option><option value="bilinear">Сбалансированный</option><option value="bicubic">Чётче</option><option value="lanczos">Максимальная чёткость</option></select></label>',
 '<label class="twgif-editor-export-field">Усилие WebP (0–6)<input class="twgif-editor-select" type="number" min="0" max="6" step="1" data-export-webp-effort></label>',
-'</div><div class="twgif-editor-help">«Без сжатия» отключает уменьшение разрешения и использует максимально сохраняющие качество параметры кодека. Остальные параметры можно менять вручную и сохранять кнопкой выше.</div></div></details>',
+'</div><div class="twgif-editor-help">«Без сжатия» отключает уменьшение разрешения и ограничение FPS, используя режимы без потерь там, где они поддерживаются. После перекодирования (особенно MP4 → WebP) итоговый файл может быть тяжелее исходника даже после кадрирования. Остальные параметры можно менять вручную и сохранять кнопкой выше.</div></div></details>',
         '</aside>',
         '<div class="twgif-editor-timeline-wrap">',
         '<div class="twgif-editor-timeline-head"><strong>Таймлайн</strong><span data-timeline-readout>00:00.00 / —:—</span></div><div class="twgif-editor-timeline-visual" data-timeline-track>',
@@ -3067,7 +3067,7 @@
         if (!node) return;
         const fps = Number(media.__twgifFrameRate) || 0;
         const dimensions = width > 0 && height > 0 ? Math.round(width) + ' × ' + Math.round(height) + ' px' : '— × — px';
-        node.textContent = (fps > 0 ? 'FPS: ' + fps.toLocaleString('ru-RU', { maximumFractionDigits: 2 }) : 'FPS: —') + ' · ' + dimensions;
+        node.textContent = (fps > 0 ? 'FPS: ' + fps.toLocaleString('ru-RU', { maximumFractionDigits: 2 }) : 'FPS: —') + ' · ' + dimensions + ' · Вес: ' + formatBytes(file.size);
       };
       const updateSummary = () => {
         const selected = duration > 0 ? Math.max(0, end - start) : 0;
