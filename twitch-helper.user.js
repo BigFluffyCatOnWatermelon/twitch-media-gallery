@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.91
+// @version      5.9.92
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -39,7 +39,7 @@
 
   // Shared fallback for preview callbacks that may outlive the editor's local scope.
   let videoReverseDisplayTime = null;
-  const APP_VERSION = '5.9.91';
+  const APP_VERSION = '5.9.92';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -5889,6 +5889,61 @@
     return visible[0];
   }
 
+  // Guaranteed fallback for w.tv: its chat markup changes frequently, so the
+  // gallery button must remain available even when no stable chat control exists.
+  function positionWtvFloatingTrigger(button, input = null) {
+    if (!button || !isWtvSite()) return false;
+    const anchor = findWtvChatOptionsButton(input);
+    if (anchor && mountInlineTrigger(button, anchor, 'twgif-inline-wtv')) return true;
+
+    button.classList.remove('twgif-inline-trigger', 'twgif-inline-kick', 'twgif-inline-wtv');
+    if (button.parentElement !== document.body) document.body.appendChild(button);
+
+    const vw = Math.max(1, document.documentElement.clientWidth || innerWidth);
+    const vh = Math.max(1, document.documentElement.clientHeight || innerHeight);
+    let left = Math.max(8, vw - 52);
+    let top = Math.max(8, vh - 172);
+
+    const reference = anchor || (input?.isConnected && input.getClientRects().length ? input : null);
+    if (reference) {
+      const rect = reference.getBoundingClientRect();
+      left = rect.left - 48;
+      top = rect.top + (rect.height - 44) / 2;
+      if (left < 8) left = rect.right + 8;
+      if (left + 44 > vw - 8) left = vw - 52;
+      if (top + 44 > vh - 8) top = vh - 52;
+      top = Math.max(8, top);
+    }
+
+    button.style.setProperty('--twgif-trigger-left', Math.round(left) + 'px');
+    button.style.setProperty('--twgif-trigger-top', Math.round(top) + 'px');
+    button.style.setProperty('display', 'inline-flex', 'important');
+    button.style.setProperty('visibility', 'visible', 'important');
+    button.style.setProperty('opacity', '1', 'important');
+    return true;
+  }
+
+  function positionWtvPanel(panel) {
+    if (!panel || !isWtvSite()) return;
+    const vw = Math.max(1, document.documentElement.clientWidth || innerWidth);
+    const vh = Math.max(1, document.documentElement.clientHeight || innerHeight);
+    const width = Math.max(280, Math.min(500, vw - 16));
+    const height = Math.max(220, Math.min(560, vh - 16));
+    panel.style.setProperty('position', 'fixed', 'important');
+    panel.style.setProperty('left', Math.max(8, vw - width - 8) + 'px', 'important');
+    panel.style.setProperty('top', '8px', 'important');
+    panel.style.setProperty('right', 'auto', 'important');
+    panel.style.setProperty('bottom', 'auto', 'important');
+    panel.style.setProperty('width', width + 'px', 'important');
+    panel.style.setProperty('height', height + 'px', 'important');
+    panel.style.setProperty('min-height', Math.min(220, height) + 'px', 'important');
+    panel.style.setProperty('max-height', height + 'px', 'important');
+    panel.style.setProperty('display', 'flex', 'important');
+    panel.style.setProperty('visibility', 'visible', 'important');
+    panel.style.setProperty('opacity', '1', 'important');
+    panel.style.setProperty('z-index', '2147483000', 'important');
+  }
+
   function isKickSite() {
     return /(^|\.)kick\.com$/i.test(location.hostname);
   }
@@ -7021,6 +7076,10 @@
     const button = document.getElementById('twgif-trigger');
     if (!button) return;
     const input = getChatInput();
+    if (isWtvSite()) {
+      positionWtvFloatingTrigger(button, input);
+      return;
+    }
     if (!input) return;
     const toolbar = getToolbar(input);
     if (!toolbar) return;
@@ -7032,21 +7091,19 @@
     if (isTwitchSite() && clearUnavailableTwitchTrigger()) return false;
     const input = getChatInput();
 
-    // Do not make w.tv support depend on identifying its composer: the options
-    // button is a stable landmark and is enough to expose the gallery trigger.
-    if (!input && isWtvSite()) {
-      const anchor = findWtvChatOptionsButton();
-      if (!anchor) return false;
+    // Always expose a floating fallback on w.tv, even when its chat input and
+    // options button use unknown selectors or have not mounted yet.
+    if (isWtvSite()) {
       let button = document.getElementById('twgif-trigger');
       if (!button) button = createTrigger();
       activeTrigger = button;
       syncTriggerUploadIndicator();
-      if (!mountInlineTrigger(button, anchor, 'twgif-inline-wtv')) {
-        button.classList.remove('twgif-inline-trigger', 'twgif-inline-kick', 'twgif-inline-wtv');
-        if (button.parentElement !== document.body) document.body.appendChild(button);
-        positionTriggerNearSettings(anchor, button);
-      }
-      logDebug('w.tv gallery trigger mounted from chat options button');
+      positionWtvFloatingTrigger(button, input);
+      logDebug('w.tv gallery trigger ensured', {
+        inputFound: Boolean(input),
+        optionsButtonFound: Boolean(findWtvChatOptionsButton(input)),
+        parent: button.parentElement?.tagName || ''
+      });
       return true;
     }
 
@@ -7155,6 +7212,10 @@
 
   function repositionPanel() {
     if (!isPanelOpen()) return;
+    if (isWtvSite()) {
+      requestAnimationFrame(() => positionWtvPanel(document.getElementById('twgif-panel')));
+      return;
+    }
     requestAnimationFrame(panelMetrics);
   }
 
@@ -7341,7 +7402,8 @@
     syncTriggerUploadIndicator();
     activeTrigger?.setAttribute('aria-expanded', 'true');
     renderPanelView();
-    repositionPanel();
+    if (isWtvSite()) positionWtvPanel(panel);
+    else repositionPanel();
     if (loadConfig().gistToken && loadConfig().gistId) {
       syncNow().catch(error => setStatus(`Синхронизация коллекции: ${formatGitHubSyncError(error)}`, 'error'));
     }
