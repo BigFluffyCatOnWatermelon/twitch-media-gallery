@@ -2744,7 +2744,8 @@
         if (value.startsWith('saved:')) {
           const saved = savedExportPresets[Number(value.slice(6))];
           if (saved) applyEditorExportPreset(value, saved.settings);
-        } else if (value !== 'custom') applyEditorExportPreset(value);
+        } else if (value === 'custom') readEditorExportControls();
+        else applyEditorExportPreset(value);
       });
       $('[data-export-save-preset]').addEventListener('click', () => {
         readEditorExportControls();
@@ -2800,7 +2801,7 @@
       let playheadDrag = null, seekTimer = 0, pendingSeekTime = null, playheadRaf = 0, isTimelineScrubbing = false;
       let userChangedTrim = false, videoReverseTimer = 0, videoPingPongDirection = 1;
       let videoReverseFrames = [], videoReverseCacheCanvas = null, videoReverseCacheContext = null;
-      let videoReverseCapturePending = false, videoReverseCacheLastTime = -Infinity, videoReverseDisplayTime = null;
+      let videoReverseCapturePending = false, videoReverseCacheLastTime = -Infinity, videoReverseDisplayTime = null, videoReverseCacheGeneration = 0;
       let videoSeekInFlight = false, pendingVideoSeekTarget = null, pendingVideoSeekFast = false;
       let videoSeekTimeout = 0, videoSeekDispatchTimer = 0, videoSeekHandler = null;
       let animationDecoder = null, animationFrameDurations = [], animationFrameStarts = [];
@@ -3430,12 +3431,14 @@
         updateTimelineControls(value);
       };
       const stopVideoPreview = (atEnd = false) => {
+        const reversePosition = videoReverseActive && Number.isFinite(videoReverseDisplayTime) ? videoReverseDisplayTime : null;
         cancelVideoReverse();
         try { media.pause(); } catch (_) {}
+        if (reversePosition !== null) { try { media.currentTime = reversePosition; } catch (_) {} }
         if (playheadRaf) window.cancelAnimationFrame(playheadRaf);
         playheadRaf = 0;
         const safeEnd = Math.max(start, end - getVideoEndGuard());
-        const value = atEnd ? end : Math.max(0, Math.min(duration || 0, Number(media.currentTime) || 0));
+        const value = atEnd ? end : reversePosition !== null ? reversePosition : Math.max(0, Math.min(duration || 0, Number(media.currentTime) || 0));
         if (atEnd && duration > 0) { try { media.currentTime = safeEnd; } catch (_) {} }
         playButton.textContent = '▶';
         playButton.setAttribute('aria-label', 'Воспроизвести');
@@ -3518,6 +3521,7 @@
         return Math.max(0.05, Math.min(0.24, sourceFrameStep * 1.25));
       };
       const clearVideoReverseCache = () => {
+        videoReverseCacheGeneration++;
         for (const frame of videoReverseFrames) { try { frame.bitmap.close(); } catch (_) {} }
         videoReverseFrames.length = 0;
         videoReverseCacheLastTime = -Infinity;
@@ -3548,8 +3552,9 @@
           videoReverseCacheContext.drawImage(media, 0, 0, frameWidth, frameHeight);
           videoReverseCapturePending = true;
           const snapshotTime = time;
+          const cacheGeneration = videoReverseCacheGeneration;
           createImageBitmap(videoReverseCacheCanvas).then(bitmap => {
-            if (done || !loop || videoReverseFrames.length >= 180) { try { bitmap.close(); } catch (_) {} return; }
+            if (done || !loop || cacheGeneration !== videoReverseCacheGeneration || videoReverseFrames.length >= 180) { try { bitmap.close(); } catch (_) {} return; }
             videoReverseFrames.push({ time: snapshotTime, bitmap });
             videoReverseCacheLastTime = snapshotTime;
           }).catch(error => { logDebug('Reverse preview frame cache failed', error?.message || error); })
