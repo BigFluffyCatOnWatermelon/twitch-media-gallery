@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.88
+// @version      5.9.89
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -39,7 +39,7 @@
 
   // Shared fallback for preview callbacks that may outlive the editor's local scope.
   let videoReverseDisplayTime = null;
-  const APP_VERSION = '5.9.88';
+  const APP_VERSION = '5.9.89';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -3235,11 +3235,7 @@
           if (outputAnimationDurationMs > 0 && retainedFrameBytes.length) {
             outputFps = retainedFrameBytes.length / (outputAnimationDurationMs / 1000);
           }
-          if (!editorExportState.compressEnabled && estimatedBytes > file.size) {
-            // The no-compression crop path retries re-encoded boundary frames
-            // at lower quality to stay near the source size when possible.
-            estimatedBytes = Math.min(estimatedBytes, file.size);
-          }
+          if (!retainedFrameBytes.length) estimatedBytes = 0;
         } else {
           const selectedRatio = duration > 0 ? selectedDuration / duration : 1;
           const cropRatio = (outputWidth * outputHeight) / Math.max(1, width * height);
@@ -3250,7 +3246,8 @@
               Number(editorExportState.compression.videoBitrateKbps) > 0 && outputDuration > 0) {
             const videoRate = Number(editorExportState.compression.videoBitrateKbps) || 0;
             const audioRate = Number(editorExportState.compression.audioBitrateKbps) || 0;
-            estimatedBytes = outputDuration * (videoRate + audioRate) * 125 * 1.04;
+            estimatedBytes = outputDuration * (loop ? 2 : 1) *
+              (videoRate + audioRate) * 125 * 1.04;
           } else {
             const formatFactor = outputFormat === 'gif' ? 1.5
               : outputFormat === 'webp' ? 0.9
