@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.92
+// @version      5.9.93
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -39,7 +39,7 @@
 
   // Shared fallback for preview callbacks that may outlive the editor's local scope.
   let videoReverseDisplayTime = null;
-  const APP_VERSION = '5.9.92';
+  const APP_VERSION = '5.9.93';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -5923,22 +5923,70 @@
     return true;
   }
 
+
+  function getWtvChatBounds(input = null) {
+    const anchor = findWtvChatOptionsButton(input);
+    const origin = anchor || (input?.isConnected ? input : null);
+    const vw = Math.max(1, document.documentElement.clientWidth || innerWidth);
+    const maxWidth = Math.min(900, Math.max(360, vw * 0.72));
+
+    if (origin) {
+      // Prefer the nearest ancestor that contains the complete chat column.
+      // The options button sits in the chat header; a containing ancestor with
+      // substantial height and a bounded width is normally the chat itself.
+      let node = origin;
+      for (let depth = 0; node && node !== document.body && node !== document.documentElement && depth < 14; depth++, node = node.parentElement) {
+        if (!node.isConnected || node.closest('#twgif-panel')) continue;
+        const rect = node.getBoundingClientRect();
+        if (rect.width < 250 || rect.width > maxWidth || rect.height < 220) continue;
+        const style = getComputedStyle(node);
+        if (style.display === 'none' || style.visibility === 'hidden') continue;
+        return {
+          left: Math.max(0, rect.left),
+          right: Math.min(vw, rect.right),
+          top: Math.max(0, rect.top),
+          bottom: Math.min(Math.max(1, document.documentElement.clientHeight || innerHeight), rect.bottom),
+          width: Math.min(vw, rect.right) - Math.max(0, rect.left),
+          height: rect.height
+        };
+      }
+    }
+
+    // Last resort: use a compact chat-sized panel rather than spanning the page.
+    const width = Math.min(420, Math.max(280, vw - 16));
+    return {
+      left: Math.max(8, vw - width - 8),
+      right: vw - 8,
+      top: 8,
+      bottom: Math.max(8, document.documentElement.clientHeight || innerHeight),
+      width,
+      height: Math.max(220, (document.documentElement.clientHeight || innerHeight) - 16)
+    };
+  }
+
   function positionWtvPanel(panel) {
     if (!panel || !isWtvSite()) return;
+    const bounds = getWtvChatBounds(getChatInput());
     const vw = Math.max(1, document.documentElement.clientWidth || innerWidth);
     const vh = Math.max(1, document.documentElement.clientHeight || innerHeight);
-    const width = Math.max(280, Math.min(500, vw - 16));
-    const height = Math.max(220, Math.min(560, vh - 16));
+    const width = Math.max(260, Math.min(760, bounds.width - 16, vw - 16));
+    const height = Math.max(220, Math.min(560, bounds.height - 16, vh - 16));
+    const left = Math.max(8, Math.min(vw - width - 8, bounds.right - width - 8));
+    const top = Math.max(8, Math.min(vh - height - 8, bounds.top + 8));
+
     panel.style.setProperty('position', 'fixed', 'important');
-    panel.style.setProperty('left', Math.max(8, vw - width - 8) + 'px', 'important');
-    panel.style.setProperty('top', '8px', 'important');
+    panel.style.setProperty('left', Math.round(left) + 'px', 'important');
+    panel.style.setProperty('top', Math.round(top) + 'px', 'important');
     panel.style.setProperty('right', 'auto', 'important');
     panel.style.setProperty('bottom', 'auto', 'important');
-    panel.style.setProperty('width', width + 'px', 'important');
-    panel.style.setProperty('height', height + 'px', 'important');
+    panel.style.setProperty('width', Math.round(width) + 'px', 'important');
+    panel.style.setProperty('height', Math.round(height) + 'px', 'important');
+    panel.style.setProperty('min-width', Math.min(260, width) + 'px', 'important');
     panel.style.setProperty('min-height', Math.min(220, height) + 'px', 'important');
-    panel.style.setProperty('max-height', height + 'px', 'important');
-    panel.style.setProperty('display', 'flex', 'important');
+    panel.style.setProperty('max-width', Math.round(width) + 'px', 'important');
+    panel.style.setProperty('max-height', Math.round(height) + 'px', 'important');
+    // Do not set inline display here: #twgif-panel[hidden] must be able to hide it.
+    panel.style.removeProperty('display');
     panel.style.setProperty('visibility', 'visible', 'important');
     panel.style.setProperty('opacity', '1', 'important');
     panel.style.setProperty('z-index', '2147483000', 'important');
@@ -6550,7 +6598,17 @@
     updateStatusIndicator();
     syncProgressIndicatorView();
 
-    panel.querySelector('#twgif-close').addEventListener('click', closePanel);
+    const closeButton = panel.querySelector('#twgif-close');
+    closeButton.addEventListener('pointerdown', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      closePanel();
+    });
+    closeButton.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      closePanel();
+    });
     panel.querySelector('#twgif-media-editor-open').addEventListener('click', event => {
       event.preventDefault();
       event.stopPropagation();
@@ -7414,6 +7472,9 @@
     const panel = document.getElementById('twgif-panel');
     if (panel) {
       savePanelSize(panel);
+      // Earlier w.tv builds forced display:flex!important inline, which overrode
+      // the [hidden] stylesheet. Clear it before hiding so every close path works.
+      panel.style.removeProperty('display');
       panel.hidden = true;
     }
     syncTriggerUploadIndicator();
@@ -8488,7 +8549,10 @@
     const panel = document.getElementById('twgif-panel');
     const trigger = document.getElementById('twgif-trigger');
     if (!panel || panel.hidden) return;
-    if (!panel.contains(event.target) && !trigger?.contains(event.target)) closePanel();
+    const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+    const insidePanel = panel.contains(event.target) || path.includes(panel);
+    const onTrigger = trigger && (trigger.contains(event.target) || path.includes(trigger));
+    if (!insidePanel && !onTrigger) closePanel();
   }, true);
 
   document.addEventListener('pointermove', updateHeldPreview, true);
