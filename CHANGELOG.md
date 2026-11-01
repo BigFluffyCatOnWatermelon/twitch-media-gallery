@@ -1,5 +1,19 @@
 # Changelog
 
+## [5.9.94] — 2026-11-01
+
+### Added
+- Added a refresh button to the gallery toolbar. It refreshes the local gallery view and, when GitHub Gist sync is configured, runs a sync to fetch and merge collection changes.
+- Deleting media now moves the complete entry into a separate archive instead of discarding it.
+- Added an archive shortcut directly below “About the app” in general settings.
+- Added a gallery-style archive view with a restore control on every archived media card.
+- Included archived media in JSON backups/imports and Gist synchronization. Restoring an item writes a newer update timestamp so stale remote archive copies do not undo the restore.
+- Bumped the userscript version to 5.9.94 and the stored collection schema to 24.
+
+### Verification
+- Full userscript JavaScript syntax check passed.
+- UI interactions, browser rendering, and cross-device Gist behavior still require a live Tampermonkey test.
+
 ## [5.9.90] — 2026-10-30
 
 ### Fixed
