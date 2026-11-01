@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.93
+// @version      5.9.94
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -39,7 +39,7 @@
 
   // Shared fallback for preview callbacks that may outlive the editor's local scope.
   let videoReverseDisplayTime = null;
-  const APP_VERSION = '5.9.93';
+  const APP_VERSION = '5.9.94';
   const VERSION = 23;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -75,6 +75,7 @@
   // Independent from galleryTab (All / HD / 7TV / Favorites).
   let galleryMediaType = 'all'; // 'all' | 'photos' | 'videos'
   let galleryPage = 0;
+  let archivePage = 0;
   let mediaLoadRun = 0;
   let chatMediaObserver = null;
   let chatMediaScanQueued = false;
@@ -139,7 +140,7 @@
   let localFfmpegRequestId = 0;
   const localFfmpegPending = new Map();
 
-  const EMPTY_DATA = () => ({ version: VERSION, items: [], deleted: {} });
+  const EMPTY_DATA = () => ({ version: VERSION, items: [], deleted: {}, archive: [] });
   function isCompressionEnabled() {
     try { return GM_getValue(COMPRESS_ENABLED_KEY, true) !== false; }
     catch (_) { return true; }
@@ -202,6 +203,9 @@
   const SVG_SETTINGS = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33h-.08a1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82v-.08a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1v-.08a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.08a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>';
   const SVG_CLOSE = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>';
   const SVG_SEARCH = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m16 16 4.2 4.2"></path></svg>';
+  const SVG_REFRESH = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5"></path><path d="M4.5 16.5A8 8 0 0 0 19 12a7.9 7.9 0 0 0-2.2-5.5L20 12"></path><path d="M4 17v-5h5"></path><path d="M4.9 12A8 8 0 0 1 19.5 7.5"></path></svg>';
+  const SVG_ARCHIVE = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h18v4H3z"></path><path d="M5 8v12h14V8M10 12h4"></path></svg>';
+  const SVG_RESTORE = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11a9 9 0 1 0 2.6-6.4L3 7"></path><path d="M3 3v4h4"></path><path d="M12 7v5l3 2"></path></svg>';
 
   function parseJson(value, fallback) {
     if (typeof value !== 'string') return value == null ? fallback : value;
@@ -309,7 +313,34 @@
         .map(([id, time]) => [id, Number(time)]))
       : {};
 
-    if (data.items.length !== rawItems.length || needsMediaMetadataMigration) {
+    const rawArchive = Array.isArray(raw.archive) ? raw.archive : [];
+    const archivedById = new Map();
+    for (const item of rawArchive) {
+      if (!item || typeof item.id !== 'string' || typeof item.url !== 'string') continue;
+      if (!PERSISTED_MEDIA_KINDS.has(String(item.mediaKind || '').toLowerCase()) ||
+          !Object.prototype.hasOwnProperty.call(item, 'mediaKindCheckedAt')) {
+        needsMediaMetadataMigration = true;
+      }
+      const addedAt = Number(item.addedAt) || Number(item.updatedAt) || 0;
+      const updatedAt = Number(item.updatedAt) || addedAt;
+      const archived = {
+        id: String(item.id), url: String(item.url), previewUrl: String(item.previewUrl || item.url),
+        name: String(item.name || 'Медиафайл').slice(0, 120), type: String(item.type || 'image'),
+        sourceKey: String(item.sourceKey || ''), favorite: Boolean(item.favorite), hd: Boolean(item.hd),
+        size: Math.max(0, Math.floor(Number(item.size) || 0)), addedAt, updatedAt,
+        mediaKind: normalizeStoredMediaKind(item),
+        mediaKindCheckedAt: Math.max(0, Math.floor(Number(item.mediaKindCheckedAt) || 0)),
+        deletedAt: Math.max(0, Math.floor(Number(item.deletedAt) || Number(data.deleted[item.id]) || 0))
+      };
+      const previous = archivedById.get(archived.id);
+      if (!previous || archived.deletedAt > previous.deletedAt) archivedById.set(archived.id, archived);
+    }
+    data.archive = [...archivedById.values()].sort((a, b) => b.deletedAt - a.deletedAt);
+
+    if (data.items.length !== rawItems.length ||
+        data.archive.length !== rawArchive.length ||
+        !Array.isArray(raw.archive) ||
+        needsMediaMetadataMigration) {
       GM_setValue(DATA_KEY, sortData(data));
       if (data.items.length !== rawItems.length) {
         logDebug('Removed duplicate local gallery items', { before: rawItems.length, after: data.items.length });
@@ -424,9 +455,18 @@
           ? item
           : { ...item, mediaKind, mediaKindCheckedAt };
       }) : [],
-      deleted: data.deleted && typeof data.deleted === 'object' ? { ...data.deleted } : {}
+      deleted: data.deleted && typeof data.deleted === 'object' ? { ...data.deleted } : {},
+      archive: Array.isArray(data.archive) ? data.archive.map(item => {
+        if (!item || typeof item !== 'object') return item;
+        return {
+          ...item, mediaKind: normalizeStoredMediaKind(item),
+          mediaKindCheckedAt: Math.max(0, Math.floor(Number(item.mediaKindCheckedAt) || 0)),
+          deletedAt: Math.max(0, Math.floor(Number(item.deletedAt) || 0))
+        };
+      }) : []
     };
     normalized.items.sort(compareGalleryItems);
+    normalized.archive.sort((a, b) => (Number(b.deletedAt) || 0) - (Number(a.deletedAt) || 0));
     normalized.deleted = Object.fromEntries(Object.entries(normalized.deleted).sort(([a], [b]) => a.localeCompare(b)));
     return normalized;
   }
@@ -488,7 +528,25 @@
       if (!previous || (Number(item.updatedAt) || 0) > (Number(previous.updatedAt) || 0)) deduped.set(key, item);
     }
     const items = [...deduped.values()];
-    return sortData({ version: VERSION, items, deleted });
+    const archivedById = new Map();
+    for (const item of [...(left.archive || []), ...(right.archive || [])]) {
+      if (!item || typeof item.id !== 'string' || typeof item.url !== 'string') continue;
+      const previous = archivedById.get(item.id);
+      const itemDeletedAt = Math.max(0, Number(item.deletedAt) || Number(deleted[item.id]) || 0);
+      const previousDeletedAt = previous ? Math.max(0, Number(previous.deletedAt) || 0) : -1;
+      if (!previous || itemDeletedAt > previousDeletedAt ||
+          (itemDeletedAt === previousDeletedAt && (Number(item.updatedAt) || 0) > (Number(previous.updatedAt) || 0))) {
+        archivedById.set(item.id, { ...item, deletedAt: itemDeletedAt });
+      }
+    }
+    const archive = [...archivedById.values()].filter(item => {
+      const deletedAt = Math.max(Number(deleted[item.id]) || 0, Number(item.deletedAt) || 0);
+      const latestRecord = byId.get(item.id);
+      return deletedAt > 0 && (!latestRecord || deletedAt >= (Number(latestRecord.updatedAt) || 0));
+    }).map(item => ({
+      ...item, deletedAt: Math.max(Number(deleted[item.id]) || 0, Number(item.deletedAt) || 0)
+    }));
+    return sortData({ version: VERSION, items, deleted, archive });
   }
 
   function renderDebugLog(target = document.getElementById('twgif-debug-log')) {
@@ -4939,7 +4997,10 @@
     // Keeping the existing image/video nodes alive avoids needless reloads after tab inactivity.
     if (changed) {
       GM_setValue(DATA_KEY, normalized);
-      if (isPanelOpen() && panelView === 'gallery') renderGalleryItems();
+      if (isPanelOpen()) {
+        if (panelView === 'gallery') renderGalleryItems();
+        else if (panelView === 'archive') renderArchiveItems();
+      }
     }
 
     if (doSync && changed) {
@@ -5818,8 +5879,10 @@
     const data = loadData();
     const item = data.items.find(entry => entry.id === id);
     if (!item) return;
+    const deletedAt = Math.max(Date.now(), (Number(item.updatedAt) || 0) + 1);
     data.items = data.items.filter(entry => entry.id !== id);
-    data.deleted[id] = Date.now();
+    data.deleted[id] = deletedAt;
+    data.archive = [...(data.archive || []).filter(entry => entry.id !== id), { ...item, deletedAt }];
     const cachedCard = mediaCardCache.get(id);
     if (cachedCard) {
       if (galleryResizeObserver) galleryResizeObserver.unobserve(cachedCard);
@@ -5827,7 +5890,27 @@
     }
     mediaCardCache.delete(id);
     persistData(data);
-    setStatus('Удалено из галереи.', 'success');
+    setStatus('Медиа перемещено в архив.', 'success');
+  }
+
+  function restoreArchivedItem(id) {
+    const data = loadData();
+    const archived = (data.archive || []).find(entry => entry.id === id);
+    if (!archived) return;
+    const duplicate = data.items.find(entry => entry.id !== id &&
+      (entry.url === archived.url || (archived.sourceKey && entry.sourceKey === archived.sourceKey)));
+    if (duplicate) {
+      setStatus('Такое медиа уже есть в галерее. Удали дубликат перед восстановлением.', 'warning', true);
+      return;
+    }
+    const deletedAt = Math.max(Number(data.deleted[id]) || 0, Number(archived.deletedAt) || 0);
+    const restored = { ...archived, updatedAt: Math.max(Date.now(), deletedAt + 1) };
+    delete restored.deletedAt;
+    data.items = [...data.items.filter(entry => entry.id !== id), restored];
+    data.archive = data.archive.filter(entry => entry.id !== id);
+    data.deleted[id] = deletedAt;
+    persistData(data);
+    setStatus('Медиа восстановлено в галерею.', 'success');
   }
 
   // ----- Multi-platform chat composer integration -----
@@ -6363,6 +6446,10 @@
         .map(item => ({ ...item, favorite: Boolean(item.favorite) }))
       : [];
     clean.deleted = raw.deleted && typeof raw.deleted === 'object' ? raw.deleted : {};
+    clean.archive = Array.isArray(raw.archive)
+      ? raw.archive.filter(x => x && typeof x.id === 'string' && typeof x.url === 'string')
+        .map(item => ({ ...item, deletedAt: Math.max(0, Number(item.deletedAt) || Number(clean.deleted[item.id]) || 0) }))
+      : [];
     return clean;
   }
 
@@ -6491,6 +6578,12 @@
       .twgif-small-btn:hover{background:#34343b;border-color:#65656e}.twgif-small-btn:disabled{opacity:.55;cursor:wait}
       .twgif-primary{background:#9147ff;border-color:#9147ff;color:#fff}.twgif-primary:hover{background:#772ce8;border-color:#772ce8}
       .twgif-toolbar-icon{width:30px;min-width:30px;height:30px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:19px}
+      .twgif-refresh-button svg{display:block}.twgif-refresh-button.twgif-refreshing svg{animation:twgif-refresh-spin .8s linear infinite}
+      @keyframes twgif-refresh-spin{to{transform:rotate(360deg)}}
+      .twgif-archive-open{display:inline-flex;align-items:center;justify-content:flex-start;gap:8px;width:100%;margin-top:8px}
+      .twgif-archive-open svg{display:block;flex:0 0 16px}
+      .twgif-archive-count{margin-left:auto;font-size:10px;opacity:.7}
+      .twgif-archive-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px;color:#a8a8b3;font-size:10px}
       .twgif-compress-toggle{display:inline-flex;align-items:center;justify-content:center;gap:3px;flex:0 0 auto;color:#bcbcc6;font-size:10px;white-space:nowrap;cursor:pointer;user-select:none}
       .twgif-compress-toggle input{width:12px;height:12px;margin:0;accent-color:#9147ff;cursor:pointer}
       .twgif-drop{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 7px;margin-bottom:8px;border:1px dashed #41414b;border-radius:7px;color:#a8a8b3;font-size:10px}
@@ -6509,6 +6602,8 @@
       .twgif-media-error{min-height:44px;padding:10px;text-align:center;color:#9c9ca6;font-size:10px}
       .twgif-delete{position:absolute;z-index:3;top:-1px;right:-1px;display:flex;align-items:center;justify-content:center;width:17px;height:17px;padding:0;border:1px solid #ffffff26;border-radius:0 5px 0 6px;background:#18181beF;color:#f2f2f2;opacity:0;pointer-events:none;transition:opacity .13s,background .13s,transform .13s;cursor:pointer}
       .twgif-delete svg{width:10px;height:10px;display:block;pointer-events:none}.twgif-card:hover .twgif-delete,.twgif-card:focus-within .twgif-delete{opacity:1;pointer-events:auto}.twgif-delete:hover{background:#b42335;border-color:#ef4444;transform:scale(1.08)}
+      .twgif-restore{position:absolute;z-index:3;top:-1px;right:-1px;display:flex;align-items:center;justify-content:center;width:23px;height:21px;padding:0;border:1px solid #ffffff26;border-radius:0 5px 0 6px;background:#18181bef;color:#e7e7ed;opacity:0;pointer-events:none;transition:opacity .13s,background .13s,transform .13s;cursor:pointer}
+      .twgif-restore svg{display:block;pointer-events:none}.twgif-card:hover .twgif-restore,.twgif-card:focus-within .twgif-restore{opacity:1;pointer-events:auto}.twgif-restore:hover{background:#185c39;border-color:#35a66a;transform:scale(1.08)}
       .twgif-favorite{position:absolute;z-index:4;left:4px;bottom:4px;width:23px;height:23px;padding:0;display:flex;align-items:center;justify-content:center;border:1px solid #ffffff28;border-radius:6px;background:#18181be8;color:#eeeef2;opacity:.78;cursor:pointer;transition:opacity .12s,background .12s,color .12s,transform .12s}
       .twgif-favorite svg{width:14px;height:14px;display:block;pointer-events:none}
       .twgif-favorite:hover{opacity:1;background:#3c202c;color:#ff8ca6;transform:scale(1.06)}
@@ -7493,18 +7588,21 @@
     const statusIndicator = panel.querySelector('#twgif-status-indicator');
 
     const inSettings = panelView === 'settings';
-    heading.textContent = inSettings ? 'Настройки' : 'GIF и картинки';
-    settingsBack.hidden = !inSettings;
+    const inArchive = panelView === 'archive';
+    heading.textContent = inSettings ? 'Настройки' : inArchive ? 'Архив' : 'GIF и картинки';
+    settingsBack.hidden = !inSettings && !inArchive;
     settingsTabs.hidden = !inSettings;
-    settingsOpen.hidden = inSettings;
-    editorOpen.hidden = inSettings;
-    statusIndicator.hidden = inSettings;
+    settingsOpen.hidden = inSettings || inArchive;
+    editorOpen.hidden = inSettings || inArchive;
+    statusIndicator.hidden = inSettings || inArchive;
     settingsTabs.querySelectorAll('.twgif-tab').forEach(button => {
       button.setAttribute('aria-selected', String(button.dataset.tab === settingsTab));
     });
 
     if (inSettings) {
       renderSettings();
+    } else if (inArchive) {
+      renderArchive();
     } else {
       const existingGallery = document.querySelector('#twgif-panel-body #twgif-masonry');
       if (existingGallery) {
@@ -7527,6 +7625,7 @@
       <div class="twgif-toolbar">
         <input id="twgif-url-input" class="twgif-input twgif-url-input" type="url" placeholder="Ссылка или несколько ссылок через пробел…" autocomplete="url" aria-label="Ссылка для добавления">
         <button id="twgif-add-url" class="twgif-small-btn twgif-primary twgif-toolbar-icon" type="button" title="Добавить ссылку" aria-label="Добавить ссылку">+</button>
+        <button id="twgif-refresh-gallery" class="twgif-small-btn twgif-toolbar-icon twgif-refresh-button" type="button" title="Обновить галерею и получить изменения из Gist" aria-label="Обновить галерею">${SVG_REFRESH}</button>
         <label class="twgif-compress-toggle" title="Отключить уменьшение разрешения и ограничение качества" for="twgif-compress-toggle"><input id="twgif-compress-toggle" type="checkbox" ${isCompressionEnabled() ? 'checked' : ''}>сжимать</label>
       </div>
       <div class="twgif-media-filter">
@@ -7547,6 +7646,7 @@
 
     const urlInput = body.querySelector('#twgif-url-input');
     const addButton = body.querySelector('#twgif-add-url');
+    const refreshButton = body.querySelector('#twgif-refresh-gallery');
     const compressToggle = body.querySelector('#twgif-compress-toggle');
     compressToggle.addEventListener('change', event => {
       try { GM_setValue(COMPRESS_ENABLED_KEY, Boolean(event.currentTarget.checked)); }
@@ -7604,6 +7704,23 @@
       }
     };
     addButton.addEventListener('click', addLink);
+    refreshButton.addEventListener('click', async () => {
+      if (refreshButton.disabled) return;
+      refreshButton.disabled = true;
+      refreshButton.classList.add('twgif-refreshing');
+      try {
+        const config = loadConfig();
+        if (config.gistToken && config.gistId) await syncNow();
+        else renderGalleryItems();
+        const count = loadData().items.length;
+        setStatus(`Галерея обновлена · ${count} медиа.`, 'success');
+      } catch (error) {
+        setStatus(`Не удалось обновить галерею: ${formatGitHubSyncError(error)}`, 'error', true);
+      } finally {
+        refreshButton.disabled = false;
+        refreshButton.classList.remove('twgif-refreshing');
+      }
+    });
 
     body.querySelectorAll('.twgif-gallery-tab').forEach(button => {
       button.addEventListener('click', () => {
@@ -7659,9 +7776,10 @@
     renderGalleryItems();
   }
 
-  function makeMediaCard(item) {
+  function makeMediaCard(item, options = {}) {
+    const archiveCard = Boolean(options.archive);
     const card = document.createElement('div');
-    card.className = 'twgif-card';
+    card.className = archiveCard ? 'twgif-card twgif-archive-card' : 'twgif-card';
     card.draggable = false;
     card.tabIndex = 0;
     card.setAttribute('role', 'button');
@@ -7766,32 +7884,46 @@
     if (durationBadge) frame.appendChild(durationBadge);
     card.appendChild(frame);
 
-    const favorite = document.createElement('button');
-    favorite.type = 'button';
-    favorite.className = 'twgif-favorite';
-    favorite.title = item.favorite ? 'Убрать из избранного' : 'Добавить в избранное';
-    favorite.setAttribute('aria-label', favorite.title);
-    favorite.setAttribute('aria-pressed', String(Boolean(item.favorite)));
-    favorite.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21l7.8-7.5 1.1-1.1a5.5 5.5 0 0 0-.1-7.8Z"/></svg>';
-    favorite.addEventListener('click', event => {
-      event.preventDefault();
-      event.stopPropagation();
-      toggleFavorite(card.__twgifItem.id);
-    });
-    card.appendChild(favorite);
-
-    const del = document.createElement('button');
-    del.type = 'button';
-    del.className = 'twgif-delete';
-    del.title = 'Удалить из галереи';
-    del.setAttribute('aria-label', 'Удалить медиа');
-    del.innerHTML = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m3 3 6 6M9 3 3 9"/></svg>';
-    del.addEventListener('click', event => { event.stopPropagation(); deleteItem(card.__twgifItem.id); });
-    card.appendChild(del);
+    if (!archiveCard) {
+      const favorite = document.createElement('button');
+      favorite.type = 'button';
+      favorite.className = 'twgif-favorite';
+      favorite.title = item.favorite ? 'Убрать из избранного' : 'Добавить в избранное';
+      favorite.setAttribute('aria-label', favorite.title);
+      favorite.setAttribute('aria-pressed', String(Boolean(item.favorite)));
+      favorite.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21l7.8-7.5 1.1-1.1a5.5 5.5 0 0 0-.1-7.8Z"/></svg>';
+      favorite.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleFavorite(card.__twgifItem.id);
+      });
+      card.appendChild(favorite);
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'twgif-delete';
+      del.title = 'Переместить в архив';
+      del.setAttribute('aria-label', 'Переместить медиа в архив');
+      del.innerHTML = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m3 3 6 6M9 3 3 9"/></svg>';
+      del.addEventListener('click', event => { event.stopPropagation(); deleteItem(card.__twgifItem.id); });
+      card.appendChild(del);
+    } else {
+      const restore = document.createElement('button');
+      restore.type = 'button';
+      restore.className = 'twgif-restore';
+      restore.title = 'Восстановить в галерею';
+      restore.setAttribute('aria-label', 'Восстановить медиа в галерею');
+      restore.innerHTML = SVG_RESTORE;
+      restore.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        restoreArchivedItem(card.__twgifItem.id);
+      });
+      card.appendChild(restore);
+    }
 
     const beginHold = event => {
       if (event.button !== undefined && event.button !== 0) return;
-      if (event.target.closest('.twgif-delete, .twgif-favorite')) return;
+      if (event.target.closest('.twgif-delete, .twgif-favorite, .twgif-restore')) return;
       if (holdPointerActive) return;
 
       holdPointerActive = true;
@@ -7821,13 +7953,13 @@
         suppressMediaClickUntil = 0;
         return;
       }
-      if (event.target.closest('.twgif-delete, .twgif-favorite')) return;
+      if (event.target.closest('.twgif-delete, .twgif-favorite, .twgif-restore')) return;
       insertLinkIntoChat(card.__twgifItem.url);
     };
 
     card.addEventListener('click', insert);
     card.addEventListener('keydown', event => {
-      if (event.target.closest('.twgif-delete, .twgif-favorite')) return;
+      if (event.target.closest('.twgif-delete, .twgif-favorite, .twgif-restore')) return;
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
         insertLinkIntoChat(card.__twgifItem.url);
@@ -8264,6 +8396,74 @@
     loadVisibleMediaSequentially(visible.map(item => mediaCardCache.get(item.id)));
   }
 
+  function renderArchive() {
+    const body = document.getElementById('twgif-panel-body');
+    if (!body) return;
+    body.innerHTML = `
+      <div class="twgif-archive-toolbar">
+        <span>Удалённые медиа</span>
+        <span id="twgif-archive-count"></span>
+      </div>
+      <div id="twgif-archive-masonry" class="twgif-masonry"></div>
+      <div id="twgif-archive-empty" class="twgif-empty" hidden></div>
+      <div id="twgif-archive-pagination" class="twgif-pagination" hidden>
+        <button id="twgif-archive-page-prev" class="twgif-small-btn" type="button">‹</button>
+        <span id="twgif-archive-page-label" class="twgif-page-label"></span>
+        <button id="twgif-archive-page-next" class="twgif-small-btn" type="button">›</button>
+      </div>`;
+    renderArchiveItems();
+  }
+
+  function renderArchiveItems() {
+    const body = document.getElementById('twgif-panel-body');
+    if (!body || panelView !== 'archive') return;
+    const masonry = body.querySelector('#twgif-archive-masonry');
+    const empty = body.querySelector('#twgif-archive-empty');
+    const pagination = body.querySelector('#twgif-archive-pagination');
+    const pageLabel = body.querySelector('#twgif-archive-page-label');
+    const prev = body.querySelector('#twgif-archive-page-prev');
+    const next = body.querySelector('#twgif-archive-page-next');
+    if (!masonry || !empty || !pagination) return;
+    const config = loadConfig();
+    masonry.classList.toggle('twgif-grid-mode', config.tileView === 'grid');
+    const gap = 6;
+    masonry.style.setProperty('--twgif-columns', String(config.columns));
+    masonry.style.setProperty('--twgif-thumb-height', '90px');
+    masonry.style.columnGap = `${gap}px`;
+    masonry.style.rowGap = `${gap}px`;
+    masonry.style.gap = `${gap}px`;
+    masonry.style.gridAutoRows = config.tileView === 'grid' ? 'auto' : '0.25px';
+    const data = loadData();
+    const items = (data.archive || []).slice().sort((a, b) =>
+      (Number(b.deletedAt) || 0) - (Number(a.deletedAt) || 0));
+    const count = body.querySelector('#twgif-archive-count');
+    if (count) count.textContent = `${items.length} шт.`;
+    const pageSize = config.pageSize;
+    const pages = Math.max(1, Math.ceil(items.length / pageSize));
+    archivePage = Math.max(0, Math.min(archivePage, pages - 1));
+    const visible = items.slice(archivePage * pageSize, (archivePage + 1) * pageSize);
+    const fragment = document.createDocumentFragment();
+    if (config.tileView !== 'grid') ensureGalleryResizeObserver();
+    const cards = visible.map(item => {
+      const card = makeMediaCard(item, { archive: true });
+      if (config.tileView === 'grid') card.style.gridRowEnd = 'auto';
+      else if (galleryResizeObserver) galleryResizeObserver.observe(card);
+      fragment.appendChild(card);
+      return card;
+    });
+    masonry.replaceChildren(fragment);
+    masonry.hidden = visible.length === 0;
+    empty.hidden = visible.length > 0;
+    empty.textContent = 'Архив пуст. Удалённые из галереи медиа будут храниться здесь.';
+    pagination.hidden = items.length <= pageSize;
+    pageLabel.textContent = `Стр. ${archivePage + 1} / ${pages}`;
+    prev.disabled = archivePage === 0;
+    next.disabled = archivePage >= pages - 1;
+    prev.onclick = () => { if (archivePage > 0) { archivePage--; renderArchiveItems(); } };
+    next.onclick = () => { if (archivePage < pages - 1) { archivePage++; renderArchiveItems(); } };
+    loadVisibleMediaSequentially(cards);
+  }
+
   function renderSettings() {
     const body = document.getElementById('twgif-panel-body');
     if (!body) return;
@@ -8303,6 +8503,9 @@
           <div class="twgif-section">
             <div class="twgif-section-title">О приложении</div>
             <div class="twgif-help">Версия приложения: <strong>${APP_VERSION}</strong></div>
+            <button id="twgif-open-archive" class="twgif-small-btn twgif-archive-open" type="button" title="Открыть архив удалённых медиа">
+              ${SVG_ARCHIVE}<span>Архив удалённых медиа</span><span class="twgif-archive-count">${loadData().archive.length}</span>
+            </button>
           </div>
         </div>`;
     } else if (settingsTab === 'convert') {
@@ -8391,6 +8594,11 @@
     const $ = selector => body.querySelector(selector);
 
     if (settingsTab === 'general') {
+      $('#twgif-open-archive').addEventListener('click', () => {
+        archivePage = 0;
+        panelView = 'archive';
+        renderPanelView();
+      });
       $('#twgif-save-gallery-settings').addEventListener('click', () => {
         saveConfig({
           columns: $('#twgif-columns').value,
@@ -8741,8 +8949,9 @@
     if (typeof GM_addValueChangeListener === 'function') {
       try {
         GM_addValueChangeListener(DATA_KEY, (_name, _oldValue, _newValue, remote) => {
-          if (!remote || !isPanelOpen() || panelView !== 'gallery') return;
-          renderGalleryItems();
+          if (!remote || !isPanelOpen()) return;
+          if (panelView === 'gallery') renderGalleryItems();
+          else if (panelView === 'archive') renderArchiveItems();
         });
       } catch (error) {
         logDebug('Cross-tab gallery listener unavailable', error);
