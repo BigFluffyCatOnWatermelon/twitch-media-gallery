@@ -40,7 +40,7 @@
   // Shared fallback for preview callbacks that may outlive the editor's local scope.
   let videoReverseDisplayTime = null;
   const APP_VERSION = '5.9.94';
-  const VERSION = 23;
+  const VERSION = 24;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
