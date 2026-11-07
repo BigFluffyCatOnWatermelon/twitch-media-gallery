@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.94
+// @version      5.9.95
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -39,7 +39,7 @@
 
   // Shared fallback for preview callbacks that may outlive the editor's local scope.
   let videoReverseDisplayTime = null;
-  const APP_VERSION = '5.9.94';
+  const APP_VERSION = '5.9.95';
   const VERSION = 24;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -6508,6 +6508,8 @@
       #twgif-trigger{appearance:none!important;border:0!important;background:transparent!important;color:var(--color-text-base,#efeff1)!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important;margin:0!important;padding:0!important;align-self:center!important;vertical-align:middle!important;box-sizing:border-box!important;position:fixed!important;left:var(--twgif-trigger-left,0px)!important;top:var(--twgif-trigger-top,0px)!important;z-index:2147482500!important;transform:none!important;border-radius:50%!important;overflow:hidden!important;cursor:pointer!important;line-height:1!important}
       #twgif-trigger.twgif-inline-trigger{position:relative!important;left:auto!important;top:auto!important;z-index:2!important;transform:none!important;align-self:center!important;margin:0 3px!important;border-radius:50%!important}
       #twgif-trigger.twgif-inline-twitch{flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important}
+      #twgif-trigger.twgif-twitch-chat-fallback{background:#18181bcc!important;border:1px solid #9147ff66!important;box-shadow:0 2px 9px #0009!important}
+      #twgif-trigger.twgif-twitch-chat-fallback:hover{background:#252529!important;border-color:#a970ff!important}
       #twgif-trigger.twgif-inline-wtv{flex:0 0 44px!important;width:44px!important;min-width:44px!important;height:44px!important}
       #twgif-trigger.twgif-inline-kick{flex:0 0 32px!important;width:32px!important;min-width:32px!important;height:32px!important}
       #twgif-trigger.twgif-uploading svg{position:relative;z-index:2;transform-origin:center;will-change:transform,opacity,filter;animation:twgif-upload-pulse 1.35s ease-in-out infinite;}
@@ -6766,6 +6768,86 @@
     });
   }
 
+  // Find Twitch's visible live-chat column even when a timeout/ban replaces the editor.
+  function isTwitchElementRendered(element, minWidth = 1, minHeight = 1) {
+    if (!element?.isConnected || !element.getClientRects().length) return false;
+    for (let node = element; node && node !== document.documentElement; node = node.parentElement) {
+      if (node.hidden) return false;
+      const style = getComputedStyle(node);
+      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+    }
+    const rect = element.getBoundingClientRect();
+    return rect.width >= minWidth && rect.height >= minHeight;
+  }
+
+  function getTwitchChatRegion(input = null) {
+    if (!isTwitchSite() || isTwitchRecordingPage()) return null;
+    const candidates = new Set();
+    const selectors = [
+      '.Layout-sc-1xcs6mc-0.jUmLZD.stream-chat',
+      '.Layout-sc-1xcs6mc-0.stream-chat',
+      'div.stream-chat[class*="Layout-sc-1xcs6mc-0"]',
+      '.stream-chat',
+      '[data-a-target="chat-room-component-layout"]'
+    ];
+    for (const selector of selectors) {
+      for (const node of document.querySelectorAll(selector)) candidates.add(node);
+    }
+    const inputAncestors = [
+      input?.closest('.chat-room'),
+      input?.closest('[class*="chat-room"]'),
+      input?.closest('[data-a-target="chat-input-container"]')?.parentElement?.parentElement
+    ];
+    for (const node of inputAncestors) if (node) candidates.add(node);
+
+    return [...candidates].find(node =>
+      node !== document.body && node !== document.documentElement &&
+      isTwitchElementRendered(node, 180, 120)
+    ) || null;
+  }
+
+  function getTwitchChatToolbar(input = null, region = null) {
+    const direct = input ? getToolbar(input) : null;
+    if (direct && (!region || region.contains(direct)) && isTwitchElementRendered(direct, 32, 10)) return direct;
+    const root = region || getTwitchChatRegion(input);
+    if (!root) return null;
+
+    const candidates = new Set();
+    if (root.matches?.('.chat-input__buttons-container, [class*="buttons-container"]')) candidates.add(root);
+    for (const node of root.querySelectorAll('.chat-input__buttons-container, [class*="buttons-container"]')) {
+      candidates.add(node);
+    }
+    return [...candidates]
+      .filter(node => isTwitchElementRendered(node, 32, 10))
+      .sort((a, b) => {
+        const exactA = a.matches('.chat-input__buttons-container') ? 1 : 0;
+        const exactB = b.matches('.chat-input__buttons-container') ? 1 : 0;
+        if (exactA !== exactB) return exactB - exactA;
+        return b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom;
+      })[0] || null;
+  }
+
+  function positionTwitchFallbackTrigger(button, region = null) {
+    const root = region || getTwitchChatRegion();
+    if (!button || !root || !isTwitchElementRendered(root, 180, 120)) return false;
+
+    button.classList.remove('twgif-inline-trigger', 'twgif-inline-twitch', 'twgif-inline-kick', 'twgif-inline-wtv');
+    button.classList.add('twgif-twitch-chat-fallback');
+    if (button.parentElement !== document.body) document.body.appendChild(button);
+
+    const rect = root.getBoundingClientRect();
+    const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
+    const viewportHeight = Math.max(1, document.documentElement.clientHeight || innerHeight);
+    const left = Math.max(8, Math.min(viewportWidth - 40, rect.right - 44));
+    const top = Math.max(8, Math.min(viewportHeight - 40, rect.bottom - 44));
+    button.style.setProperty('--twgif-trigger-left', Math.round(left) + 'px');
+    button.style.setProperty('--twgif-trigger-top', Math.round(top) + 'px');
+    button.style.setProperty('display', 'inline-flex', 'important');
+    button.style.setProperty('visibility', 'visible', 'important');
+    button.style.setProperty('opacity', '1', 'important');
+    return true;
+  }
+
   function getChatRegion(input) {
     if (isTwitchSite()) {
       // Prefer Twitch's actual stream-chat column so the gallery's upper edge
@@ -6899,7 +6981,8 @@
   }
 
   function mountTwitchTrigger(button, input, toolbar) {
-    if (!button || !isTwitchChatComposerVisible(input, toolbar)) return false;
+    if (!button || !toolbar || !isTwitchElementRendered(toolbar, 32, 10)) return false;
+    if (input && !isTwitchChatComposerVisible(input, toolbar)) return false;
 
     const settings = findChatSettingsButton(input, toolbar);
     let slot = settings ? findInlineSlot(settings) : null;
@@ -6923,7 +7006,7 @@
       if (slot.before && slot.before !== button) slot.parent.insertBefore(button, slot.before);
       else slot.parent.appendChild(button);
     }
-    button.classList.remove('twgif-inline-kick', 'twgif-inline-wtv');
+    button.classList.remove('twgif-inline-kick', 'twgif-inline-wtv', 'twgif-twitch-chat-fallback');
     button.classList.add('twgif-inline-trigger', 'twgif-inline-twitch');
     hideTwitchSettingsSpacer(toolbar, button, settings);
     button.style.removeProperty('--twgif-trigger-left');
@@ -7225,7 +7308,10 @@
   }
 
   function repositionTrigger() {
-    if (isTwitchSite() && clearUnavailableTwitchTrigger()) return;
+    if (isTwitchSite()) {
+      if (!clearUnavailableTwitchTrigger()) ensureTrigger();
+      return;
+    }
     const button = document.getElementById('twgif-trigger');
     if (!button) return;
     const input = getChatInput();
@@ -7241,7 +7327,32 @@
   }
 
   function ensureTrigger() {
-    if (isTwitchSite() && clearUnavailableTwitchTrigger()) return false;
+    if (isTwitchSite()) {
+      if (clearUnavailableTwitchTrigger()) return false;
+      const input = getChatInput();
+      const region = getTwitchChatRegion(input);
+      if (!input && !region) return false;
+
+      if (input) activeComposer = input;
+      else activeComposer = null;
+
+      let button = document.getElementById('twgif-trigger');
+      if (!button) button = createTrigger();
+      activeTrigger = button;
+      syncTriggerUploadIndicator();
+
+      const toolbar = getTwitchChatToolbar(input, region);
+      if (toolbar && mountTwitchTrigger(button, input, toolbar)) {
+        hideDropsToolbarButtons(toolbar);
+        logDebug('Twitch gallery trigger mounted in chat toolbar', { inputFound: Boolean(input) });
+        return true;
+      }
+
+      const fallbackMounted = positionTwitchFallbackTrigger(button, region);
+      if (fallbackMounted) logDebug('Twitch gallery trigger mounted in chat fallback position', { inputFound: Boolean(input) });
+      return fallbackMounted;
+    }
+
     const input = getChatInput();
 
     // Always expose a floating fallback on w.tv, even when its chat input and
@@ -7287,6 +7398,11 @@
       ensureQueued = false;
       if (isTwitchSite() && clearUnavailableTwitchTrigger()) return;
       const previousComposer = activeComposer;
+      if (isTwitchSite()) {
+        const mounted = ensureTrigger();
+        if (mounted && activeComposer !== previousComposer) installObservers();
+        return;
+      }
       const button = document.getElementById('twgif-trigger');
       if (!button?.isConnected) {
         const mounted = ensureTrigger();
@@ -7310,14 +7426,17 @@
     const visibleInput = getChatInput();
     const input = visibleInput || (activeComposer && activeComposer.isConnected ? activeComposer : null);
     const wtvAnchor = !input && isWtvSite() ? findWtvChatOptionsButton() : null;
-    if (!input && !wtvAnchor) return;
+    const twitchFallbackRegion = !input && isTwitchSite() ? getTwitchChatRegion() : null;
+    if (!input && !wtvAnchor && !twitchFallbackRegion) return;
 
     const viewportWidth = Math.max(1, document.documentElement.clientWidth || innerWidth);
     const viewportHeight = Math.max(1, document.documentElement.clientHeight || innerHeight);
     const inputRect = input
       ? input.getBoundingClientRect()
-      : { top: viewportHeight - 8, left: 0, right: viewportWidth, width: viewportWidth };
-    const region = getChatRegion(input || wtvAnchor);
+      : twitchFallbackRegion
+        ? { top: twitchFallbackRegion.getBoundingClientRect().bottom - 44, left: 0, right: viewportWidth, width: viewportWidth }
+        : { top: viewportHeight - 8, left: 0, right: viewportWidth, width: viewportWidth };
+    const region = twitchFallbackRegion || getChatRegion(input || wtvAnchor);
     const regionRect = region && region.getBoundingClientRect
       ? region.getBoundingClientRect()
       : { top: 0, left: 0, right: viewportWidth, width: viewportWidth };
@@ -8926,6 +9045,10 @@
       }
     }
     observer = new MutationObserver(() => {
+      if (isTwitchSite()) {
+        scheduleEnsure();
+        return;
+      }
       if (ensureTrigger()) installObservers();
       else installChatMediaObserver();
     });
