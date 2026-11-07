@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.9.95] — 2026-11-07
+
+### Fixed
+- The Twitch gallery icon remains accessible when a channel timeout or ban replaces/removes the editable chat composer.
+- The icon now uses the remaining chat action row when available, or a compact floating fallback inside the visible live-chat panel.
+- The gallery panel now anchors to the live-chat panel when no message input exists.
+- Prevented Twitch's body-level mutation observer from reinstalling itself repeatedly while the composer is unavailable.
+- Bumped the userscript version to 5.9.95.
+
+### Verification
+- Full userscript JavaScript syntax check passed.
+- The timeout/ban fallback placement still needs a live Twitch browser check because those restriction states cannot be simulated from the repository alone.
+
 ## [5.9.94] — 2026-11-01
 
 ### Added
