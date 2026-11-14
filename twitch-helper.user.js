@@ -148,11 +148,11 @@
 
   const DEFAULT_CONFIG = () => ({
     maxWidth: DEFAULT_MAX_WIDTH,
-    columns: 4,
+    columns: 2,
     pageSize: 100,
     tileView: 'masonry',
-    previewMaxSize: 1920,
-    previewTileBoost: 5,
+    previewMaxSize: 350,
+    previewTileBoost: 100,
     conversionRules: { image: 'webp', gif: 'webp', video: 'webp' },
     compression: {
       imageQuality: 82,
@@ -165,7 +165,7 @@
       videoCrf: 28,
       speedPreset: 'fast',
       scaleFilter: 'fast_bilinear',
-      webpCompressionLevel: 5
+      webpCompressionLevel: 6
     },
     settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
     gistToken: '',
