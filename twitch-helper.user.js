@@ -6524,6 +6524,290 @@
     return false;
   }
 
+  function getPendingChatPlatform() {
+    if (isTwitchSite()) return 'twitch';
+    if (isWtvSite()) return 'wtv';
+    if (isKickSite()) return 'kick';
+    if (String(location.hostname || '').toLowerCase() === 'live.vkvideo.ru') return 'vkvideo';
+    return 'other';
+  }
+
+  function cleanupPendingChatSendState(now = Date.now()) {
+    const insertionTtl = 180000;
+    const batchTtl = 60000;
+    pendingChatMediaInsertions = pendingChatMediaInsertions.filter(entry =>
+      now - entry.insertedAt <= insertionTtl
+    );
+    pendingChatSendBatches = pendingChatSendBatches.filter(batch =>
+      now - batch.attemptedAt <= batchTtl && batch.items.some(item => !item.confirmed)
+    );
+  }
+
+  function registerPendingChatMedia(item) {
+    if (!item || !item.id || !item.url) return;
+    cleanupPendingChatSendState();
+    pendingChatMediaInsertions.push({
+      id: makeId(),
+      itemId: String(item.id),
+      url: String(item.url),
+      insertedAt: Date.now()
+    });
+    if (pendingChatMediaInsertions.length > 300) {
+      pendingChatMediaInsertions.splice(0, pendingChatMediaInsertions.length - 300);
+    }
+    logDebug('Media link inserted; waiting for actual chat send', { itemId: item.id });
+  }
+
+  function getChatEditorFromTarget(target) {
+    const direct = target && target.nodeType === 1 ? target : target && target.parentElement;
+    if (!direct) return null;
+    const selector = 'textarea, input[type="text"], [contenteditable="true"], [role="textbox"]';
+    const candidates = [];
+    if (direct.matches && direct.matches(selector)) candidates.push(direct);
+    const closest = direct.closest && direct.closest(selector);
+    if (closest && !candidates.includes(closest)) candidates.push(closest);
+    const active = getChatInput() || (activeComposer && activeComposer.isConnected ? activeComposer : null);
+    if (active && !candidates.includes(active)) candidates.push(active);
+    for (const editor of candidates) {
+      if (!isEditor(editor) || editor.closest('#twgif-panel')) continue;
+      if (editor === active || looksLikeChatEditor(editor)) return editor;
+    }
+    return null;
+  }
+
+  function armPendingChatSend(editor, reason) {
+    if (!editor || !isEditor(editor) || editor.closest('#twgif-panel')) return false;
+    cleanupPendingChatSendState();
+    const content = getEditorText(editor).replace(/\u00a0/g, ' ');
+    if (!content.trim()) return false;
+
+    const matching = pendingChatMediaInsertions.filter(entry => content.includes(entry.url));
+    if (!matching.length) return false;
+
+    const itemsById = new Map();
+    for (const entry of matching) {
+      let record = itemsById.get(entry.itemId);
+      if (!record) {
+        record = { itemId: entry.itemId, url: entry.url, entryIds: [] };
+        itemsById.set(entry.itemId, record);
+      }
+      if (!record.entryIds.includes(entry.id)) record.entryIds.push(entry.id);
+    }
+
+    const batch = {
+      id: makeId(),
+      createdAt: Date.now(),
+      attemptedAt: Date.now(),
+      platform: getPendingChatPlatform(),
+      channel: getCurrentTwitchChannelKey(),
+      reason: String(reason || 'send'),
+      items: [...itemsById.values()].map(item => ({ ...item, confirmed: false }))
+    };
+    pendingChatSendBatches.push(batch);
+    if (pendingChatSendBatches.length > 100) pendingChatSendBatches.splice(0, pendingChatSendBatches.length - 100);
+    logDebug('Chat send attempt armed', {
+      platform: batch.platform,
+      channel: batch.channel,
+      mediaCount: batch.items.length,
+      reason: batch.reason
+    });
+    return true;
+  }
+
+  const CHAT_MESSAGE_ROOT_SELECTOR = [
+    '[data-a-target="chat-line-message"]',
+    '[data-a-target^="chat-line"]',
+    '[class*="chat-line__message"]',
+    '[data-testid*="chat-message" i]',
+    '[data-testid*="message-content" i]',
+    '[class*="chat-message"]',
+    '[class*="message-content"]'
+  ].join(',');
+
+  function elementContainsChatMediaUrl(element, rawUrl) {
+    if (!element || !rawUrl) return false;
+    const wanted = String(rawUrl);
+    const text = String(element.textContent || '');
+    if (text.includes(wanted)) return true;
+    try {
+      const decoded = decodeURIComponent(wanted);
+      if (decoded !== wanted && text.includes(decoded)) return true;
+    } catch (_) {}
+
+    const links = [];
+    if (element.matches && element.matches('a[href]')) links.push(element);
+    if (element.querySelectorAll) {
+      for (const link of element.querySelectorAll('a[href]')) links.push(link);
+    }
+    const normalize = value => {
+      try {
+        const parsed = new URL(value, location.href);
+        parsed.hash = '';
+        return parsed.href;
+      } catch (_) {
+        return String(value || '').trim();
+      }
+    };
+    const normalizedWanted = normalize(wanted);
+    return links.some(link => normalize(link.href || link.getAttribute('href')) === normalizedWanted);
+  }
+
+  function findChatMessageRoot(element) {
+    if (!element || element.nodeType !== 1) return null;
+    let current = element;
+    for (let depth = 0; current && current !== document.body && current !== document.documentElement && depth < 12; depth++, current = current.parentElement) {
+      if (current.matches && current.matches(CHAT_MESSAGE_ROOT_SELECTOR)) return current;
+      const marker = [
+        current.getAttribute && current.getAttribute('data-testid'),
+        current.getAttribute && current.getAttribute('data-a-target'),
+        current.id,
+        typeof current.className === 'string' ? current.className : ''
+      ].filter(Boolean).join(' ');
+      if (/(chat|message).*(message|content)|message.*(chat|content)/i.test(marker)) return current;
+    }
+    return element;
+  }
+
+  function collectChatMessageCandidates(node) {
+    const element = node && node.nodeType === 1 ? node : node && node.parentElement;
+    if (!element || element.closest('#twgif-panel')) return [];
+    const candidates = new Set();
+
+    if (element.matches && element.matches(CHAT_MESSAGE_ROOT_SELECTOR)) candidates.add(element);
+    const closest = element.closest && element.closest(CHAT_MESSAGE_ROOT_SELECTOR);
+    if (closest) candidates.add(closest);
+
+    if (element.querySelectorAll) {
+      const descendants = element.querySelectorAll(CHAT_MESSAGE_ROOT_SELECTOR);
+      const limit = Math.min(descendants.length, 30);
+      for (let i = Math.max(0, descendants.length - limit); i < descendants.length; i++) {
+        candidates.add(descendants[i]);
+      }
+    }
+
+    if (!candidates.size) {
+      const root = findChatMessageRoot(element);
+      if (root && root !== document.body && root !== document.documentElement &&
+          String(root.textContent || '').length <= 8000) candidates.add(root);
+    }
+    return [...candidates];
+  }
+
+  function confirmChatMessageCandidate(messageRoot, addedNode) {
+    if (!messageRoot || !addedNode || messageRoot.closest('#twgif-panel')) return;
+    const batches = pendingChatSendBatches.slice().sort((a, b) => a.attemptedAt - b.attemptedAt);
+    if (!batches.length) return;
+
+    let alreadyCounted = countedMediaByChatMessage.get(messageRoot);
+    if (!alreadyCounted) {
+      alreadyCounted = new Set();
+      countedMediaByChatMessage.set(messageRoot, alreadyCounted);
+    }
+
+    for (const batch of batches) {
+      if (Date.now() - batch.attemptedAt > 60000) continue;
+      for (const entry of batch.items) {
+        if (entry.confirmed) continue;
+        // Both the newly inserted/changed node and its message line must contain the
+        // URL. This avoids matching an old identical link elsewhere in the chat history.
+        if (!elementContainsChatMediaUrl(addedNode, entry.url) ||
+            !elementContainsChatMediaUrl(messageRoot, entry.url)) continue;
+
+        if (!alreadyCounted.has(entry.itemId)) {
+          alreadyCounted.add(entry.itemId);
+          incrementMediaSendCounter(entry.itemId, batch.platform, batch.channel);
+        }
+        entry.confirmed = true;
+        pendingChatMediaInsertions = pendingChatMediaInsertions.filter(pending =>
+          !entry.entryIds.includes(pending.id)
+        );
+        logDebug('Chat message confirmed media send', {
+          itemId: entry.itemId,
+          platform: batch.platform,
+          channel: batch.channel
+        });
+      }
+    }
+    pendingChatSendBatches = pendingChatSendBatches.filter(batch =>
+      batch.items.some(entry => !entry.confirmed)
+    );
+  }
+
+  function installChatSendTracker() {
+    if (chatSendTrackerInstalled) return;
+    chatSendTrackerInstalled = true;
+
+    document.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.repeat) return;
+      const editor = getChatEditorFromTarget(event.target);
+      if (editor) armPendingChatSend(editor, 'Enter');
+    }, true);
+
+    document.addEventListener('click', event => {
+      const button = event.target && event.target.closest && event.target.closest(
+        'button[type="submit"], button[data-testid*="send" i], button[data-a-target*="send" i], ' +
+        'button[aria-label*="send" i], button[title*="send" i], button[aria-label*="отправ" i], ' +
+        'button[title*="отправ" i], [role="button"][data-testid*="send" i]'
+      );
+      if (!button || button.closest('#twgif-panel')) return;
+      const editor = getChatInput() || (activeComposer && activeComposer.isConnected ? activeComposer : null);
+      if (!editor || !isEditor(editor)) return;
+      const toolbar = getToolbar(editor);
+      const directSendButton = findChatSendButton(editor, toolbar);
+      const roots = [
+        editor.closest('form'),
+        editor.closest('[data-testid*="chat" i]'),
+        editor.closest('[class*="chat" i]'),
+        toolbar,
+        editor.parentElement && editor.parentElement.parentElement
+      ].filter(Boolean);
+      if (button === directSendButton || roots.some(root => root.contains(button))) {
+        armPendingChatSend(editor, 'send button');
+      }
+    }, true);
+
+    document.addEventListener('submit', event => {
+      const editor = getChatInput() || (activeComposer && activeComposer.isConnected ? activeComposer : null);
+      if (editor && isEditor(editor) && event.target && event.target.contains(editor)) {
+        armPendingChatSend(editor, 'form submit');
+      }
+    }, true);
+
+    chatSendMutationObserver = new MutationObserver(records => {
+      cleanupPendingChatSendState();
+      if (!pendingChatSendBatches.length) return;
+      const nodes = new Set();
+      for (const record of records) {
+        if (record.type === 'childList') {
+          for (const node of record.addedNodes || []) nodes.add(node);
+        } else if (record.type === 'characterData' && record.target && record.target.parentElement) {
+          nodes.add(record.target.parentElement);
+        }
+      }
+      for (const node of nodes) {
+        for (const candidate of collectChatMessageCandidates(node)) {
+          confirmChatMessageCandidate(candidate, node);
+        }
+      }
+    });
+    chatSendMutationObserver.observe(document.body || document.documentElement, {
+      childList: true,
+      subtree: true,
+      characterData: true
+    });
+    logDebug('Chat send tracking installed');
+  }
+
+  async function insertMediaCardLinkIntoChat(item) {
+    if (!item || !item.url) return;
+    try {
+      const inserted = await insertLinkIntoChat(item.url);
+      if (inserted) registerPendingChatMedia(item);
+    } catch (error) {
+      setStatus('Не удалось вставить ссылку в чат: ' + (error.message || error), 'error', true);
+    }
+  }
+
   // ----- GitHub Gist sync -----
 
   async function createGist(config, data) {
@@ -8204,7 +8488,7 @@
         return;
       }
       if (event.target.closest('.twgif-delete, .twgif-favorite, .twgif-restore')) return;
-      insertLinkIntoChat(card.__twgifItem.url);
+      insertMediaCardLinkIntoChat(card.__twgifItem);
     };
 
     card.addEventListener('click', insert);
@@ -8212,7 +8496,7 @@
       if (event.target.closest('.twgif-delete, .twgif-favorite, .twgif-restore')) return;
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
-        insertLinkIntoChat(card.__twgifItem.url);
+        insertMediaCardLinkIntoChat(card.__twgifItem);
       }
     });
     return card;
@@ -9197,6 +9481,7 @@
     ensureTrigger();
     installObservers();
     installChatMediaObserver();
+    installChatSendTracker();
 
     // GM storage is script-scoped rather than page-origin-scoped, so this keeps
     // already-open Twitch, Kick and w.tv gallery panels in sync across tabs.
