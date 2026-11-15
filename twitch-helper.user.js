@@ -7013,6 +7013,9 @@
       .twgif-file-size{position:absolute;z-index:2;right:4px;bottom:4px;max-width:calc(100% - 8px);padding:2px 4px;border:1px solid #ffffff10;border-radius:4px;background:#09090bd1;color:#c5c5ce;font-size:9px;font-weight:400;line-height:1.25;letter-spacing:.01em;white-space:nowrap;opacity:0;visibility:hidden;transform:translateY(2px);transition:opacity .14s ease,visibility .14s ease,transform .14s ease;pointer-events:none;backdrop-filter:blur(3px);font-variant-numeric:tabular-nums}
       .twgif-card:hover .twgif-file-size,.twgif-card:focus-visible .twgif-file-size,.twgif-card:focus-within .twgif-file-size{opacity:.82;visibility:visible;transform:translateY(0)}
       .twgif-file-size[hidden]{display:none!important}
+      .twgif-send-count{position:absolute;z-index:2;right:4px;bottom:4px;max-width:calc(100% - 8px);padding:2px 5px;border:1px solid #ffffff12;border-radius:4px;background:#09090bd1;color:#d7c3ff;font-size:9px;font-weight:600;line-height:1.25;white-space:nowrap;opacity:.9;visibility:visible;transform:translateY(0);transition:opacity .14s ease,visibility .14s ease,transform .14s ease;pointer-events:none;backdrop-filter:blur(3px);font-variant-numeric:tabular-nums}
+      .twgif-card:hover .twgif-send-count,.twgif-card:focus-visible .twgif-send-count,.twgif-card:focus-within .twgif-send-count{opacity:0;visibility:hidden;transform:translateY(2px)}
+      .twgif-send-count[hidden]{display:none!important}
       .twgif-video-duration{position:absolute;z-index:2;left:50%;bottom:4px;max-width:calc(100% - 12px);padding:2px 5px;border:1px solid #ffffff10;border-radius:4px;background:#09090bd1;color:#c5c5ce;font-size:9px;font-weight:400;line-height:1.25;letter-spacing:.01em;white-space:nowrap;opacity:0;visibility:hidden;transform:translate(-50%,2px);transition:opacity .14s ease,visibility .14s ease,transform .14s ease;pointer-events:none;backdrop-filter:blur(3px);font-variant-numeric:tabular-nums}
       .twgif-card:hover .twgif-video-duration,.twgif-card:focus-visible .twgif-video-duration,.twgif-card:focus-within .twgif-video-duration{opacity:.82;visibility:visible;transform:translate(-50%,0)}
       .twgif-video-duration[hidden]{display:none!important}
@@ -8377,7 +8380,12 @@
     } else {
       sizeBadge.hidden = true;
     }
+    const sendCountBadge = document.createElement('span');
+    sendCountBadge.className = 'twgif-send-count';
+    sendCountBadge.setAttribute('aria-hidden', 'true');
     frame.appendChild(media);
+    frame.appendChild(sendCountBadge);
+    updateMediaSendCountBadge(card, item);
     frame.appendChild(sizeBadge);
     const updateFileSizeBadge = async () => {
       if (!sizeBadge.isConnected || (sizeBadge.textContent && !sizeBadge.hidden)) return;
@@ -8863,6 +8871,7 @@
         }
         if (oldItem.url !== item.url) card.setAttribute('aria-label', 'Вставить ссылку на медиа в чат');
       }
+      updateMediaSendCountBadge(card, item);
       const favoriteButton = card.querySelector('.twgif-favorite');
       if (favoriteButton) {
         favoriteButton.setAttribute('aria-pressed', String(Boolean(item.favorite)));
@@ -9007,6 +9016,12 @@
     ).join('');
 
     let content = '';
+    const sendCounterSettings = isTwitchSite()
+      ? '<label class="twgif-field-label" for="twgif-send-counter-scope">Счётчик отправок</label>' +
+        '<select id="twgif-send-counter-scope" class="twgif-input">' +
+        targetOptions(config.sendCounterScope, [['channel','Только текущий Twitch-канал'],['global','Общий счётчик (все каналы и платформы)']]) +
+        '</select><div class="twgif-help">Режим меняет только отображаемое число. Общий и поканальные значения сохраняются и синхронизируются вместе с коллекцией.</div>'
+      : '<div class="twgif-help">На этой платформе используется только общий счётчик отправок. Выбор счётчика по Twitch-каналам доступен в настройках Twitch.</div>';
     if (settingsTab === 'general') {
       content = `
         <div class="twgif-settings">
@@ -9029,6 +9044,7 @@
             <label class="twgif-field-label" for="twgif-preview-tile-boost">Увеличение превью относительно плитки (%)</label>
             <input id="twgif-preview-tile-boost" class="twgif-input" type="number" min="0" max="100" step="1" value="${config.previewTileBoost}">
             <div class="twgif-help">Если исходник маленький, при зажатии кнопки превью будет минимум на указанный процент крупнее его изображения в плитке. Максимальный размер и границы экрана соблюдаются.</div>
+            ${sendCounterSettings}
             <div class="twgif-row" style="margin-top:8px">
               <button id="twgif-save-gallery-settings" class="twgif-small-btn twgif-primary" type="button">Применить</button>
               <button id="twgif-reset-defaults" class="twgif-small-btn" type="button">Настройки по умолчанию</button>
@@ -9128,6 +9144,16 @@
     const $ = selector => body.querySelector(selector);
 
     if (settingsTab === 'general') {
+      const sendCounterScope = $('#twgif-send-counter-scope');
+      if (sendCounterScope) {
+        sendCounterScope.addEventListener('change', event => {
+          saveConfig({ sendCounterScope: event.currentTarget.value });
+          renderGalleryItems();
+          setStatus(event.currentTarget.value === 'channel'
+            ? 'Показывается счётчик текущего Twitch-канала.'
+            : 'Показывается общий счётчик отправок.', 'success');
+        });
+      }
       $('#twgif-open-archive').addEventListener('click', () => {
         archivePage = 0;
         panelView = 'archive';
