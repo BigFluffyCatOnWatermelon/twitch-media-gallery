@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.96
+// @version      5.9.97
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -39,7 +39,7 @@
 
   // Shared fallback for preview callbacks that may outlive the editor's local scope.
   let videoReverseDisplayTime = null;
-  const APP_VERSION = '5.9.96';
+  const APP_VERSION = '5.9.97';
   const VERSION = 25;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -647,7 +647,12 @@
     for (const item of alive) {
       const key = item.sourceKey ? `source:${item.sourceKey}` : `url:${item.url}`;
       const previous = deduped.get(key);
-      if (!previous || (Number(item.updatedAt) || 0) > (Number(previous.updatedAt) || 0)) deduped.set(key, item);
+      const selected = !previous || (Number(item.updatedAt) || 0) > (Number(previous.updatedAt) || 0)
+        ? item : previous;
+      deduped.set(key, {
+        ...selected,
+        sendCounters: mergeSendCounters(previous && previous.sendCounters, item.sendCounters)
+      });
     }
     const items = [...deduped.values()];
     const archivedById = new Map();
@@ -6581,7 +6586,16 @@
     const content = getEditorText(editor).replace(/\u00a0/g, ' ');
     if (!content.trim()) return false;
 
-    const matching = pendingChatMediaInsertions.filter(entry => content.includes(entry.url));
+    const armedEntryIds = new Set();
+    for (const batch of pendingChatSendBatches) {
+      if (Date.now() - batch.attemptedAt > 60000) continue;
+      for (const entry of batch.items) {
+        for (const id of entry.entryIds) armedEntryIds.add(id);
+      }
+    }
+    const matching = pendingChatMediaInsertions.filter(entry =>
+      content.includes(entry.url) && !armedEntryIds.has(entry.id)
+    );
     if (!matching.length) return false;
 
     const itemsById = new Map();
