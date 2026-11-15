@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.97
+// @version      5.9.98
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -39,7 +39,7 @@
 
   // Shared fallback for preview callbacks that may outlive the editor's local scope.
   let videoReverseDisplayTime = null;
-  const APP_VERSION = '5.9.97';
+  const APP_VERSION = '5.9.98';
   const VERSION = 25;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -9034,7 +9034,7 @@
       ? '<label class="twgif-field-label" for="twgif-send-counter-scope">Счётчик отправок</label>' +
         '<select id="twgif-send-counter-scope" class="twgif-input">' +
         targetOptions(config.sendCounterScope, [['channel','Только текущий Twitch-канал'],['global','Общий счётчик (все каналы и платформы)']]) +
-        '</select><div class="twgif-help">Режим меняет только отображаемое число. Общий и поканальные значения сохраняются и синхронизируются вместе с коллекцией.</div>'
+        '</select><div class="twgif-help">Режим меняет только отображаемое число. Общий и поканальные значения сохраняются в коллекции и синхронизируются между устройствами через настроенный Gist.</div>'
       : '<div class="twgif-help">На этой платформе используется только общий счётчик отправок. Выбор счётчика по Twitch-каналам доступен в настройках Twitch.</div>';
     if (settingsTab === 'general') {
       content = `
