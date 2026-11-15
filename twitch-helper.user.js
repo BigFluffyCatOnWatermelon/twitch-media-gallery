@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.95
+// @version      5.9.96
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -39,8 +39,8 @@
 
   // Shared fallback for preview callbacks that may outlive the editor's local scope.
   let videoReverseDisplayTime = null;
-  const APP_VERSION = '5.9.95';
-  const VERSION = 24;
+  const APP_VERSION = '5.9.96';
+  const VERSION = 25;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const DATA_KEY = 'twgif_gallery_data_v1';
@@ -65,7 +65,7 @@
   const SHARED_MEDIA_ENTRY_PREFIX = 'twgif_gallery_shared_media_v1:';
   const SHARED_MEDIA_CACHE_MAX_BYTES = 24 * 1024 * 1024;
   const SHARED_MEDIA_CACHE_MAX_ENTRY_BYTES = 6 * 1024 * 1024;
-  const SETTINGS_SCHEMA_VERSION = 9;
+  const SETTINGS_SCHEMA_VERSION = 10;
   const COMPRESS_ENABLED_KEY = 'twgif_compress_enabled_v1';
   const MEDIA_EDITOR_ENABLED_KEY = 'twgif_media_editor_enabled_v1';
 
@@ -119,6 +119,11 @@
   let twitchRecoveryTimer = 0;
   let ensureQueued = false;
   let lastObservedInput = null;
+  let chatSendTrackerInstalled = false;
+  let chatSendMutationObserver = null;
+  let pendingChatMediaInsertions = [];
+  let pendingChatSendBatches = [];
+  const countedMediaByChatMessage = new WeakMap();
   const debugLogs = [];
   const debugLogEntries = [];
   let lastLogSignature = '';
@@ -170,7 +175,8 @@
     settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
     gistToken: '',
     gistId: '',
-    debug: false
+    debug: false,
+    sendCounterScope: 'channel'
   });
 
   function normalizeCompressionSettings(value = {}, fallback = DEFAULT_CONFIG().compression) {
@@ -262,6 +268,108 @@
     return inferInitialMediaKind(item);
   }
 
+  // Send counters are stored as per-session grow-only counters. Gist merges use
+  // max per session, so independent devices/tabs can sync without losing concurrent sends.
+  function normalizeSendCounters(value) {
+    const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    const source = raw.instances && typeof raw.instances === 'object' && !Array.isArray(raw.instances)
+      ? raw.instances : {};
+    const instances = {};
+    for (const [rawId, rawEntry] of Object.entries(source)) {
+      const id = String(rawId || '').trim().slice(0, 120);
+      if (!id || !rawEntry || typeof rawEntry !== 'object') continue;
+      const total = Math.max(0, Math.floor(Number(rawEntry.total) || 0));
+      const rawChannels = rawEntry.channels && typeof rawEntry.channels === 'object' && !Array.isArray(rawEntry.channels)
+        ? rawEntry.channels : {};
+      const channels = {};
+      for (const [rawChannel, rawCount] of Object.entries(rawChannels)) {
+        const channel = String(rawChannel || '').trim().toLowerCase().slice(0, 100);
+        const count = Math.max(0, Math.floor(Number(rawCount) || 0));
+        if (channel && count > 0) channels[channel] = count;
+      }
+      if (total > 0 || Object.keys(channels).length) instances[id] = { total, channels };
+    }
+    return { instances };
+  }
+
+  function mergeSendCounters(...values) {
+    const merged = normalizeSendCounters(values[0]);
+    for (const value of values.slice(1)) {
+      const next = normalizeSendCounters(value);
+      for (const [instanceId, incoming] of Object.entries(next.instances)) {
+        const current = merged.instances[instanceId] || { total: 0, channels: {} };
+        current.total = Math.max(current.total, incoming.total);
+        for (const [channel, count] of Object.entries(incoming.channels)) {
+          current.channels[channel] = Math.max(Number(current.channels[channel]) || 0, count);
+        }
+        merged.instances[instanceId] = current;
+      }
+    }
+    return merged;
+  }
+
+  function sumCounterField(counters, field, channel = '') {
+    let total = 0;
+    for (const entry of Object.values(normalizeSendCounters(counters).instances)) {
+      total += field === 'channel'
+        ? Number(entry.channels[channel]) || 0
+        : Number(entry.total) || 0;
+    }
+    return total;
+  }
+
+  function getCurrentTwitchChannelKey() {
+    if (!isTwitchSite()) return '';
+    const first = String(location.pathname || '').split('/').filter(Boolean)[0]?.toLowerCase() || '';
+    const reserved = new Set([
+      'directory', 'downloads', 'settings', 'subscriptions', 'wallet', 'inventory',
+      'videos', 'video', 'clip', 'clips', 'popout', 'embed', 'search', 'login',
+      'signup', 'jobs', 'turbo', 'p', 'moderator', 'drops', 'prime', 'store',
+      'collections', 'friends', 'following', 'schedule'
+    ]);
+    return first && !reserved.has(first) && !/^\d+$/.test(first) ? first : '';
+  }
+
+  function getMediaSentCount(item) {
+    const config = loadConfig();
+    const counters = item && item.sendCounters;
+    if (isTwitchSite() && config.sendCounterScope === 'channel') {
+      const channel = getCurrentTwitchChannelKey();
+      if (channel) return sumCounterField(counters, 'channel', channel);
+    }
+    return sumCounterField(counters, 'total');
+  }
+
+  function updateMediaSendCountBadge(card, item = card && card.__twgifItem) {
+    const badge = card && card.querySelector('.twgif-send-count');
+    if (!badge || !item) return;
+    const count = getMediaSentCount(item);
+    badge.textContent = String(count);
+    badge.title = 'Отправлено в чат: ' + count;
+    badge.setAttribute('aria-label', 'Отправлено в чат: ' + count);
+  }
+
+  function incrementMediaSendCounter(itemId, platform, channel = '') {
+    const data = loadData();
+    const item = data.items.find(entry => entry.id === itemId) ||
+      data.archive.find(entry => entry.id === itemId);
+    if (!item) {
+      logDebug('Sent media counter skipped: item no longer exists', { itemId });
+      return false;
+    }
+    const counters = normalizeSendCounters(item.sendCounters);
+    const current = counters.instances[SEND_COUNTER_INSTANCE_ID] || { total: 0, channels: {} };
+    current.total = Math.max(0, Number(current.total) || 0) + 1;
+    if (platform === 'twitch' && channel) {
+      current.channels[channel] = Math.max(0, Number(current.channels[channel]) || 0) + 1;
+    }
+    counters.instances[SEND_COUNTER_INSTANCE_ID] = current;
+    item.sendCounters = counters;
+    persistData(data);
+    logDebug('Media send counter incremented', { itemId, platform, channel, total: current.total });
+    return true;
+  }
+
   // Collection persistence and normalization: callers work with validated, sorted records.
   function loadData() {
     const raw = parseJson(GM_getValue(DATA_KEY, EMPTY_DATA()), EMPTY_DATA());
@@ -270,6 +378,7 @@
 
     const rawItems = Array.isArray(raw.items) ? raw.items : [];
     let needsMediaMetadataMigration = false;
+    let needsSendCounterMigration = false;
     const cleaned = rawItems
       .filter(item => item && typeof item.id === 'string' && typeof item.url === 'string')
       .map(item => {
@@ -281,6 +390,7 @@
             !Object.prototype.hasOwnProperty.call(item, 'mediaKindCheckedAt')) {
           needsMediaMetadataMigration = true;
         }
+        if (!Object.prototype.hasOwnProperty.call(item, 'sendCounters')) needsSendCounterMigration = true;
         return {
           id: String(item.id),
           url: String(item.url),
@@ -293,6 +403,7 @@
           size: Math.max(0, Math.floor(Number(item.size) || 0)),
           addedAt,
           updatedAt,
+          sendCounters: normalizeSendCounters(item.sendCounters),
           mediaKind: normalizeStoredMediaKind(item),
           mediaKindCheckedAt: Math.max(0, Math.floor(Number(item.mediaKindCheckedAt) || 0))
         };
@@ -321,6 +432,7 @@
           !Object.prototype.hasOwnProperty.call(item, 'mediaKindCheckedAt')) {
         needsMediaMetadataMigration = true;
       }
+      if (!Object.prototype.hasOwnProperty.call(item, 'sendCounters')) needsSendCounterMigration = true;
       const addedAt = Number(item.addedAt) || Number(item.updatedAt) || 0;
       const updatedAt = Number(item.updatedAt) || addedAt;
       const archived = {
@@ -328,6 +440,7 @@
         name: String(item.name || 'Медиафайл').slice(0, 120), type: String(item.type || 'image'),
         sourceKey: String(item.sourceKey || ''), favorite: Boolean(item.favorite), hd: Boolean(item.hd),
         size: Math.max(0, Math.floor(Number(item.size) || 0)), addedAt, updatedAt,
+        sendCounters: normalizeSendCounters(item.sendCounters),
         mediaKind: normalizeStoredMediaKind(item),
         mediaKindCheckedAt: Math.max(0, Math.floor(Number(item.mediaKindCheckedAt) || 0)),
         deletedAt: Math.max(0, Math.floor(Number(item.deletedAt) || Number(data.deleted[item.id]) || 0))
@@ -340,13 +453,16 @@
     if (data.items.length !== rawItems.length ||
         data.archive.length !== rawArchive.length ||
         !Array.isArray(raw.archive) ||
-        needsMediaMetadataMigration) {
+        needsMediaMetadataMigration || needsSendCounterMigration) {
       GM_setValue(DATA_KEY, sortData(data));
       if (data.items.length !== rawItems.length) {
         logDebug('Removed duplicate local gallery items', { before: rawItems.length, after: data.items.length });
       }
       if (needsMediaMetadataMigration) {
         logDebug('Migrated persistent media classification metadata', { count: data.items.length });
+      }
+      if (needsSendCounterMigration) {
+        logDebug('Initialized synchronized media send counters', { count: data.items.length });
       }
     }
     return data;
@@ -381,6 +497,7 @@
       gistToken: String(raw.gistToken || legacy.token || '').trim(),
       gistId: String(raw.gistId || legacy.gistId || '').trim(),
       debug: Boolean(raw.debug),
+      sendCounterScope: raw.sendCounterScope === 'global' ? 'global' : 'channel',
       settingsSchemaVersion: SETTINGS_SCHEMA_VERSION
     };
     if (previousSchemaVersion < SETTINGS_SCHEMA_VERSION) {
@@ -426,6 +543,7 @@
       gistToken: String(next.gistToken ?? current.gistToken).trim(),
       gistId: String(next.gistId ?? current.gistId).trim(),
       debug: Boolean(next.debug ?? current.debug),
+      sendCounterScope: (next.sendCounterScope ?? current.sendCounterScope) === 'global' ? 'global' : 'channel',
       settingsSchemaVersion: SETTINGS_SCHEMA_VERSION
     };
     GM_setValue(CONFIG_KEY, config);
@@ -451,9 +569,11 @@
         if (!item || typeof item !== 'object') return item;
         const mediaKind = normalizeStoredMediaKind(item);
         const mediaKindCheckedAt = Math.max(0, Math.floor(Number(item.mediaKindCheckedAt) || 0));
-        return item.mediaKind === mediaKind && item.mediaKindCheckedAt === mediaKindCheckedAt
+        const sendCounters = normalizeSendCounters(item.sendCounters);
+        return item.mediaKind === mediaKind && item.mediaKindCheckedAt === mediaKindCheckedAt &&
+          item.sendCounters && JSON.stringify(item.sendCounters) === JSON.stringify(sendCounters)
           ? item
-          : { ...item, mediaKind, mediaKindCheckedAt };
+          : { ...item, mediaKind, mediaKindCheckedAt, sendCounters };
       }) : [],
       deleted: data.deleted && typeof data.deleted === 'object' ? { ...data.deleted } : {},
       archive: Array.isArray(data.archive) ? data.archive.map(item => {
@@ -461,6 +581,7 @@
         return {
           ...item, mediaKind: normalizeStoredMediaKind(item),
           mediaKindCheckedAt: Math.max(0, Math.floor(Number(item.mediaKindCheckedAt) || 0)),
+          sendCounters: normalizeSendCounters(item.sendCounters),
           deletedAt: Math.max(0, Math.floor(Number(item.deletedAt) || 0))
         };
       }) : []
@@ -517,7 +638,8 @@
       byId.set(item.id, {
         ...selected,
         mediaKind: normalizeStoredMediaKind(classification),
-        mediaKindCheckedAt: Math.max(0, Math.floor(Number(classification.mediaKindCheckedAt) || 0))
+        mediaKindCheckedAt: Math.max(0, Math.floor(Number(classification.mediaKindCheckedAt) || 0)),
+        sendCounters: mergeSendCounters(old.sendCounters, item.sendCounters)
       });
     }
     const alive = [...byId.values()].filter(item => (deleted[item.id] || 0) < (Number(item.updatedAt) || 0));
@@ -534,17 +656,23 @@
       const previous = archivedById.get(item.id);
       const itemDeletedAt = Math.max(0, Number(item.deletedAt) || Number(deleted[item.id]) || 0);
       const previousDeletedAt = previous ? Math.max(0, Number(previous.deletedAt) || 0) : -1;
-      if (!previous || itemDeletedAt > previousDeletedAt ||
-          (itemDeletedAt === previousDeletedAt && (Number(item.updatedAt) || 0) > (Number(previous.updatedAt) || 0))) {
-        archivedById.set(item.id, { ...item, deletedAt: itemDeletedAt });
-      }
+      const selected = !previous || itemDeletedAt > previousDeletedAt ||
+        (itemDeletedAt === previousDeletedAt && (Number(item.updatedAt) || 0) > (Number(previous.updatedAt) || 0))
+        ? item : previous;
+      archivedById.set(item.id, {
+        ...selected,
+        sendCounters: mergeSendCounters(previous && previous.sendCounters, item.sendCounters),
+        deletedAt: Math.max(itemDeletedAt, previousDeletedAt)
+      });
     }
     const archive = [...archivedById.values()].filter(item => {
       const deletedAt = Math.max(Number(deleted[item.id]) || 0, Number(item.deletedAt) || 0);
       const latestRecord = byId.get(item.id);
       return deletedAt > 0 && (!latestRecord || deletedAt >= (Number(latestRecord.updatedAt) || 0));
     }).map(item => ({
-      ...item, deletedAt: Math.max(Number(deleted[item.id]) || 0, Number(item.deletedAt) || 0)
+      ...item,
+      sendCounters: normalizeSendCounters(item.sendCounters),
+      deletedAt: Math.max(Number(deleted[item.id]) || 0, Number(item.deletedAt) || 0)
     }));
     return sortData({ version: VERSION, items, deleted, archive });
   }
@@ -834,6 +962,8 @@
     if (globalThis.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
     return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
   }
+
+  const SEND_COUNTER_INSTANCE_ID = makeId();
 
   function getExtension(mime, fallbackName = '') {
     const map = {
@@ -4974,7 +5104,8 @@
       hd: Boolean(isHd),
       size: mediaBlob instanceof Blob ? Math.max(0, Number(mediaBlob.size) || 0) : 0,
       addedAt: now,
-      updatedAt: now
+      updatedAt: now,
+      sendCounters: { instances: {} }
     });
     galleryPage = 0;
     persistData(data);
