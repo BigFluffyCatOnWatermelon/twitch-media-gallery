@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch GIF Gallery + Kappa.lol
 // @namespace    https://github.com/BigFluffyCatOnWatermelon/twitch-media-gallery
-// @version      5.9.98
+// @version      5.9.99
 // @description  Stream media gallery for Twitch, w.tv, Kick and VK Video Live with Telegram post import, HD imports, FFmpeg conversion and Gist gallery sync.
 // @updateURL    https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/BigFluffyCatOnWatermelon/twitch-media-gallery/main/twitch-helper.user.js
@@ -39,7 +39,7 @@
 
   // Shared fallback for preview callbacks that may outlive the editor's local scope.
   let videoReverseDisplayTime = null;
-  const APP_VERSION = '5.9.98';
+  const APP_VERSION = '5.9.99';
   const VERSION = 25;
   const DEFAULT_MAX_WIDTH = 500;
   const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -6722,10 +6722,13 @@
       if (Date.now() - batch.attemptedAt > 60000) continue;
       for (const entry of batch.items) {
         if (entry.confirmed) continue;
-        // Both the newly inserted/changed node and its message line must contain the
-        // URL. This avoids matching an old identical link elsewhere in the chat history.
-        if (!elementContainsChatMediaUrl(addedNode, entry.url) ||
-            !elementContainsChatMediaUrl(messageRoot, entry.url)) continue;
+        // Twitch may build a chat message from several nested DOM updates. The
+        // changed node therefore does not always contain the complete URL itself.
+        // Confirm against the full message, but only when this mutation actually
+        // touches that message (or inserts a wrapper containing it).
+        const mutationTouchesMessage = addedNode === messageRoot ||
+          messageRoot.contains(addedNode) || addedNode.contains(messageRoot);
+        if (!mutationTouchesMessage || !elementContainsChatMediaUrl(messageRoot, entry.url)) continue;
 
         if (!alreadyCounted.has(entry.itemId)) {
           alreadyCounted.add(entry.itemId);
